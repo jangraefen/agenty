@@ -36,7 +36,7 @@ Principles are ranked. When two conflict, the higher one wins.
 2. **Safe by default.** Builders should not need to understand policy to be safe. Safe defaults come from the catalog and the workspace, not from the builder's diligence.
 3. **Nothing withheld.** No capability is reserved for a paid edition.
 4. **Open standards over bespoke integrations.** MCP, OpenAPI, OpenTelemetry, OIDC/SAML, SCIM, OPA. Prefer the standard even when a custom integration would be faster.
-5. **One declarative definition.** Every harness has a declarative, human-readable representation (e.g., YAML) that is its source of truth. The visual builder edits it; technical builders can version-control it alongside their code. The definition does not expose or depend on any particular agent framework.
+5. **One declarative definition.** Every harness has a declarative, human-readable representation (e.g., YAML) that is its source of truth. The definition does not expose or depend on any particular agent framework. Each harness is managed in exactly one place: either in Agenty (edited in the visual builder, exportable at any time) or in Git (read-only in Agenty, changed through commits and merge requests). There is no bidirectional merging.
 6. **Operable by a regular enterprise IT team.** Running Agenty must not require a dedicated AI platform team.
 7. **Model agnostic.** No dependency on a single model vendor. Any model reachable through a supported provider API or enterprise AI gateway can be used.
 
@@ -59,7 +59,7 @@ Principles are ranked. When two conflict, the higher one wins.
 Shared vocabulary for all future specifications.
 
 - **Agent Harness** — The versioned definition of an agent and Agenty's primary building unit. With typed entry points and an output contract, a harness behaves like a typed function — inputs in, structured result out — which makes it easy to use from other automations and by other agents. It consists of:
-  - **Entry points** — how a run is started: chat, a form in the portal, an authenticated API call, or a schedule. Each entry point defines typed parameters and a prompt template that turns them into the run's first prompt. The same parameter definition drives API validation and the portal form.
+  - **Entry points** — how a run is started: chat, a form in the portal, or an authenticated API call. Each entry point defines typed parameters and a prompt template that turns them into the run's first prompt. The same parameter definition drives API validation and the portal form.
   - **Instructions** — the agent's role, goal, and behavior, in plain language.
   - **Model configuration** — selected from centrally approved configurations.
   - **Tools** — capabilities from the catalog the agent may use, each with a permission scope (e.g., read-only vs. write).
@@ -73,7 +73,9 @@ Shared vocabulary for all future specifications.
 - **Skill** — A package of domain expertise: plain-language instructions, optionally bundled with scripts (Bash, Python, Node.js) and resources (templates, reference data) the agent can use. Skills follow the open Agent Skills format where possible. They are the primary way builders give agents expertise: business builders write the instructions, and scripts let technical builders — or business builders who are comfortable with a little code — encode logic that is better expressed deterministically.
 - **Workflow** — A composition of harnesses with control flow and approval gates, for processes that require mandated determinism (fixed step order, fan-out, hand-offs between teams). Most agents need no workflow. Workflows are graphs, not DAGs: loops and retries are allowed.
 - **Catalog** — The governed registry of reusable building blocks (connectors, tools, skills, harness templates, model configurations, policies), each published with a visibility scope (team, department, enterprise).
-- **Workspace** — The unit of isolation for agents, credentials, data, and budgets.
+- **Workspace** — The space where a team collaborates under common ownership, and the unit of isolation between teams. Harnesses, workspace schedules, service accounts, and budgets belong to a workspace; members hold roles in it. A workspace holds no credentials of its own: credentials always belong to an identity — a person or a service account.
+- **Service Account** — A non-human identity belonging to a workspace, for work that must not depend on any individual. It can call entry points (e.g., from other automations) and run workspace schedules. Only authorized workspace members may use it.
+- **Schedule** — A person's recurring invocation of a harness entry point with saved parameter values ("run this harness every Monday with these parameters, as me"). Schedules are separate from the harness, so several people or teams can schedule the same harness with different parameters. A **personal schedule** belongs to a person and runs as that person; a **workspace schedule** belongs to a workspace and runs as one of its service accounts.
 - **Run** — A single execution of a harness or workflow; the unit of tracing, auditing, and cost attribution.
 - **Example Run** — A saved input (and optionally a reviewed output) attached to a harness. Builders replay their examples after changing a prompt, tool, or model to see what changed. Examples are how builders gain confidence in a change; they are not a formal test suite and do not gate deployment.
 
@@ -84,24 +86,36 @@ Shared vocabulary for all future specifications.
 - **Runs can be synchronous or asynchronous.** A caller can wait for the structured result, or receive a run reference and collect the result later — required whenever a run may pause for approval.
 - **Durable execution.** Runs survive restarts and can pause — for an approval, for days if needed — and resume where they left off.
 - **Autonomy is configured per harness**: from confirming every side effect, to bounded autonomy within policy, to fully headless execution governed only by policy and approval gates.
+- **Memory is run-scoped at first.** Initially, agents remember only within a run or conversation; lasting knowledge comes from knowledge sources. Long-term memory follows later, with explicit scopes, retention rules, and the ability to inspect and erase it.
 
-## 8. Trust Model
+## 8. Ownership & Lifecycle
+
+As the number of builders grows, agents must not outlive their purpose or their accountability.
+
+- **Workspaces own, people are accountable.** Every harness belongs to a workspace and has a named Agent Owner. When an owner leaves, the harness keeps running; the workspace administrator assigns a new owner.
+- **Personal schedules end with the person.** A personal schedule is disabled when its owner leaves, loses access to the harness, or their delegated credentials expire or are revoked; the harness owner is notified. Processes that must survive personnel changes use workspace schedules. Any schedule of a retired harness is disabled.
+- **Explicit lifecycle states.** Harnesses move through draft, active, deprecated, and retired. Callers and schedule owners of deprecated harnesses are warned; retired harnesses cannot run.
+- **Inactivity is surfaced.** Harnesses without runs for a configurable period are flagged for their owner's review.
+- **Central inventory.** Central teams see every harness across workspaces: owner, tools, data access, cost, and last run.
+
+## 9. Trust Model
 
 What Agenty assumes, and what it guarantees.
 
 - **The model is not trusted.** Any agent that processes untrusted content (emails, documents, tickets, web pages) is assumed to be steerable by that content. Safety comes from deterministic controls outside the model, not from detecting prompt injections.
-- **Every run has an authenticated caller.** Every entry point requires a valid login — a person, or a service account for automations. Scheduled runs act on behalf of the schedule's owner.
+- **Every run has an authenticated caller.** Every entry point requires a valid login — a person, or a service account for automations. Personal scheduled runs act on behalf of their owner, using credentials that person has delegated; workspace scheduled runs act as a workspace service account. No one is present during scheduled runs, so anything requiring confirmation goes through approvals.
+- **Service accounts do not launder permissions.** Using a workspace service account requires explicit permission, and every run records both the service account and the person who configured the call or schedule.
 - **Every action has an identity.** Agents have their own identity with explicit grants. A run acts on behalf of its caller, limited to the intersection of the agent's and the caller's permissions. Delegation chains (an agent calling an agent) are recorded and can never widen permissions.
 - **Parameters are data, not instructions.** Values passed into a prompt template are rendered as clearly delimited data and treated as untrusted content, so they cannot silently rewrite the agent's instructions.
 - **Policy before every side effect.** Every tool call is evaluated against policy (OPA) before it executes. Content from untrusted sources is tracked through the run, and policies can restrict which actions such content may influence.
 - **Code is governed wherever it lives.** Scripts in skills and custom tools run in isolated sandboxes with no network access or credentials unless explicitly granted, and their execution is subject to policy like any other tool call. Skills containing scripts follow the same publishing review as tools beyond team scope.
-- **Humans approve what is high-risk.** Approval requirements can be mandated centrally by policy and added per harness. Builders can add approval gates but cannot remove centrally mandated ones.
+- **Humans approve what is high-risk.** Approval requirements can be mandated centrally by policy and added per harness. Builders can add approval gates but cannot remove centrally mandated ones. Approval requirements never relax automatically: Agenty shows the evidence (approval and rejection rates, edits made by approvers), and an owner or compliance officer relaxes them deliberately.
 - **Retrieval respects source permissions.** Agents only retrieve what the identity they act for is allowed to access in the source system.
 - **LLM-based review is quality control, not a security control.** Evaluator agents may check accuracy or tone; they never replace deterministic enforcement.
 - **Audit without hoarding.** Audit events are append-only. Personal data within them is encrypted per data subject, so erasure requests are honored by destroying the key (crypto-shredding) while the event trail itself remains intact.
 - **No phone-home.** Agenty itself makes no outbound calls beyond those the operator configures.
 
-## 9. Non-Goals
+## 10. Non-Goals
 
 - **Not a flow builder first.** Agenty does not ask builders to draw every step; the canvas exists for the minority of processes that need mandated determinism.
 - **Not an iPaaS.** Deterministic integration steps exist to serve agents. Agenty does not compete with general-purpose integration and automation platforms.
@@ -110,12 +124,10 @@ What Agenty assumes, and what it guarantees.
 - **No paid edition.** No features are withheld from the open-source product.
 - **No air-gap guarantee.** Agenty is self-hostable and does not depend on external services of its own. Deployments that use commercial model APIs or SaaS collaboration tools send data to those services by the operator's choice.
 
-## 10. Open Questions
+## 11. Sustainability
 
-- **Sustainability.** Without a paid edition, how is long-term development funded and governed (foundation, sponsorship, support contracts)? Enterprises adopting a platform this central to their operations will ask.
-- **Definition sync.** When a harness definition lives in a Git repository, is the repository or Agenty the source of truth, and how are edits in the visual builder reconciled with it?
-- **Gradual trust.** Should approval requirements be able to relax automatically as an agent proves itself (e.g., approvals for the first weeks, then sampled review)?
-- **Memory model.** Which memory scopes exist (per run, per user, per agent), how long is memory retained, and who can inspect or erase it?
-- **Agent sprawl.** How are ownership transfer, discovery, deprecation, and retirement of agents handled as the number of builders grows? This includes schedules: what happens to scheduled runs when their owner leaves?
-- **Cost attribution for local models.** Commercial models are attributed in currency; self-hosted models only in tokens. Is that sufficient for chargeback?
-- **Local model support.** Self-hosted runtimes exposing OpenAI-compatible APIs are usable from the start. Is dedicated support needed beyond that?
+Agenty is fully open source and free to self-host. Long-term development is funded through support and services — support contracts, SLAs, and consulting — and possibly through a paid hosted offering later. Neither ever gates features: a hosted Agenty is the same product, operated for the customer.
+
+## 12. Open Questions
+
+None at the moment. New questions are recorded here as they arise.

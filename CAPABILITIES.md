@@ -16,7 +16,9 @@ Phases:
 | Capability | Phase | Notes |
 |---|---|---|
 | Visual harness builder | v1 | Configure entry points, instructions, model, tools, skills, knowledge, rules, approvals, and output contract. |
-| Entry points: chat, form, API, schedule | v1 | Every entry point requires an authenticated caller (person or service account); the run acts on their behalf. |
+| Entry points: chat, form, API | v1 | Every entry point requires an authenticated caller (person or service account); the run acts on their behalf. |
+| Schedules | v1 | Recurring invocations of an entry point with saved parameters. Personal schedules run as their owner; workspace schedules run as a workspace service account. |
+| Schedule disabling | v1 | Personal schedules are disabled when the owner leaves, loses access, or their delegated credentials expire; the harness owner is notified. All schedules of a retired harness are disabled. |
 | Typed parameters and prompt templates | v1 | One parameter definition drives API validation and the portal form; values are rendered as untrusted data. |
 | Synchronous and asynchronous runs | v1 | Wait for the structured result, or receive a run reference. |
 | Connector event entry points | Later | First-class integrations from external systems (e.g., "GitLab issue labeled `change`"), including payload-to-parameter mapping. |
@@ -26,7 +28,7 @@ Phases:
 | Structured rule builder | v1 | Form-based conditions on tool and arguments (deny / require approval), compiled to OPA. |
 | Output contracts | v1 | Required structure of an agent's result. |
 | Declarative harness definition | v1 | Human-readable file (e.g., YAML) as source of truth; import and export. |
-| Git sync of harness definitions | Later | See VISION open question on source of truth. |
+| Git-managed harnesses | Later | Harness managed in Git: read-only in Agenty, changed via commits and merge requests. No bidirectional merging. |
 | Example runs and replay | v1 | Save inputs (e.g., historic tickets), replay after changes, compare outputs. Not a gate. |
 | Agent-as-a-tool | Later | Published harnesses callable by other harnesses; the entry point's parameters become the tool's schema. Requires delegation chains in the identity model. |
 | Workflow canvas | Later | Composition of harnesses with control flow, fan-out, and approval gates for mandated determinism. |
@@ -43,6 +45,8 @@ Phases:
 | Background workers | v1 | Started via API or schedule; connector events later. |
 | Durable execution | v1 | Runs survive restarts; can pause for approvals and resume. |
 | Interactive and headless autonomy modes | v1 | |
+| Conversation memory | v1 | Memory within a run or chat conversation only. |
+| Long-term memory | Later | Explicit scopes (e.g., per user, per agent), retention rules, inspection, and erasure. |
 | Bounded auto-mode | Later | Autonomous within policy and budget; falls back to interactive on high-risk actions. |
 | Run versions pinned at start | v1 | In-flight runs finish on the version they started with; rollback affects new runs only. |
 
@@ -71,7 +75,7 @@ Phases:
 | OpenAI-compatible endpoints | v1 | Covers enterprise AI gateways and most self-hosted runtimes. |
 | Per-harness model configuration | v1 | Model configurations published centrally in the catalog. |
 | Failover chains | Later | |
-| Dedicated local runtime support | Explore | Only if OpenAI-compatible endpoints prove insufficient. |
+| Reference setups for local runtimes | Later | Documentation only (e.g., vLLM, Ollama) via OpenAI-compatible endpoints; no dedicated product integration. |
 
 ## 5. Governance
 
@@ -82,7 +86,7 @@ Phases:
 | Centrally mandated approval gates | v1 | Builders can add gates, not remove mandated ones. |
 | Approvals inbox (web) | v1 | |
 | Approvals in Slack and Microsoft Teams | Later | |
-| Gradual trust | Explore | Approval requirements that relax as an agent proves itself (see VISION open questions). |
+| Approval evidence | Later | Approval and rejection rates and approver edits per action, to support deliberate relaxation of approval requirements. Never automatic. |
 | Approval SLAs and escalation | Later | Timeouts route to a secondary approver or a safe fallback. |
 | PII detection and masking | Later | Before prompts reach model providers. |
 | Evaluator agents | Later | Quality control only, never a security control. |
@@ -93,7 +97,8 @@ Phases:
 |---|---|---|
 | OIDC and SAML single sign-on | v1 | |
 | SCIM provisioning | Later | |
-| Workspaces | v1 | Isolation of agents, credentials, data, budgets. |
+| Workspaces | v1 | Team collaboration under common ownership; isolation of harnesses, schedules, service accounts, data, and budgets. No credentials of their own. |
+| Workspace service accounts | v1 | Non-human identities for API calls and workspace schedules; usable only by authorized members; every run records the configuring person. |
 | RBAC | v1 | |
 | Attribute-based access via policy | Later | |
 | Agent identities and on-behalf-of execution | v1 | Intersection of agent and user permissions. |
@@ -119,7 +124,10 @@ Phases:
 |---|---|---|
 | Immutable versioning and rollback | v1 | For harnesses, workflows, and catalog components. |
 | Playground | v1 | |
-| Agent ownership and transfer | v1 | Every deployed agent has an owner (see VISION, Agent Owner). |
+| Workspace ownership and owner reassignment | v1 | Harnesses belong to the workspace; a departed owner is replaced by the workspace administrator. |
+| Lifecycle states | v1 | Draft, active, deprecated, retired. |
+| Central inventory | v1 | Every harness across workspaces with owner, tools, data access, cost, last run, and its schedules (including disabled ones). |
+| Inactivity detection | Later | Flag harnesses without runs for a configurable period. |
 | Environments (development, staging, production) | Later | |
 | Promotion approvals | Later | |
 | Dry-run of side effects | Explore | |

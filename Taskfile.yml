@@ -79,6 +79,30 @@ tasks:
       - go build -ldflags "-X github.com/jangraefen/agenty/server/internal/buildinfo.Version={{.VERSION}}" -o dist/agenty ./server/cmd/agenty
       - go build -ldflags "-X github.com/jangraefen/agenty/sandbox/internal/buildinfo.Version={{.VERSION}}" -o dist/agenty-sandbox ./sandbox/cmd/agenty-sandbox
 
+  # Container images (deploy/<image>.Dockerfile, context: repository root), tagged <image>:<version>.
+  build:images:
+    desc: Build the agenty and agenty-sandbox container images locally, tagged and labeled with the version
+    cmds:
+      - for: [agenty, agenty-sandbox]
+        cmd: docker build -f deploy/{{.ITEM}}.Dockerfile --build-arg VERSION={{.VERSION}} -t {{.ITEM}}:{{.VERSION}} .
+
+  # Not part of `check`: an image rebuild takes about a minute (ARCHITECTURE §15.4).
+  test:images:
+    desc: Build the container images and smoke-test them (--version, version label, non-root user)
+    silent: true
+    cmds:
+      - task: build:images
+      - for: [agenty, agenty-sandbox]
+        cmd: |
+          image={{.ITEM}}:{{.VERSION}}
+          got=$(docker run --rm "$image" --version) || { echo "FAILED  $image --version exited non-zero"; exit 1; }
+          [ "$got" = "{{.ITEM}} {{.VERSION}}" ] || { echo "FAILED  $image --version printed '$got', want '{{.ITEM}} {{.VERSION}}'"; exit 1; }
+          label=$(docker image inspect --format '{{"{{"}}index .Config.Labels "org.opencontainers.image.version"{{"}}"}}' "$image")
+          [ "$label" = "{{.VERSION}}" ] || { echo "FAILED  $image version label is '$label', want '{{.VERSION}}'"; exit 1; }
+          user=$(docker image inspect --format '{{"{{"}}.Config.User{{"}}"}}' "$image")
+          case "${user%%:*}" in ""|0|root) echo "FAILED  $image runs as root (USER '$user')"; exit 1;; esac
+          echo "ok      $image: $got, label $label, user $user"
+
   lint:
     desc: Lint all Go modules, including architecture rules (depguard), and web/ with Biome
     cmds:

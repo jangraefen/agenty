@@ -416,6 +416,7 @@ React, Vite, TypeScript (linted and formatted with Biome); TanStack Router; TanS
 ## 14. Deployment
 
 - **Images**: `agenty` (server, UI embedded and optionally served), `agenty-sandbox`, the sandbox runtime image; published to GitHub Container Registry by the release workflow.
+- **Image build**: `deploy/agenty.Dockerfile` and `deploy/agenty-sandbox.Dockerfile`, built from the repository root (`.dockerignore` sends only `server/` and `sandbox/`). Multi-stage: each module is compiled on its own (`GOWORK=off`, `CGO_ENABLED=0`) in `golang` at the `go.work` Go version, with dependencies downloaded in their own cached layer from `go.mod` and `go.sum` (when present) and the version injected via `-ldflags` into `buildinfo.Version`; the runtime stage is `gcr.io/distroless/static-debian13:nonroot` (no shell or package manager; CA certificates, tzdata; user 65532). Base images are pinned by digest, and the images carry OCI labels including `org.opencontainers.image.version`. A unit test per module keeps the Dockerfile in line with `go.work` and these rules. The Dockerfiles work with the classic builder and BuildKit. `task build:images` builds `agenty:<version>` and `agenty-sandbox:<version>` locally; `task test:images` builds them and checks `--version`, the version label, and the non-root user. The sandbox runner needs access to the container runtime socket, granted at deployment (e.g., a supplementary group), not by running as root.
 - **Single VM**: Docker Compose with `agenty` (all roles), `agenty-sandbox` (with `runsc` on the host), PostgreSQL with pgvector, a volume for blobs.
 - **Scaled**: separate `api`, `worker`, `scheduler` processes against the same database; sandbox runners per host.
 - **Configuration**: a YAML file (`agenty --config <file>`) with `AGENTY_*` environment variables overriding its values; invalid configuration aborts startup naming the field. `--roles` selects any combination of `api`, `worker`, `scheduler` (default: all). Only the `api` role listens for HTTP and serves `/healthz` (reporting the active roles) and `/readyz`. Master key for envelope encryption from file or environment in v1.
@@ -457,7 +458,7 @@ A **scripted model** returns predefined responses (including tool calls) step by
 
 **Local**
 
-- **Task** targets: `test:unit`, `test:module`, `test:integration`, `test:e2e`, `test:ui`, `test:mutation`, `test:gates`, `test:milestone:Mx` (automated milestone demos), `test:nightly` (real model, not gating), `check:licenses`, `check:coverage`, and `check` (all gating tiers plus gates). `task check` must pass before merging to `main`. Tiers without tests report "no tests yet" and succeed.
+- **Task** targets: `test:unit`, `test:module`, `test:integration`, `test:e2e`, `test:ui`, `test:mutation`, `test:gates`, `test:milestone:Mx` (automated milestone demos), `test:nightly` (real model, not gating), `check:licenses`, `check:coverage`, and `check` (all gating tiers plus gates). `task check` must pass before merging to `main`. Tiers without tests report "no tests yet" and succeed. `test:images` (container image smoke test, §14) is not part of `check`, because an image rebuild takes about a minute; a unit test checks the Dockerfiles statically instead. `test:images` is run manually today and will run in the release workflow (E21).
 - **Go test tiers** are selected by build tag: untagged tests are unit tests; `module`, `integration`, `e2e`, and `milestone` tag the other tiers. A milestone demo is the test `TestMilestone<Mx>`.
 - **PostgreSQL in tests**: `server/internal/testinfra/pgtest` starts one PostgreSQL-with-pgvector container per test package (testcontainers-go, from `TestMain`) and gives each test its own database. `deploy/compose.yaml` runs the same pinned image for local development; a unit test keeps the two in sync. On macOS, the Task test targets point testcontainers-go at the active Docker context.
 - **Tools** (Go, Task, Lefthook, golangci-lint, go-licenses, Gremlins, Docker) are installed by the developer on the `PATH`. `task setup` verifies their versions (golangci-lint, go-licenses, and Gremlins exactly, because lint results, detected licenses, and mutation results depend on them; the others as minimums) and installs the Lefthook hooks.
@@ -481,7 +482,7 @@ A **scripted model** returns predefined responses (including tool calls) step by
 
 Verified 2026-10-04 against each project's repository. **Before adding any dependency, check it against the dependency rule (§1) and record it here.**
 
-**Shipped (runtime)** — all permissive:
+**Shipped (runtime)** — all linked and shipped code is permissive; the runtime base image additionally carries Debian OS data packages, some GPL-licensed, that are aggregated in the image, not linked:
 
 | Project | License |
 |---|---|
@@ -492,6 +493,7 @@ Verified 2026-10-04 against each project's repository. **Before adding any depen
 | openai-go, go-genai, aws-sdk-go-v2, go-oidc, opentelemetry-go | Apache-2.0 |
 | anthropic-sdk-go, charmbracelet/log, Gin, goccy/go-yaml (configuration file; already required by Gin) | MIT |
 | crewjam/saml | BSD-2-Clause |
+| distroless `static-debian13` (runtime base image; checked 2026-10-05) | Apache-2.0 (project); bundled Debian data packages (no executables) under their own licenses: ca-certificates MPL-2.0 (certificates) and GPL-2.0+ (packaging), tzdata public domain, media-types ad-hoc permissive, base-files GPL-2.0+, netbase GPL-2.0 (data and configuration files only; aggregated in the image, nothing linked into Agenty) |
 | openapi-typescript, openapi-fetch, React, Vite, TanStack Router/Query, shadcn/ui, Radix, Tailwind | MIT |
 
 **Development and test only** (not distributed):
@@ -500,6 +502,7 @@ Verified 2026-10-04 against each project's repository. **Before adding any depen
 |---|---|
 | testcontainers-go (incl. its `postgres` module), Vitest, Testing Library, Task, Lefthook, Colima, actionlint | MIT |
 | Playwright, Gremlins, Stryker, Dex, Lima, go-licenses, Docker Engine and CLI | Apache-2.0 |
+| `golang` Docker image (build stage only; its contents are not shipped; checked 2026-10-05) | BSD-3-Clause (Go); Debian packages under their own licenses |
 | Biome (@biomejs/biome npm package) | MIT OR Apache-2.0 |
 | axe-core | MPL-2.0 |
 | golangci-lint | GPL-3.0 (standalone tool, not linked) |

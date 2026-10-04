@@ -60,7 +60,8 @@ Phases:
 | MCP client | v1 | |
 | MCP server | Later | Expose Agenty agents and tools to other MCP clients. |
 | OpenAPI 3.x import | v1 | Turns internal REST APIs into typed tools. |
-| Credential brokering | v1 | OAuth2 (incl. PKCE), service accounts, on-behalf-of delegation. mTLS later. |
+| Credential brokering | v1 | OAuth2 (incl. PKCE), on-behalf-of delegation, service account credentials. Write-only secrets, never exposed to models, scripts, or builders. mTLS later. |
+| Service account credentials | v1 | Agenty-issued API tokens or OAuth client credentials for calling entry points. Per-connector downstream credentials: username/password (rotation reminders, can be disallowed by policy), OAuth client credentials (preferred), OAuth authorization-code grants (records who consented). Token exchange and external secret stores (e.g., Vault) later. |
 | Sandboxed custom tools (Python, Node.js) | v1 | Ephemeral, resource-limited, egress allowlist. Published by the enablement team or by technical builders. |
 | Scoped tool publishing | v1 | Technical builders publish to their team scope; wider scopes require review. Business builders use tools but do not create them. The same review applies to skills that contain scripts. |
 | Knowledge connectors | v1 | Start with file upload, S3-compatible storage, Confluence, SharePoint. Jira, ServiceNow, SQL later. |

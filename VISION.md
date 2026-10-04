@@ -1,196 +1,121 @@
-# Product Vision: Enterprise Agent Platform (Agenty)
+# Agenty — Product Vision
 
-> **Status**: Approved Vision  
-> **Target Audience**: Enterprise Organizations (Cross-functional Business Teams, Engineering, Security, and FinOps)  
-> **Deployment Architecture**: Infrastructure-Agnostic, 100% Self-Hosted & Air-Gapped Sovereign Deployment
-
----
-
-## 1. Executive Summary & Core Philosophy
-
-### 1.1 Vision Statement
-Modern enterprises hold vast institutional knowledge, extensive APIs, and complex operational workflows, yet leveraging agentic AI has historically required specialized AI engineering teams.
-
-**Agenty** is the **Enterprise Operating System for Autonomous Digital Coworkers**—a unified platform that empowers non-technical business domain experts to visually build, connect, and govern autonomous AI agents, while equipping technical teams with the pro-code extensibility, deterministic policy-as-code guardrails, and sovereign runtime needed to guarantee enterprise security, compliance, and cost predictability.
-
-### 1.2 Core Pillars
-
-```mermaid
-flowchart TD
-    subgraph Pillars["Core Strategic Pillars"]
-        direction TB
-        P1["Radical Accessibility<br/>(Visual No-Code Builder)"]
-        P2["Absolute Sovereignty<br/>(Self-Hosted & Air-Gapped)"]
-        P3["Governed Autonomy<br/>(HITL, Auto-Mode, Policy-as-Code)"]
-        P4["FinOps & Observability<br/>(Per-Workflow Cost & OTel Audit)"]
-    end
-```
-
-- **Radical Accessibility**: Business domain experts assemble, customize, and orchestrate intelligent agents and workflows using an intuitive visual canvas without writing a single line of code.
-- **Enterprise Sovereignty**: Guaranteed data privacy and compliance through a 100% self-hosted, air-gapped architecture that runs inside customer-managed infrastructure without phone-home telemetry.
-- **Governed Autonomy**: Autonomy within strict, deterministic boundaries. Agents operate under pluggable policy-as-code engines, configurable human-in-the-loop checkpoints, and multi-agent supervisory oversight.
-- **Model Freedom & Agnosticism**: No vendor lock-in. Seamless connection to leading commercial models, private enterprise AI gateways, or fully local, open-weight model runtimes.
-- **Total Visibility & FinOps Attribution**: Every token, tool execution, and dollar spent is tracked in real-time, attributed down to specific workflows, and permanently captured in tamper-evident audit logs.
+> **Status**: Draft
+> **Companion**: [CAPABILITIES.md](CAPABILITIES.md) lists concrete capabilities and their phasing.
 
 ---
 
-## 2. Target Personas & User Journeys
+## 1. Why Agenty Exists
 
-| Persona | Organizational Role | Core Capabilities & User Journey |
+Enterprises want their teams to build AI agents. Today they have three options, and none of them fits well:
+
+- **Open-source agent builders** are easy to start with, but the features an enterprise needs before it can let teams use them in production (SSO, RBAC, workspace isolation, audit trails, central policy) are often reserved for a paid or cloud edition.
+- **Hyperscaler and SaaS agent platforms** ship with governance, but tie the enterprise to one vendor's cloud, models, and pricing.
+- **Building in-house** on agent frameworks turns engineering teams into the bottleneck for every agent a business team wants.
+
+The result: either agents stay locked inside IT, or they spread across teams without central visibility into what they do, what they access, and what they cost.
+
+## 2. Vision Statement
+
+**Agenty is a fully open-source, self-hostable platform where anyone in an enterprise — technical or not — can define their own agent harnesses from building blocks the enterprise provides and approves, while central teams keep visibility and control over what agents do, what data they touch, and what they cost.**
+
+No enterprise edition. No feature paywall. Everything an enterprise needs to run Agenty in production is part of the open-source product, free to self-host.
+
+## 3. What Makes Agenty Different
+
+1. **No enterprise tax.** SSO, RBAC, workspaces, audit trails, policy enforcement, and cost attribution are core features, not upsells.
+2. **Harnesses, not flowcharts.** Agents are model-driven: builders describe the situation, the available tools, and the limits, and the agent decides the steps. Builders define the whole harness around a model — entry points, instructions, tools, skills, knowledge, rules, approvals, and expected output. What a developer achieves with an agent framework in code, a business builder achieves by composing catalog tools and writing skills in plain language.
+3. **Central enablement, decentralized building.** Central teams publish the building blocks — connectors, tools, skills, templates, model configurations, policies — and set standards once. Teams compose agents from what is approved instead of waiting for IT to build them. Agenty ships with a maintained starter kit of connectors for common enterprise systems, so builders can be productive from day one rather than waiting for a catalog to be filled.
+4. **Governed by default.** Every agent action passes through identity, policy, and audit, whether or not the builder knows these mechanisms exist.
+
+## 4. Principles
+
+Principles are ranked. When two conflict, the higher one wins.
+
+1. **Governance over accessibility.** A capability that cannot be governed — attributed to an identity, checked against policy, recorded in the audit trail — does not ship, however convenient it would be.
+2. **Safe by default.** Builders should not need to understand policy to be safe. Safe defaults come from the catalog and the workspace, not from the builder's diligence.
+3. **Nothing withheld.** No capability is reserved for a paid edition.
+4. **Open standards over bespoke integrations.** MCP, OpenAPI, OpenTelemetry, OIDC/SAML, SCIM, OPA. Prefer the standard even when a custom integration would be faster.
+5. **One declarative definition.** Every harness has a declarative, human-readable representation (e.g., YAML) that is its source of truth. The visual builder edits it; technical builders can version-control it alongside their code. The definition does not expose or depend on any particular agent framework.
+6. **Operable by a regular enterprise IT team.** Running Agenty must not require a dedicated AI platform team.
+7. **Model agnostic.** No dependency on a single model vendor. Any model reachable through a supported provider API or enterprise AI gateway can be used.
+
+## 5. Personas
+
+| Group | Persona | Goal |
 |---|---|---|
-| **The Business Builder** *(Non-Technical)* | Operations, HR, Legal, Customer Support, Finance domain experts | Uses a drag-and-drop visual workflow canvas to create agents, customize instructions, link pre-approved enterprise data sources, and define notification/approval checkpoints without touching code or infrastructure. |
-| **The Technical Extender** *(Developers & Engineers)* | Software Engineers, AI Engineers, Enterprise Integration teams | Authors custom tools and skills in isolated Python/TypeScript sandboxes; imports internal microservices via OpenAPI and Model Context Protocol (MCP); writes declarative policies (e.g., OPA/Rego, CEL). |
-| **The Platform Admin & Compliance Officer** *(Security, IT, FinOps)* | CISO, IT Ops, Security Architects, FinOps Leads | Enforces SAML/OIDC SSO, manages hierarchical RBAC/ABAC permissions, sets per-workflow and department budget caps, audits end-to-end execution traces, and ensures zero data egress in air-gapped environments. |
+| **Builders** | **Business Builder** | Domain expert who builds agents and workflows visually from catalog components, without writing code. |
+| | **Technical Builder** | Developer who version-controls harness definitions, writes custom tools, and publishes them to their team's scope; wider publication goes through review. |
+| | **Enablement Team** | Central team (IT, AI center of excellence) that publishes connectors, tools, templates, model configurations, and policies to the catalog and sets standards. |
+| **Agent users** | **End User** | Employee who talks to copilots or receives the output of background workers. |
+| | **Approver** | Signs off on actions that require human approval. Needs enough context to decide quickly and is accountable for the decision. |
+| | **Agent Owner** | Accountable business owner of a deployed agent: its purpose, its access, its lifecycle, and its retirement. |
+| **Central oversight** | **Platform Operator** | Installs, upgrades, and scales Agenty; connects identity providers and model providers. |
+| | **Compliance & Security** | Defines policies, reviews audit trails, investigates incidents. |
+| | **FinOps / Cost Owner** | Tracks consumption, sets budgets, allocates cost to departments. |
 
----
+## 6. Core Concepts
 
-## 3. Core Operating Model & Interaction Paradigms
+Shared vocabulary for all future specifications.
 
-### 3.1 Dual Execution Paradigms: Hybrid Operations
-Enterprises require both synchronous interaction and asynchronous process automation. The platform natively supports both modes:
+- **Agent Harness** — The versioned definition of an agent and Agenty's primary building unit. With typed entry points and an output contract, a harness behaves like a typed function — inputs in, structured result out — which makes it easy to use from other automations and by other agents. It consists of:
+  - **Entry points** — how a run is started: chat, a form in the portal, an authenticated API call, or a schedule. Each entry point defines typed parameters and a prompt template that turns them into the run's first prompt. The same parameter definition drives API validation and the portal form.
+  - **Instructions** — the agent's role, goal, and behavior, in plain language.
+  - **Model configuration** — selected from centrally approved configurations.
+  - **Tools** — capabilities from the catalog the agent may use, each with a permission scope (e.g., read-only vs. write).
+  - **Skills** — reusable know-how (runbooks, taxonomies, procedures, and supporting scripts) the agent loads when relevant.
+  - **Knowledge** — document sources for retrieval.
+  - **Rules** — deterministic limits on tool use (e.g., "never close priority 1–2 tickets"), built with a structured rule builder and enforced as policy.
+  - **Approvals** — which actions require human sign-off, and by whom.
+  - **Output contract** — the structure the agent's result must have.
+  - **Identity and grants** — what the agent itself is allowed to access.
+- **Tool** — A typed, permission-scoped capability (e.g., "ServiceNow: close request"), backed by an MCP server, an imported OpenAPI operation, or sandboxed custom code. Tools are published by the enablement team or by technical builders; business builders use them but do not create them.
+- **Skill** — A package of domain expertise: plain-language instructions, optionally bundled with scripts (Bash, Python, Node.js) and resources (templates, reference data) the agent can use. Skills follow the open Agent Skills format where possible. They are the primary way builders give agents expertise: business builders write the instructions, and scripts let technical builders — or business builders who are comfortable with a little code — encode logic that is better expressed deterministically.
+- **Workflow** — A composition of harnesses with control flow and approval gates, for processes that require mandated determinism (fixed step order, fan-out, hand-offs between teams). Most agents need no workflow. Workflows are graphs, not DAGs: loops and retries are allowed.
+- **Catalog** — The governed registry of reusable building blocks (connectors, tools, skills, harness templates, model configurations, policies), each published with a visibility scope (team, department, enterprise).
+- **Workspace** — The unit of isolation for agents, credentials, data, and budgets.
+- **Run** — A single execution of a harness or workflow; the unit of tracing, auditing, and cost attribution.
+- **Example Run** — A saved input (and optionally a reviewed output) attached to a harness. Builders replay their examples after changing a prompt, tool, or model to see what changed. Examples are how builders gain confidence in a change; they are not a formal test suite and do not gate deployment.
 
-1. **Interactive Conversational Agents (Copilots)**:
-   - Embedded into daily communication channels (Slack, Microsoft Teams, internal web portals, CRM sidebars).
-   - Serves on-demand requests: Q&A over internal documents, ad-hoc task delegation, interactive drafting, and real-time guidance.
-2. **Autonomous Background Workers (Digital Workers)**:
-   - Headless, asynchronous execution triggered by system events, webhooks, schedules (cron), or enterprise message queues.
-   - Executes long-running, multi-step business operations (e.g., vendor invoice reconciliation, security incident triaging, cross-system employee onboarding) without requiring active human presence.
+## 7. How Agents Run
 
-### 3.2 Dynamic Autonomy Modes
-Users and administrators can dynamically configure an agent's operational autonomy based on risk profile and operational context:
+- **Interactive copilots** serve users on demand in a web portal and in collaboration tools such as Slack or Microsoft Teams.
+- **Background workers** are started by other automations through the API, or by schedules, and execute long-running processes without a user watching. First-class event integrations with external systems (e.g., "GitLab issue labeled") come in a later phase.
+- **Runs can be synchronous or asynchronous.** A caller can wait for the structured result, or receive a run reference and collect the result later — required whenever a run may pause for approval.
+- **Durable execution.** Runs survive restarts and can pause — for an approval, for days if needed — and resume where they left off.
+- **Autonomy is configured per harness**: from confirming every side effect, to bounded autonomy within policy, to fully headless execution governed only by policy and approval gates.
 
-- **Interactive Mode**: The agent requests explicit user confirmation before executing any external tool invocation or system state change.
-- **Auto-Mode (Bounded Autonomous Execution)**: Inspired by developer auto-modes, the agent executes multi-step task loops autonomously without prompting for routine read/write actions, provided they remain within the defined workspace, tool whitelist, and budget limits. It automatically drops back to interactive mode or pauses for approval upon encountering high-risk actions, policy violations, or ambiguous edge cases.
-- **Background / Headless Mode**: Fully autonomous execution for scheduled or event-driven workers governed strictly by pre-defined policies and supervisory review nodes.
+## 8. Trust Model
 
----
+What Agenty assumes, and what it guarantees.
 
-## 4. Visual Workflow Canvas & Multi-Agent Orchestration
+- **The model is not trusted.** Any agent that processes untrusted content (emails, documents, tickets, web pages) is assumed to be steerable by that content. Safety comes from deterministic controls outside the model, not from detecting prompt injections.
+- **Every run has an authenticated caller.** Every entry point requires a valid login — a person, or a service account for automations. Scheduled runs act on behalf of the schedule's owner.
+- **Every action has an identity.** Agents have their own identity with explicit grants. A run acts on behalf of its caller, limited to the intersection of the agent's and the caller's permissions. Delegation chains (an agent calling an agent) are recorded and can never widen permissions.
+- **Parameters are data, not instructions.** Values passed into a prompt template are rendered as clearly delimited data and treated as untrusted content, so they cannot silently rewrite the agent's instructions.
+- **Policy before every side effect.** Every tool call is evaluated against policy (OPA) before it executes. Content from untrusted sources is tracked through the run, and policies can restrict which actions such content may influence.
+- **Code is governed wherever it lives.** Scripts in skills and custom tools run in isolated sandboxes with no network access or credentials unless explicitly granted, and their execution is subject to policy like any other tool call. Skills containing scripts follow the same publishing review as tools beyond team scope.
+- **Humans approve what is high-risk.** Approval requirements can be mandated centrally by policy and added per harness. Builders can add approval gates but cannot remove centrally mandated ones.
+- **Retrieval respects source permissions.** Agents only retrieve what the identity they act for is allowed to access in the source system.
+- **LLM-based review is quality control, not a security control.** Evaluator agents may check accuracy or tone; they never replace deterministic enforcement.
+- **Audit without hoarding.** Audit events are append-only. Personal data within them is encrypted per data subject, so erasure requests are honored by destroying the key (crypto-shredding) while the event trail itself remains intact.
+- **No phone-home.** Agenty itself makes no outbound calls beyond those the operator configures.
 
-### 4.1 The Visual Workflow Canvas
-A modern drag-and-drop canvas (DAG-based) where non-technical users visually orchestrate agents, data flows, and enterprise actions:
-- **Triggers**: Schedule (Cron), Webhooks, Chat Events, System Webhooks (e.g., ERP updates, ticketing triggers).
-- **Agent Nodes**: Modular agent blocks configured with prompt instructions, roles, assigned models, memory contexts, and toolsets.
-- **Control Flow Nodes**: Conditionals (If/Else, Switch), Loops, Parallel branches, and Data Mapping/Transformation blocks.
-- **Human-in-the-Loop (HITL) Gateways**: Dedicated pause nodes requiring human sign-off via chat or portal approvals before proceeding.
-- **Tool & Skill Nodes**: Direct invocation of catalog tools, API connectors, or enterprise RAG knowledge queries.
+## 9. Non-Goals
 
-### 4.2 Native Multi-Agent Topologies
-To address complex enterprise operations without brittle monolithic prompts, the platform provides out-of-the-box structural patterns for multi-agent collaboration:
+- **Not a flow builder first.** Agenty does not ask builders to draw every step; the canvas exists for the minority of processes that need mandated determinism.
+- **Not an iPaaS.** Deterministic integration steps exist to serve agents. Agenty does not compete with general-purpose integration and automation platforms.
+- **Not a general-purpose chat assistant.** Copilots are purpose-built agents, not a replacement for a general AI chat product.
+- **No model training, fine-tuning, or serving.** Agenty consumes models; it does not train or host them.
+- **No paid edition.** No features are withheld from the open-source product.
+- **No air-gap guarantee.** Agenty is self-hostable and does not depend on external services of its own. Deployments that use commercial model APIs or SaaS collaboration tools send data to those services by the operator's choice.
 
-```mermaid
-flowchart TD
-    subgraph SupervisorWorker["Supervisor-Worker Pattern"]
-        S[Supervisor / Router Agent] -->|Decomposes & Delegates| W1[Research Agent]
-        S -->|Decomposes & Delegates| W2[Analytics Agent]
-        W1 -->|Worker Result| S
-        W2 -->|Worker Result| S
-        S -->|Synthesizes Response| Out1[Consolidated Output]
-    end
+## 10. Open Questions
 
-    subgraph EvaluatorOptimizer["Evaluator-Optimizer / Supervisory Review"]
-        Gen[Generator Agent] -->|Draft Output / Action| Eval[Supervisory / Evaluator Agent]
-        Eval -->|Fails Policy / Quality Check| Gen
-        Eval -->|Passes Validation| Out2[Executed Action / Output]
-    end
-
-    subgraph AgentAsTool["Hierarchical / Agent-as-a-Tool"]
-        Main[Primary Business Agent] -->|Calls as Reusable Tool| Spec[Specialized Domain Agent]
-        Spec -->|Returns Structured Output| Main
-    end
-```
-
-- **Supervisor-Worker**: A coordinator agent decomposes complex requests into discrete subtasks, delegates them to specialized worker agents, and synthesizes the final output.
-- **Evaluator-Optimizer (Supervisory Review)**: A generator agent produces proposed actions, while an independent supervisory agent validates the output against quality criteria, business logic, or compliance rules before release.
-- **Agent-as-a-Tool**: Published agents can be packaged and invoked as callable tools by other agents, promoting modularity and reuse across teams.
-
----
-
-## 5. Model Agnosticism, Extensibility & Knowledge Grounding
-
-### 5.1 Model Agnosticism & Enterprise AI Gateways
-The platform ensures complete independence from any single LLM vendor:
-- **Broad Model Provider Ecosystem**: Out-of-the-box compatibility with major commercial LLM endpoints (Azure OpenAI, AWS Bedrock, Google Cloud Vertex AI, Anthropic, Mistral) via private enterprise endpoints.
-- **Private & Air-Gapped Local Inference**: Native support for self-hosted open-weight inference runtimes (e.g., vLLM, Ollama, HuggingFace TGI) running entirely within the customer's private perimeter.
-- **Enterprise AI Gateway Integration**: Seamless routing through internal corporate AI gateways (e.g., LiteLLM, Portkey, Kong AI Gateway, or proprietary proxies) respecting corporate egress, rate limits, and centralized token caching.
-- **Intelligent Routing & Failover**: Per-agent model assignment with automatic failover chains during provider outages or rate limits.
-
-### 5.2 Internal Enterprise Marketplace & Component Catalog
-- **Governed Internal App Store**: Centralized registry for reusable Tools, Skills, Agent Blueprints, and Knowledge Connectors.
-- **Enterprise Publishing Lifecycle**: Multi-tier visibility (team-private, department-shared, enterprise-wide) with administrative review and security validation workflows.
-
-### 5.3 Open Integration Standards
-- **Model Context Protocol (MCP)**: Native support as an MCP Client and Server for bidirectional, standard-based tool and context sharing.
-- **OpenAPI / Swagger 3.x Import**: Instant conversion of existing enterprise REST/microservice APIs into validated, typed agent tools.
-- **Enterprise Authentication Brokering**: Secure credential storage and injection (OAuth2 with PKCE, Service Accounts, mTLS, On-Behalf-Of user delegation).
-
-### 5.4 Pro-Code Custom Tool & Skill Authoring
-- **Isolated Sandboxed Execution**: Custom Python and TypeScript tools run inside ephemeral, resource-constrained container sandboxes with strictly whitelisted network egress.
-- **Typed Schemas & Contracts**: Automated generation of LLM-friendly schemas, parameter validation, and structured error returns.
-
-### 5.5 Enterprise Knowledge Grounding (Sovereign RAG)
-- **Enterprise Connectors**: Native connectors for SharePoint, Confluence, Jira, ServiceNow, local S3/MinIO buckets, and SQL/vector databases.
-- **Permission-Aware Retrieval**: Search and retrieval strictly enforce source system access control lists (ACLs)—agents never retrieve documents the querying user cannot access.
-- **Verifiable Citations**: Factual assertions link directly back to verified source files with exact paragraph/page citations.
-
----
-
-## 6. Governance, Policy-as-Code & Human-in-the-Loop (HITL)
-
-### 6.1 Configurable Human-in-the-Loop (HITL)
-- **Action-Level Sensitivity**: Read/query actions execute autonomously, while sensitive mutations (database updates, refunds, external emails) trigger approval checkpoints.
-- **Omnichannel Approvals**: Interactive approval notifications delivered directly to **Slack**, **Microsoft Teams**, email with secure tokens, or a dedicated web-based **Approvals Inbox**.
-- **SLA & Escalation Rules**: Configurable timeouts automatically route unhandled approval requests to secondary managers or initiate safe fallback procedures.
-
-### 6.2 Pluggable Policy-as-Code Guardrails
-- **Pluggable Policy Engines**: Support for declarative policy frameworks—such as **Open Policy Agent (OPA/Rego)**, **AWS Cedar**, **Common Expression Language (CEL)**—as well as custom scripted policy hooks.
-- **Pre-Execution Interception**: Every agent tool call and API request is evaluated against active policy definitions before execution.
-- **Non-Bypassable Hard Invariants**: Guarantees deterministic enforcement of business boundaries (e.g., transaction limits, role-based data restrictions) that LLM reasoning cannot bypass.
-
-### 6.3 Supervisory Multi-Agent Oversight
-- **Auditor Agents**: Independent supervisory agents inspect proposed actions or generated outputs for factuality, tone, and regulatory compliance.
-- **Multi-Agent Consensus**: High-impact actions can require dual-agent sign-off or hybrid agent-plus-human confirmation before downstream execution.
-
----
-
-## 7. Enterprise FinOps, Identity & Observability
-
-### 7.1 Usage & Cost Monitoring with Per-Workflow Attribution
-- **First-Class Per-Workflow Cost Metrics**:
-  - Instant visibility into the exact financial cost of every workflow (average cost per run, p95, historical trends, and cumulative spend).
-  - Step-level run breakdowns showing token counts and financial cost for every LLM invocation and tool call.
-  - Per-workflow budget caps and automated shutoffs to prevent unexpected loops from draining budgets.
-- **Enterprise FinOps Attribution**: Real-time tracking of token consumption and API costs mapped to cost centers, departments, workspaces, and individual agents.
-- **Alerting & Export APIs**: Soft alert thresholds (e.g., 80% quota reached via Slack/email) and exportable billing data (CSV, JSON, Prometheus metrics, and automated billing export APIs for ERP integration).
-
-### 7.2 Enterprise Identity, Access & Multitenancy
-- **Enterprise SSO & IdP Federation**: Native SAML 2.0 and OIDC support (Okta, Microsoft Entra ID, Keycloak, Ping Identity) with Just-In-Time (JIT) provisioning and SCIM user synchronization.
-- **Hierarchical Multitenancy**: Department and workspace segmentation ensuring complete isolation of agents, tools, credentials, and data.
-- **Granular RBAC/ABAC**: Fine-grained permissions governing agent creation, execution, tool access, and administrative oversight.
-
-### 7.3 Immutable Enterprise Audit Trails & Observability
-- **Comprehensive Execution Traces**: Full lifecycle recording capturing initial prompts, reasoning steps, tool inputs/outputs, policy checks, human decisions, and final responses.
-- **OpenTelemetry (OTel) Native**: Direct export of traces and metrics to enterprise observability tools (Datadog, Splunk, Dynatrace, Grafana Tempo).
-- **Compliance & Tamper-Resistance**: Immutable audit logs formatted for SOC2, ISO 27001, HIPAA, and GDPR compliance audits.
-- **Data Loss Prevention (DLP)**: Real-time PII/PHI detection and masking before prompts reach LLM inference runtimes.
-
----
-
-## 8. Enterprise Agent Lifecycle Management (ALM) & Deployment Sovereignty
-
-### 8.1 Enterprise Agent Lifecycle Management (ALM)
-- **Interactive Simulation & Playground**:
-  - Safe sandbox testing environment with mock data and read-only system replicas.
-  - "Dry-Run" tool mode: simulates execution plans and visualizes downstream side-effects without mutating live systems.
-- **Semantic Versioning & Instant Rollback**:
-  - Immutable versioning for all agent definitions, prompts, workflows, and tool configurations.
-  - Instant one-click rollback to previously verified stable releases.
-- **Multi-Environment Promotion Pipelines**:
-  - Formal progression across isolated tiers: **Development → Staging / UAT → Production**.
-  - Mandatory promotion sign-offs from authorized team leads or compliance officers prior to production deployment.
-
-### 8.2 Sovereign, Air-Gapped & Infrastructure-Agnostic Deployment
-- **Infrastructure-Agnostic Architecture**: Packaged for reliable deployment across customer-managed environments (standard container runtimes, private cloud, or sovereign on-premises infrastructure) without vendor lock-in.
-- **True Air-Gap Support**: Operates entirely offline with zero external network calls, zero phone-home telemetry, and full support for local container and model registries.
-- **Absolute Data Perimeter**: Customer data, agent states, prompts, embeddings, and vector indices never leave the customer's controlled perimeter.
-- **Stateless Execution & High Availability**: Scalable worker architecture decoupled from persistent state, ensuring high availability, straightforward upgrades, and reliable disaster recovery.
+- **Sustainability.** Without a paid edition, how is long-term development funded and governed (foundation, sponsorship, support contracts)? Enterprises adopting a platform this central to their operations will ask.
+- **Definition sync.** When a harness definition lives in a Git repository, is the repository or Agenty the source of truth, and how are edits in the visual builder reconciled with it?
+- **Gradual trust.** Should approval requirements be able to relax automatically as an agent proves itself (e.g., approvals for the first weeks, then sampled review)?
+- **Memory model.** Which memory scopes exist (per run, per user, per agent), how long is memory retained, and who can inspect or erase it?
+- **Agent sprawl.** How are ownership transfer, discovery, deprecation, and retirement of agents handled as the number of builders grows? This includes schedules: what happens to scheduled runs when their owner leaves?
+- **Cost attribution for local models.** Commercial models are attributed in currency; self-hosted models only in tokens. Is that sufficient for chargeback?
+- **Local model support.** Self-hosted runtimes exposing OpenAI-compatible APIs are usable from the start. Is dedicated support needed beyond that?

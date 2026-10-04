@@ -70,7 +70,7 @@ tasks:
       - go build -ldflags "-X github.com/jangraefen/agenty/sandbox/internal/buildinfo.Version={{.VERSION}}" -o dist/agenty-sandbox ./sandbox/cmd/agenty-sandbox
 
   lint:
-    desc: Lint all Go modules, including architecture rules
+    desc: Lint all Go modules, including architecture rules (depguard), and web/ with Biome
     cmds:
       - for: { var: GO_MODULES }
         cmd: cd {{.ITEM}} && golangci-lint run ./...

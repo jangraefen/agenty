@@ -1,0 +1,4 @@
+# Build context for deploy/*.Dockerfile (repository root): send only what the images need.
+*
+!server/
+!sandbox/

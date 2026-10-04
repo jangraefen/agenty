@@ -7,6 +7,8 @@ vars:
   GO_PACKAGES: ./server/... ./sandbox/...
   # Exact: lint results depend on the version.
   GOLANGCI_LINT_VERSION: 2.14.0
+  # Exact: mutants and threshold handling depend on the version.
+  GREMLINS_VERSION: 0.6.0
   # Minimum versions.
   TASK_MIN_VERSION: 3.54.0
   LEFTHOOK_MIN_VERSION: 2.1.16
@@ -53,6 +55,9 @@ tasks:
 
         have=$(golangci-lint version --short 2>/dev/null)
         [ "$have" = {{.GOLANGCI_LINT_VERSION}} ]; report golangci-lint "$have" $? "exactly {{.GOLANGCI_LINT_VERSION}}" "https://golangci-lint.run/docs/welcome/install/"
+
+        have=$(gremlins --version 2>/dev/null | awk '{print $3}')
+        [ "$have" = {{.GREMLINS_VERSION}} ]; report gremlins "$have" $? "exactly {{.GREMLINS_VERSION}}" "brew tap go-gremlins/tap && brew install gremlins"
 
         have=$(node --version 2>/dev/null | sed 's/^v//')
         [ -n "$have" ] && at_least "$have" {{.NODE_MIN_VERSION}}; report node "$have" $? ">= {{.NODE_MIN_VERSION}}" "brew install node, or https://nodejs.org/en/download"
@@ -176,10 +181,37 @@ tasks:
     cmds:
       - echo "test:ui - no tests yet"
 
+  # Mutation testing (ARCHITECTURE §15.3): Gremlins mutates each package in MUTATION_PACKAGES with the
+  # settings in .gremlins.yaml (efficacy threshold 80 %), and the task fails naming every package below it.
+  # Override the list for one run with `task test:mutation MUTATION_PACKAGES="server/internal/<pkg>"`.
   test:mutation:
-    desc: Run mutation tests on the critical packages
+    desc: Run mutation tests (Gremlins) on the critical packages
+    silent: true
+    vars:
+      # Critical packages (toolgateway, policy, credentials, identity, runs) as repository-relative
+      # paths, space-separated; empty until they exist.
+      MUTATION_PACKAGES: '{{.MUTATION_PACKAGES | default ""}}'
     cmds:
-      - echo "test:mutation - no tests yet"
+      - |
+        set -u
+        pkgs="{{.MUTATION_PACKAGES}}"
+        if [ -z "$pkgs" ]; then
+          echo "test:mutation - no packages configured (MUTATION_PACKAGES in Taskfile.yml)"
+          exit 0
+        fi
+        config="$PWD/.gremlins.yaml"
+        failed=""
+        for pkg in $pkgs; do
+          echo "test:mutation - $pkg"
+          # Run from the package's own module; GOWORK=off keeps go.work.sum untouched (no cross-module imports).
+          dir=$(cd "$pkg" && pwd -P) && module=$(cd "$dir" && dirname "$(GOWORK=off go env GOMOD)") \
+            && (cd "$module" && GOWORK=off gremlins unleash --config "$config" ".${dir#"$module"}") \
+            || failed="$failed $pkg"
+        done
+        if [ -n "$failed" ]; then
+          echo "test:mutation - FAILED (efficacy below threshold or error):$failed"
+          exit 1
+        fi
 
   test:gates:
     desc: Prove that every quality gate fails when its rule is violated

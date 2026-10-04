@@ -1,0 +1,10 @@
+# Gremlins mutation-testing settings for `task test:mutation` (ARCHITECTURE §15.3).
+# The packages to mutate are listed in MUTATION_PACKAGES in Taskfile.yml.
+# Thresholds must be set here: Gremlins 0.6.0 ignores the --threshold-* command-line flags.
+unleash:
+  # Mutant test runs time out after (coverage run time x coefficient); the coverage run excludes
+  # compilation, so a low coefficient times out mutants that merely recompile.
+  timeout-coefficient: 50
+  threshold:
+    # Percent of killed mutants over killed + lived; below it, Gremlins exits with code 10.
+    efficacy: 80

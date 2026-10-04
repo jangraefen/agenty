@@ -1,15 +1,16 @@
 // Checks the licenses of all installed npm packages against the allowlists (ARCHITECTURE §16).
 // Package data comes from `pnpm licenses list --json`, which covers every package in the
-// lockfile that is installed for this platform, including optional native binaries.
+// lockfile that is installed for this platform, including optional native binaries, across all
+// workspace packages (the app and codegen/).
 // Exits non-zero and names each offending package and its license.
-// Keep the allowlists in line with the Go allowlist in go-licenses-allowlist.txt.
+// Keep the allowlists in line with the Go allowlist in go-licenses-allowlist.txt (Python-2.0 is web-only).
 import { execFileSync } from "node:child_process"
 
 // Production dependencies are shipped in the built assets and must be permissive.
 const SHIPPED = ["MIT", "ISC", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "0BSD"]
 
 // All dependencies, including build and test tools, which are not distributed.
-const ALL = [...SHIPPED, "MIT-0", "BlueOak-1.0.0", "CC0-1.0", "MPL-2.0"]
+const ALL = [...SHIPPED, "MIT-0", "BlueOak-1.0.0", "CC0-1.0", "MPL-2.0", "Python-2.0"]
 
 /**
  * Reports whether an SPDX license expression is satisfied by the allowlist:
@@ -68,7 +69,7 @@ function isAllowed(expression, allowed) {
  * @returns {string[]} one "name@version: license" line per violation
  */
 function violations(pnpmArgs, allowed) {
-	const output = execFileSync("pnpm", ["licenses", "list", "--json", ...pnpmArgs], { encoding: "utf8" })
+	const output = execFileSync("pnpm", ["licenses", "list", "--json", "--recursive", ...pnpmArgs], { encoding: "utf8" })
 	/** @type {Record<string, {name: string, versions: string[], license: string}[]>} */
 	const byLicense = JSON.parse(output.trim() || "{}")
 	const found = []

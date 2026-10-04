@@ -12,22 +12,36 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/goccy/go-yaml"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/jangraefen/agenty/server/internal/logging"
 )
 
 // Defaults for values the configuration file may omit.
 const (
 	DefaultAddress         = ":8080"
 	DefaultShutdownTimeout = 30 * time.Second
+	DefaultLogFormat       = logging.FormatText
+	DefaultLogLevel        = slog.LevelInfo
 )
 
 // Config is the validated server configuration.
 type Config struct {
 	Server   Server
+	Log      Log
 	Database Database
+}
+
+// Log configures log output.
+type Log struct {
+	// Format is text (development) or json or logfmt (production).
+	Format logging.Format
+	// Level is the minimum level written: debug, info, warn, or error.
+	Level slog.Level
 }
 
 // Server configures the HTTP server of the api role.
@@ -118,6 +132,10 @@ type file struct {
 	Database struct {
 		URL *string `yaml:"url"`
 	} `yaml:"database"`
+	Log struct {
+		Format *string `yaml:"format"`
+		Level  *string `yaml:"level"`
+	} `yaml:"log"`
 }
 
 // value is a raw setting together with where it came from.
@@ -155,6 +173,8 @@ func Load(path string, lookupEnv func(string) (string, bool)) (Config, error) {
 		parseAddress(address, "server.address", &cfg.Server.Address),
 		parsePositiveDuration(shutdownTimeout, "server.shutdownTimeout", &cfg.Server.ShutdownTimeout),
 		parseDatabaseURL(databaseURL, "database.url", &cfg.Database.URL),
+		parseLogFormat(setting(f.Log.Format, string(DefaultLogFormat), "AGENTY_LOG_FORMAT", lookupEnv), "log.format", &cfg.Log.Format),
+		parseLogLevel(setting(f.Log.Level, DefaultLogLevel.String(), "AGENTY_LOG_LEVEL", lookupEnv), "log.level", &cfg.Log.Level),
 	}
 	if err := errors.Join(errs...); err != nil {
 		return Config{}, fmt.Errorf("invalid configuration: %w", err)
@@ -197,6 +217,27 @@ func parseDatabaseURL(v value, field string, dst *string) error {
 	}
 	*dst = v.raw
 	return nil
+}
+
+func parseLogFormat(v value, field string, dst *logging.Format) error {
+	f, err := logging.ParseFormat(v.raw)
+	if err != nil {
+		return fmt.Errorf("%s: %q is not a log format: use text, json, or logfmt", v.source(field), v.raw)
+	}
+	*dst = f
+	return nil
+}
+
+// parseLogLevel accepts the four level names in any case, but not the
+// offsets (such as info+2) that slog.Level.UnmarshalText also accepts.
+func parseLogLevel(v value, field string, dst *slog.Level) error {
+	for _, l := range []slog.Level{slog.LevelDebug, slog.LevelInfo, slog.LevelWarn, slog.LevelError} {
+		if strings.EqualFold(v.raw, l.String()) {
+			*dst = l
+			return nil
+		}
+	}
+	return fmt.Errorf("%s: %q is not a log level: use debug, info, warn, or error", v.source(field), v.raw)
 }
 
 func parsePositiveDuration(v value, field string, dst *time.Duration) error {

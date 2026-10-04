@@ -22,6 +22,7 @@ import (
 	"github.com/jangraefen/agenty/server/internal/config"
 	"github.com/jangraefen/agenty/server/internal/database"
 	"github.com/jangraefen/agenty/server/internal/httpapi"
+	"github.com/jangraefen/agenty/server/internal/logging"
 	"github.com/jangraefen/agenty/server/internal/roles"
 )
 
@@ -97,8 +98,19 @@ func runContext(ctx context.Context, args []string, stdout, stderr io.Writer, op
 		_, _ = fmt.Fprintln(stderr, err)
 		return 1
 	}
-	if err := serve(ctx, cfg, selected, opts); err != nil {
+	// Components register secret values here as they load them (e.g.,
+	// database passwords) so that the logger redacts them.
+	secrets := logging.NewSecrets()
+	logger, err := logging.New(stderr, logging.Options{Format: cfg.Log.Format, Level: cfg.Log.Level}, secrets)
+	if err != nil {
 		_, _ = fmt.Fprintln(stderr, err)
+		return 1
+	}
+	// Libraries and the standard log package log through the redacting
+	// logger, too.
+	slog.SetDefault(logger)
+	if err := serve(ctx, cfg, logger, selected, opts); err != nil {
+		logger.ErrorContext(context.WithoutCancel(ctx), "agenty failed", "error", err)
 		return 1
 	}
 	return 0
@@ -110,7 +122,7 @@ func runContext(ctx context.Context, args []string, stdout, stderr io.Writer, op
 // and the worker and scheduler roles wait, until the migrations have been
 // applied. A failed migration stops the process with an error. opts.onStarted,
 // if set, is called once all roles are set up.
-func serve(ctx context.Context, cfg config.Config, selected []roles.Role, opts options) error {
+func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, selected []roles.Role, opts options) error {
 	pool, migrator, err := openDatabase(ctx, cfg.Database, opts.migrations)
 	if err != nil {
 		return fmt.Errorf("database: %w", err)
@@ -128,22 +140,22 @@ func serve(ctx context.Context, cfg config.Config, selected []roles.Role, opts o
 			return errors.New("database migrations have not completed")
 		}
 	}
-	components, listenAddr, err := setUpRoles(ctx, cfg.Server, selected, ready, migrated)
+	components, listenAddr, err := setUpRoles(ctx, cfg.Server, logger, selected, ready, migrated)
 	if err != nil {
 		return err
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	migrateErr := migrateInBackground(runCtx, cancel, migrator, cfg.Database, migrated)
-	slog.InfoContext(ctx, "starting agenty", "version", buildinfo.Version, "roles", roles.Strings(selected))
+	migrateErr := migrateInBackground(runCtx, logger, cancel, migrator, cfg.Database, migrated)
+	logger.InfoContext(ctx, "starting agenty", "version", buildinfo.Version, "roles", roles.Strings(selected))
 	if opts.onStarted != nil {
 		opts.onStarted(listenAddr)
 	}
 	runErr := roles.Run(runCtx, components)
 	cancel()
 	err = errors.Join(<-migrateErr, runErr)
-	slog.InfoContext(context.WithoutCancel(ctx), "agenty stopped")
+	logger.InfoContext(context.WithoutCancel(ctx), "agenty stopped")
 	return err
 }
 
@@ -169,7 +181,7 @@ func openDatabase(ctx context.Context, cfg config.Database, migrations fs.FS) (*
 // setUpRoles creates the components of the selected roles. The api role
 // listens at once and reports readiness with ready; the other roles start
 // once migrated is closed. listenAddr is nil when the api role is inactive.
-func setUpRoles(ctx context.Context, cfg config.Server, selected []roles.Role, ready func(context.Context) error,
+func setUpRoles(ctx context.Context, cfg config.Server, logger *slog.Logger, selected []roles.Role, ready func(context.Context) error,
 	migrated <-chan struct{},
 ) (components map[roles.Role]roles.Component, listenAddr net.Addr, err error) {
 	components = make(map[roles.Role]roles.Component, len(selected))
@@ -180,11 +192,11 @@ func setUpRoles(ctx context.Context, cfg config.Server, selected []roles.Role, r
 			if err != nil {
 				return nil, nil, fmt.Errorf("listen on %s: %w", cfg.Address, err)
 			}
-			slog.InfoContext(ctx, "api role listening", "address", ln.Addr().String())
+			logger.InfoContext(ctx, "api role listening", "address", ln.Addr().String())
 			listenAddr = ln.Addr()
 			components[r] = apiComponent{
 				ln:      ln,
-				handler: httpapi.NewRouter(httpapi.Options{Roles: roles.Strings(selected), Ready: ready}),
+				handler: httpapi.NewRouter(httpapi.Options{Roles: roles.Strings(selected), Ready: ready, Logger: logger}),
 				cfg:     cfg,
 			}
 		case roles.Worker, roles.Scheduler:
@@ -200,23 +212,23 @@ func setUpRoles(ctx context.Context, cfg config.Server, selected []roles.Role, r
 // are applied. When they fail, it logs the error and calls stop. The returned
 // channel yields the failure, or nil when the migrations were applied or
 // interrupted because ctx was canceled.
-func migrateInBackground(ctx context.Context, stop context.CancelFunc, migrator *database.Migrator, cfg config.Database,
+func migrateInBackground(ctx context.Context, logger *slog.Logger, stop context.CancelFunc, migrator *database.Migrator, cfg config.Database,
 	migrated chan<- struct{},
 ) <-chan error {
 	result := make(chan error, 1)
 	go func() {
-		slog.InfoContext(ctx, "migrating database", "database", cfg)
+		logger.InfoContext(ctx, "migrating database", "database", cfg)
 		err := migrator.Up(ctx)
 		switch {
 		case err == nil:
-			slog.InfoContext(ctx, "database migrations complete")
+			logger.InfoContext(ctx, "database migrations complete")
 			close(migrated)
 		case ctx.Err() != nil:
 			// The process is stopping; the interrupted migration is not a failure.
 			err = nil
 		default:
 			err = fmt.Errorf("database: %w", err)
-			slog.ErrorContext(ctx, "database migrations failed; stopping", "error", err)
+			logger.ErrorContext(ctx, "database migrations failed; stopping", "error", err)
 			stop()
 		}
 		result <- err

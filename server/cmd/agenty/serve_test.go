@@ -46,6 +46,16 @@ func TestRunAbortsOnInvalidConfigurationNamingTheField(t *testing.T) {
 	assert.Contains(t, stderr.String(), "server.shutdownTimeout", "stderr must name server.shutdownTimeout")
 }
 
+func TestRunAbortsOnInvalidLogFormat(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	path := writeConfig(t, "log:\n  format: xml\n")
+
+	code := run([]string{"--config", path}, &stdout, &stderr)
+
+	assert.Equal(t, 1, code, "exit code")
+	assert.Contains(t, stderr.String(), "log.format", "stderr must name log.format")
+}
+
 func TestRunAbortsOnInvalidEnvironmentOverride(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	path := writeConfig(t, "")

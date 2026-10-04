@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jangraefen/agenty/server/internal/config"
+	"github.com/jangraefen/agenty/server/internal/logging"
 )
 
 // dbSection is a valid database section; the database URL is required.
@@ -171,6 +172,61 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
 	}
 }
 
+func TestLoadReadsLogSettings(t *testing.T) {
+	path := writeFile(t, "log:\n  format: json\n  level: debug\n"+dbSection)
+
+	cfg, err := config.Load(path, env(nil))
+
+	require.NoError(t, err, "Load")
+	assert.Equal(t, logging.FormatJSON, cfg.Log.Format, "Log.Format")
+	assert.Equal(t, slog.LevelDebug, cfg.Log.Level, "Log.Level")
+}
+
+func TestLoadDefaultsToTextLogAtInfo(t *testing.T) {
+	cfg, err := config.Load(writeFile(t, dbSection), env(nil))
+
+	require.NoError(t, err, "Load")
+	assert.Equal(t, logging.FormatText, cfg.Log.Format, "Log.Format")
+	assert.Equal(t, slog.LevelInfo, cfg.Log.Level, "Log.Level")
+}
+
+func TestLoadLogSettingsFromEnvironment(t *testing.T) {
+	path := writeFile(t, "log:\n  format: json\n  level: debug\n"+dbSection)
+
+	cfg, err := config.Load(path, env(map[string]string{"AGENTY_LOG_FORMAT": "logfmt", "AGENTY_LOG_LEVEL": "WARN"}))
+
+	require.NoError(t, err, "Load")
+	assert.Equal(t, logging.FormatLogfmt, cfg.Log.Format, "Log.Format")
+	assert.Equal(t, slog.LevelWarn, cfg.Log.Level, "Log.Level")
+}
+
+func TestLoadRejectsInvalidLogSettings(t *testing.T) {
+	tests := []struct {
+		name      string
+		file      string
+		env       map[string]string
+		wantInErr []string
+	}{
+		{"unknown format", "log:\n  format: xml\n", nil, []string{"log.format", "xml"}},
+		{"unknown level", "log:\n  level: loud\n", nil, []string{"log.level", "loud"}},
+		{"level with offset", "log:\n  level: info+2\n", nil, []string{"log.level", "info+2"}},
+		{"level with negative offset", "", map[string]string{"AGENTY_LOG_LEVEL": "WARN-1"}, []string{"log.level", "AGENTY_LOG_LEVEL", "WARN-1"}},
+		{"format from environment", "", map[string]string{"AGENTY_LOG_FORMAT": "yaml"}, []string{"log.format", "AGENTY_LOG_FORMAT", "yaml"}},
+		{"level from environment", "", map[string]string{"AGENTY_LOG_LEVEL": ""}, []string{"log.level", "AGENTY_LOG_LEVEL"}},
+		{"unknown log field", "log:\n  colour: true\n", nil, []string{"colour"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := config.Load(writeFile(t, tt.file+dbSection), env(tt.env))
+
+			require.Error(t, err, "Load succeeded, want error")
+			for _, want := range tt.wantInErr {
+				assert.ErrorContains(t, err, want)
+			}
+		})
+	}
+}
+
 func TestLoadReportsMissingFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing.yaml")
 
@@ -262,7 +318,7 @@ func TestDatabasePrintsTheTargetWithoutPassword(t *testing.T) {
 	assert.Equal(t, "postgres://agenty@db.example:5433/agentydb", fmt.Sprintf("%v", db), "%v")
 	assert.Equal(t, `"postgres://agenty@db.example:5433/agentydb"`, fmt.Sprintf("%q", db), "%q")
 	assert.Equal(t, `config.Database{URL:"postgres://agenty@db.example:5433/agentydb"}`, fmt.Sprintf("%#v", db), "%#v")
-	assert.Equal(t, "{Server:{Address: ShutdownTimeout:0s} Database:postgres://agenty@db.example:5433/agentydb}",
+	assert.Equal(t, "{Server:{Address: ShutdownTimeout:0s} Log:{Format: Level:INFO} Database:postgres://agenty@db.example:5433/agentydb}",
 		fmt.Sprintf("%+v", config.Config{Database: db}), "%+v of Config")
 	assert.Equal(t, "[redacted]", config.Database{URL: "postgres://agenty:hunter2@db.example:notaport/x"}.String(), "invalid URL")
 }

@@ -1,0 +1,11 @@
+{
+	"name": "agenty-web-codegen",
+	"private": true,
+	"version": "0.0.0",
+	"description": "Generates the TypeScript API types from api/openapi.yaml. openapi-typescript needs the TypeScript compiler API, which TypeScript 7 no longer ships, so it runs here with TypeScript 5 (ARCHITECTURE §15.4).",
+	"type": "module",
+	"devDependencies": {
+		"openapi-typescript": "^7.13.0",
+		"typescript": "5.9.3"
+	}
+}

@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"io/fs"
-	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -33,7 +32,7 @@ type started struct {
 	addr   string
 	cancel context.CancelFunc
 	code   <-chan int
-	stderr *bytes.Buffer
+	stderr *syncBuffer
 
 	startedAt <-chan net.Addr
 }
@@ -87,16 +86,29 @@ func startOn(t *testing.T, roleList, dsn string) started {
 	return launch(t, roleList, dsn, nil).await(t)
 }
 
+// startWithConfig is start with extra top-level configuration appended.
+func startWithConfig(t *testing.T, roleList, extraConfig string) started {
+	t.Helper()
+	return launchWithConfig(t, roleList, pg.NewDatabase(t), nil, extraConfig).await(t)
+}
+
 // launch runs the server in-process without waiting for it to start. A
 // non-nil migrations replaces the migrations embedded in the binary.
 func launch(t *testing.T, roleList, dsn string, migrations fs.FS) started {
 	t.Helper()
-	path := writeConfig(t, "server:\n  address: 127.0.0.1:0\n  shutdownTimeout: 5s\n"+databaseConfig(dsn))
+	return launchWithConfig(t, roleList, dsn, migrations, "")
+}
+
+// launchWithConfig is launch with extra top-level configuration appended.
+func launchWithConfig(t *testing.T, roleList, dsn string, migrations fs.FS, extraConfig string) started {
+	t.Helper()
+	path := writeConfig(t, "server:\n  address: 127.0.0.1:0\n  shutdownTimeout: 5s\n"+databaseConfig(dsn)+extraConfig)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	startedAt := make(chan net.Addr, 1)
 	code := make(chan int, 1)
-	var stdout, stderr bytes.Buffer
+	var stdout bytes.Buffer
+	var stderr syncBuffer
 	go func() {
 		code <- runContext(ctx, []string{"--config", path, "--roles", roleList}, &stdout, &stderr, options{
 			onStarted:  func(a net.Addr) { startedAt <- a },
@@ -311,10 +323,6 @@ func TestServeStopsGracefullyWhileMigrating(t *testing.T) {
 }
 
 func TestServeExitsWhenMigrationsFail(t *testing.T) {
-	var logs syncBuffer
-	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
-	t.Cleanup(func() { slog.SetDefault(previous) })
 	dsn := pg.NewDatabase(t)
 	release := blockMigrations(t, dsn)
 	s := launch(t, "api", dsn, fstest.MapFS{
@@ -326,8 +334,8 @@ func TestServeExitsWhenMigrationsFail(t *testing.T) {
 	release()
 
 	assert.Equal(t, 1, s.exitCode(t), "exit code")
-	assert.Contains(t, s.stderr.String(), "no_such_table", "stderr names the failure")
-	assert.Contains(t, logs.String(), "no_such_table", "logs name the failure")
+	assert.Contains(t, s.stderr.String(), "database migrations failed", "the configured logger reports the failure")
+	assert.Contains(t, s.stderr.String(), "no_such_table", "the log names the failure")
 }
 
 func TestReadyzRequiresAppliedMigrations(t *testing.T) {
@@ -396,6 +404,49 @@ func TestConcurrentStartsApplyEachMigrationOnce(t *testing.T) {
 	assert.Equal(t, 2, queryInt(t, dsn, "SELECT count(*) FROM goose_db_version WHERE version_id > 0"), "recorded migrations")
 	for _, s := range servers {
 		s.stop(t)
+	}
+}
+
+func TestServeLogsInConfiguredFormat(t *testing.T) {
+	tests := []struct {
+		format string
+		check  func(t *testing.T, line string)
+	}{
+		{"json", func(t *testing.T, line string) {
+			var rec map[string]any
+			require.NoError(t, json.Unmarshal([]byte(line), &rec), "line %q", line)
+			assert.Equal(t, "info", rec["level"])
+		}},
+		{"logfmt", func(t *testing.T, line string) {
+			assert.True(t, strings.HasPrefix(line, "time="), "line %q", line)
+			assert.Contains(t, line, "level=info")
+		}},
+		{"text", func(t *testing.T, line string) {
+			assert.Contains(t, line, "INFO")
+			assert.False(t, json.Valid([]byte(line)), "line %q", line)
+			assert.NotContains(t, line, "level=")
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.format, func(t *testing.T) {
+			s := startWithConfig(t, "api", "log:\n  format: "+tt.format+"\n")
+			// Probes are logged at debug level; an unknown path at info.
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+s.addr+"/no-such-path", http.NoBody)
+			require.NoError(t, err, "request")
+			resp, err := http.DefaultClient.Do(req)
+			require.NoError(t, err, "GET /no-such-path")
+			_ = resp.Body.Close()
+			s.stop(t)
+
+			lines := strings.Split(strings.TrimSpace(s.stderr.String()), "\n")
+			var requestLogged bool
+			for _, line := range lines {
+				tt.check(t, line)
+				requestLogged = requestLogged || strings.Contains(line, "/no-such-path")
+			}
+			assert.True(t, requestLogged, "no request log for /no-such-path in %q", s.stderr.String())
+			assert.Contains(t, s.stderr.String(), "api role listening")
+		})
 	}
 }
 

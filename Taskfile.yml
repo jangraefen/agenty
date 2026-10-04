@@ -11,6 +11,7 @@ vars:
   TASK_MIN_VERSION: 3.54.0
   LEFTHOOK_MIN_VERSION: 2.1.16
   NODE_MIN_VERSION: 24.15.0 # matches web/package.json engines
+  PNPM_MIN_VERSION: 12.8.1 # matches web/package.json packageManager
   VERSION:
     sh: git describe --tags --always --dirty 2>/dev/null || echo dev
 
@@ -50,7 +51,10 @@ tasks:
         [ "$have" = {{.GOLANGCI_LINT_VERSION}} ]; report golangci-lint "$have" $? "exactly {{.GOLANGCI_LINT_VERSION}}" "https://golangci-lint.run/docs/welcome/install/"
 
         have=$(node --version 2>/dev/null | sed 's/^v//')
-        [ -n "$have" ] && at_least "$have" {{.NODE_MIN_VERSION}} && npm --version >/dev/null 2>&1; report node "$have" $? ">= {{.NODE_MIN_VERSION}} with npm" "brew install node, or https://nodejs.org/en/download"
+        [ -n "$have" ] && at_least "$have" {{.NODE_MIN_VERSION}}; report node "$have" $? ">= {{.NODE_MIN_VERSION}}" "brew install node, or https://nodejs.org/en/download"
+
+        have=$(pnpm --version 2>/dev/null)
+        [ -n "$have" ] && at_least "$have" {{.PNPM_MIN_VERSION}}; report pnpm "$have" $? ">= {{.PNPM_MIN_VERSION}}" "brew install pnpm"
 
         exit $failed
 
@@ -68,29 +72,29 @@ tasks:
         cmd: cd {{.ITEM}} && golangci-lint run ./...
       - task: lint:web
 
-  # Web (web/): npm packages pinned by package-lock.json; tools run from node_modules.
+  # Web (web/): packages pinned by pnpm-lock.yaml and installed with pnpm (never npm); tools run from node_modules.
   web:deps:
     internal: true
     dir: web
-    sources: [package.json, package-lock.json]
-    generates: [node_modules/.package-lock.json]
+    sources: [package.json, pnpm-lock.yaml, pnpm-workspace.yaml]
+    generates: [node_modules/.modules.yaml]
     cmds:
-      - npm ci --no-audit --no-fund
+      - pnpm install --frozen-lockfile
 
   lint:web:
     desc: Lint and format-check (Biome) and type-check (tsc) the web UI
     deps: [web:deps]
     dir: web
     cmds:
-      - npm run --silent lint
-      - npm run --silent typecheck
+      - pnpm run --silent lint
+      - pnpm run --silent typecheck
 
   build:web:
     desc: Build the web UI into web/dist with Vite
     deps: [web:deps]
     dir: web
     cmds:
-      - npm run --silent build
+      - pnpm run --silent build
 
   check:
     desc: Run all gating targets in order; stops at the first failure
@@ -113,11 +117,11 @@ tasks:
       - task: check:licenses:web
 
   check:licenses:web:
-    desc: Check npm dependency licenses (shipped and all) against the allowlists in web/package.json
+    desc: Check web dependency licenses (shipped and all) against the allowlists in web/scripts/check-licenses.mjs
     deps: [web:deps]
     dir: web
     cmds:
-      - npm run --silent licenses
+      - pnpm run --silent licenses
 
   test:unit:
     desc: Run unit tests
@@ -130,7 +134,7 @@ tasks:
     deps: [web:deps]
     dir: web
     cmds:
-      - npm run --silent test
+      - pnpm run --silent test
 
   test:module:
     desc: Run module tests (build tag "module")

@@ -6,11 +6,11 @@ The web app is a pure API client: it uses only the public API, and only through 
 
 ## Development
 
-Requires Node.js with npm (`task setup` checks the version). The Task targets install the pinned npm packages with `npm ci` when needed:
+Requires Node.js and pnpm (`task setup` checks the versions); this repository uses pnpm, never npm. The Task targets install the pinned packages with `pnpm install --frozen-lockfile` when needed:
 
 - `task lint:web`: Biome and the TypeScript type check
 - `task test:unit:web`: Vitest
 - `task build:web`: Vite production build into `web/dist`
-- `task check:licenses:web`: npm license allowlists ([ARCHITECTURE.md §16](../docs/ARCHITECTURE.md))
+- `task check:licenses:web`: dependency license allowlists (`scripts/check-licenses.mjs`) ([ARCHITECTURE.md §16](../docs/ARCHITECTURE.md))
 
-`npm run dev` (in `web/`) starts the Vite dev server.
+`pnpm run dev` (in `web/`) starts the Vite dev server.

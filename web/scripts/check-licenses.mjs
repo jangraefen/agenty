@@ -3,7 +3,7 @@
 // lockfile that is installed for this platform, including optional native binaries, across all
 // workspace packages (the app and codegen/).
 // Exits non-zero and names each offending package and its license.
-// Keep the allowlists in line with the Go allowlist in go-licenses-allowlist.txt.
+// Keep the allowlists in line with the Go allowlist in go-licenses-allowlist.txt (Python-2.0 is web-only).
 import { execFileSync } from "node:child_process"
 
 // Production dependencies are shipped in the built assets and must be permissive.

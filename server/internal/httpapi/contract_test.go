@@ -32,9 +32,36 @@ type contractOperation struct {
 	Responses   map[string]contractResponse `yaml:"responses"`
 }
 
+// contractPathItem is a path item: its operations by HTTP method. Path-level keys
+// such as summary, description, parameters, and servers are ignored.
+type contractPathItem struct {
+	Get     *contractOperation `yaml:"get"`
+	Put     *contractOperation `yaml:"put"`
+	Post    *contractOperation `yaml:"post"`
+	Delete  *contractOperation `yaml:"delete"`
+	Options *contractOperation `yaml:"options"`
+	Head    *contractOperation `yaml:"head"`
+	Patch   *contractOperation `yaml:"patch"`
+	Trace   *contractOperation `yaml:"trace"`
+}
+
+// operations returns the operations of the path item by upper-case HTTP method.
+func (p contractPathItem) operations() map[string]contractOperation {
+	ops := make(map[string]contractOperation)
+	for method, op := range map[string]*contractOperation{
+		http.MethodGet: p.Get, http.MethodPut: p.Put, http.MethodPost: p.Post, http.MethodDelete: p.Delete,
+		http.MethodOptions: p.Options, http.MethodHead: p.Head, http.MethodPatch: p.Patch, http.MethodTrace: p.Trace,
+	} {
+		if op != nil {
+			ops[method] = *op
+		}
+	}
+	return ops
+}
+
 type contract struct {
-	OpenAPI    string                                  `yaml:"openapi"`
-	Paths      map[string]map[string]contractOperation `yaml:"paths"`
+	OpenAPI    string                      `yaml:"openapi"`
+	Paths      map[string]contractPathItem `yaml:"paths"`
 	Components struct {
 		Responses map[string]contractResponse `yaml:"responses"`
 	} `yaml:"components"`
@@ -44,6 +71,11 @@ func loadContract(t *testing.T) contract {
 	t.Helper()
 	data, err := os.ReadFile(contractPath)
 	require.NoError(t, err, "read contract")
+	return parseContract(t, data)
+}
+
+func parseContract(t *testing.T, data []byte) contract {
+	t.Helper()
 	var c contract
 	require.NoError(t, yaml.Unmarshal(data, &c), "parse contract")
 	require.NotEmpty(t, c.Paths, "contract has no paths")
@@ -83,11 +115,11 @@ func TestServerServesContractOperations(t *testing.T) {
 		"ready":     httpapi.NewRouter(httpapi.Options{Roles: []string{"api"}}),
 		"not ready": httpapi.NewRouter(httpapi.Options{Roles: []string{"api"}, Ready: func(context.Context) error { return errors.New("down") }}),
 	}
-	for path, ops := range c.Paths {
-		for method, op := range ops {
+	for path, item := range c.Paths {
+		for method, op := range item.operations() {
 			for name, h := range routers {
 				t.Run(op.OperationID+"/"+name, func(t *testing.T) {
-					rec := do(t, h, strings.ToUpper(method), path)
+					rec := do(t, h, method, path)
 
 					assert.NotContains(t, []int{http.StatusNotFound, http.StatusMethodNotAllowed}, rec.Code, "operation is not served")
 					mt, _, err := mime.ParseMediaType(rec.Header().Get("Content-Type"))
@@ -112,9 +144,9 @@ func TestServerServesOnlyContractRoutes(t *testing.T) {
 		served = append(served, r.Method+" "+r.Path)
 	}
 	var declared []string
-	for path, ops := range c.Paths {
-		for method := range ops {
-			declared = append(declared, strings.ToUpper(method)+" "+path)
+	for path, item := range c.Paths {
+		for method := range item.operations() {
+			declared = append(declared, method+" "+path)
 		}
 	}
 	slices.Sort(served)
@@ -127,4 +159,44 @@ func TestGeneratedEnumsValidateValues(t *testing.T) {
 	assert.False(t, httpapi.HealthStatus("degraded").Valid(), "unknown health status")
 	assert.True(t, httpapi.ReadinessStatusReady.Valid(), "ReadinessStatusReady")
 	assert.False(t, httpapi.ReadinessStatus("starting").Valid(), "unknown readiness status")
+}
+
+// TestContractParsingIgnoresPathItemKeys checks that keys a path item may carry
+// besides its operations (summary, description, parameters, servers) do not
+// break parsing and are not taken for operations.
+func TestContractParsingIgnoresPathItemKeys(t *testing.T) {
+	const fixture = `
+openapi: 3.1.0
+paths:
+  /things/{id}:
+    summary: One thing
+    description: A thing by its ID.
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    servers:
+      - url: https://agenty.example
+    get:
+      operationId: getThing
+      responses:
+        "200":
+          description: The thing.
+    delete:
+      operationId: deleteThing
+      responses:
+        "204":
+          description: Deleted.
+`
+	c := parseContract(t, []byte(fixture))
+
+	require.Contains(t, c.Paths, "/things/{id}")
+	ops := c.Paths["/things/{id}"].operations()
+	ids := make(map[string]string, len(ops))
+	for method, op := range ops {
+		ids[method] = op.OperationID
+	}
+	assert.Equal(t, map[string]string{http.MethodGet: "getThing", http.MethodDelete: "deleteThing"}, ids, "operations by method")
 }

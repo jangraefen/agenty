@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { createApiClient } from "./client"
 
 /** Returns a fetch that records each request and answers with the given response. */
@@ -17,6 +17,10 @@ function fakeFetch(status: number, contentType: string, body: unknown) {
 }
 
 describe("createApiClient", () => {
+	afterEach(() => {
+		vi.unstubAllGlobals()
+	})
+
 	it("requests operations relative to the base URL", async () => {
 		const { fetch, requests } = fakeFetch(200, "application/json", { status: "ok", roles: ["api"] })
 		const client = createApiClient({ baseUrl: "https://agenty.example/base", fetch })
@@ -48,9 +52,16 @@ describe("createApiClient", () => {
 		expect(error).toEqual(problem)
 	})
 
-	it("uses the global fetch by default", () => {
+	it("uses the global fetch by default", async () => {
+		const { fetch, requests } = fakeFetch(200, "application/json", { status: "ok", roles: ["api"] })
+		const globalFetch = vi.fn(fetch)
+		vi.stubGlobal("fetch", globalFetch)
 		const client = createApiClient({ baseUrl: "https://agenty.example" })
 
-		expect(typeof client.GET).toBe("function")
+		const { data } = await client.GET("/healthz")
+
+		expect(globalFetch).toHaveBeenCalledOnce()
+		expect(requests[0]?.url).toBe("https://agenty.example/healthz")
+		expect(data).toEqual({ status: "ok", roles: ["api"] })
 	})
 })

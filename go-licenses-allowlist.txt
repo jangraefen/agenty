@@ -17,4 +17,3 @@ dev MIT-0
 dev BlueOak-1.0.0
 dev CC0-1.0
 dev MPL-2.0
-dev Python-2.0

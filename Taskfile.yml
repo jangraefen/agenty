@@ -173,10 +173,15 @@ tasks:
         for file in $(cd "$out" && find . -type f | sed 's|^\./||' | sort); do
           diff -u "{{.TREE}}/$file" "$out/$file" >&2 || failed="$failed $file"
         done
-        if [ -n "$failed" ]; then
-          echo "FAILED  generated code is out of date:$failed - run task generate and commit the result" >&2
-          exit 1
-        fi
+        # Generated files are named *.gen.* (ARCHITECTURE §4). Any such file in the tree that the generators
+        # no longer write (renamed output, removed generator) is an orphan; git-ignored tool and build
+        # directories are skipped.
+        orphans=$(cd "{{.TREE}}" && find . \( -name .git -o -name .claude -o -name node_modules -o -name dist \
+            -o -name coverage -o -name .task \) -prune -o -type f -name '*.gen.*' -print | sed 's|^\./||' | sort \
+          | while read -r file; do [ -f "$out/$file" ] || printf ' %s' "$file"; done)
+        [ -z "$failed" ] || echo "FAILED  generated code is out of date:$failed - run task generate and commit the result" >&2
+        [ -z "$orphans" ] || echo "FAILED  generated files not produced by task generate:$orphans - delete them or restore their generator" >&2
+        [ -z "$failed$orphans" ] || exit 1
         echo "ok      generated code is up to date"
 
   check:
@@ -374,6 +379,8 @@ tasks:
         reset; printf '// edited\n' >>"$tmp/tree/server/internal/httpapi/openapi.gen.go"; expect fail "edited Go code fails"
         reset; printf '// edited\n' >>"$tmp/tree/web/src/api/schema.gen.ts"; expect fail "edited TypeScript code fails"
         reset; rm "$tmp/tree/web/src/api/schema.gen.ts"; expect fail "missing generated file fails"
+        reset; cp "$tmp/tree/web/src/api/schema.gen.ts" "$tmp/tree/web/src/api/old-schema.gen.ts"; expect fail "orphaned generated file (renamed output) fails"
+        reset; mkdir -p "$tmp/tree/server/internal/removed" && printf "package removed\n" >"$tmp/tree/server/internal/removed/removed.gen.go"; expect fail "orphaned generated file (removed generator) fails"
         reset; sed 's/operationId: getReadyz/operationId: getReadiness/' api/openapi.yaml >"$tmp/tree/api/openapi.yaml"
         cmp -s api/openapi.yaml "$tmp/tree/api/openapi.yaml" && { echo "FAILED  gate generated code: contract edit had no effect"; exit 1; }
         expect fail "contract changed without regenerating fails"

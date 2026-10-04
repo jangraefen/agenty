@@ -48,7 +48,7 @@ Each decision lists what was chosen, why, and what was rejected. All decided 202
 | D9 | **Custom harness Rego allowed** for technical builders; **central policy bundles loadable from outside** (HTTP, OCI, directory; signed). | Requested power for technical users and compliance, made safe by restrict-only composition and restricted built-ins. | Rule builder only. |
 | D10 | **Per-run taint tracking.** | Once content enters the model context it mixes; fine-grained flow tracking would be dishonest. Protection lives in policy on effects. | Per-message or per-value data-flow tracking; injection detection classifiers as a control. |
 | D11 | **Sandbox: gVisor (`runsc`) on Docker/Podman**, egress via proxy with per-sandbox allowlist. | Strong isolation on ordinary VMs without nested virtualization. | Firecracker / Kata (need KVM). Plain `runc` (only as explicit `insecure_dev_mode`). |
-| D12 | **Retrieval: live search** for Confluence and SharePoint with the caller's delegated credential; **pgvector index** only for uploads and S3. | Exact permissions by construction, no document copies, no ACL sync. | Indexing all sources with ACL sync (more work, stale permissions, copies of enterprise data) — remains a Later option per source. |
+| D12 | **Retrieval**: v1 indexes **uploads and S3** in pgvector. **Confluence and SharePoint** follow later (decided 2026-10-05) via **live search** with the caller's delegated credential. | Exact permissions by construction, no document copies, no ACL sync; deferring the live connectors reduces v1 scope. | Indexing all sources with ACL sync (more work, stale permissions, copies of enterprise data) — remains a Later option per source. |
 | D13 | **Workspaces are shared team ownership**; they hold no credentials. **Service accounts belong to workspaces and are usable by every member**; workspace membership is a security boundary. | Business continuity without personal identities; simple mental model. | Workspace-level credentials; per-member service-account authorization. |
 | D14 | **Schedules are separate from harnesses**: personal schedules run as their owner and are disabled when the owner leaves or credentials fail; workspace schedules run as a workspace service account. | Clean on-behalf-of semantics; continuity via workspace schedules. | Schedules owned by harnesses; schedule adoption/transfer (rejected as unnecessary). |
 | D15 | **Approval routing**: personal context → the run's user; workspace context → any workspace member. | Simple v1; four-eyes and designated approvers come Later. | Named approvers, manager lookup in v1. |
@@ -58,6 +58,7 @@ Each decision lists what was chosen, why, and what was rejected. All decided 202
 | D19 | **Logging via `log/slog` API with `charmbracelet/log` as handler.** | Maintainer preference; slog keeps libraries consistent and the handler swappable. | Raw charm logger API throughout; zap/zerolog. |
 | D20 | **Testing: five tiers, coverage and mutation gates, all local via Task and Lefthook.** | AI-written code needs strong, honest tests; no CI budget. | CI-based gates (deferred). |
 | D21 | **Cron parsing with `gronx`**. | Maintained, MIT. | `robfig/cron` (inactive since mid-2024). |
+| D22 | **Biome** for TypeScript linting and formatting (decided 2026-10-05). | One fast tool for lint and format; configuration already in the repository. | ESLint + Prettier. |
 
 ---
 
@@ -86,7 +87,9 @@ These must hold for every change. Each has a dedicated test suite (§15.3).
 
 ```
 agenty/
-├── ARCHITECTURE.md, VISION.md, CAPABILITIES.md
+├── AGENTS.md        # Guidance for AI coding agents
+├── .editorconfig, .golangci.yaml, biome.json   # Editor, Go lint, TS lint/format
+├── docs/            # VISION.md, CAPABILITIES.md, ARCHITECTURE.md, epics/
 ├── go.work          # Go workspace across the Go modules
 ├── api/             # Contracts: OpenAPI 3.1 (public API), protobuf/Connect (sandbox protocol),
 │                    # generated Go and TypeScript code
@@ -310,7 +313,7 @@ On deny or rejection, the model receives a tool error with the reason.
 
 ### 11.2 Knowledge and retrieval
 
-- **Confluence, SharePoint**: live search through their search APIs with the caller's delegated credential; no copies.
+- **Confluence, SharePoint** (Later): live search through their search APIs with the caller's delegated credential; no copies.
 - **Uploads, S3**: parsed (one-shot sandbox jobs), chunked, embedded (embedding model from a model configuration), indexed in pgvector; hybrid search (vector + Postgres full-text, reciprocal rank fusion). Access follows the knowledge source's audience.
 - Retrieved passages carry source references for citations and taint the run.
 - **Later**: indexed connectors with ACL sync.
@@ -401,7 +404,7 @@ spec:
 
 ### 13.3 Frontend
 
-React, Vite, TypeScript; TanStack Router; TanStack Query with the generated client; shadcn/ui (Radix, Tailwind). API base URL from runtime `config.json`; one build for all hosting modes (embedded via `go:embed`, static host such as S3 + CloudFront, Vite dev server). Live views via server-sent events.
+React, Vite, TypeScript (linted and formatted with Biome); TanStack Router; TanStack Query with the generated client; shadcn/ui (Radix, Tailwind). API base URL from runtime `config.json`; one build for all hosting modes (embedded via `go:embed`, static host such as S3 + CloudFront, Vite dev server). Live views via server-sent events.
 
 ---
 
@@ -475,7 +478,7 @@ Verified 2026-10-04 against each project's repository. **Before adding any depen
 | Project | License |
 |---|---|
 | testcontainers-go, Vitest, Testing Library, Task, Lefthook, Colima | MIT |
-| Playwright, Gremlins, Stryker, Dex, Lima, go-licenses | Apache-2.0 |
+| Playwright, Gremlins, Stryker, Dex, Lima, go-licenses, Biome | Apache-2.0 |
 | axe-core | MPL-2.0 |
 | golangci-lint | GPL-3.0 (standalone tool, not linked) |
 

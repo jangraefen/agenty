@@ -65,7 +65,8 @@ Phases:
 | Service account credentials | v1 | Agenty-issued API tokens or OAuth client credentials for calling entry points. Per-connector downstream credentials: username/password (rotation reminders, can be disallowed by policy), OAuth client credentials (preferred), OAuth authorization-code grants (records who consented). Token exchange and external secret stores (e.g., Vault) later. |
 | Sandboxed custom tools (Python, Node.js) | v1 | Ephemeral, resource-limited, egress allowlist. Published by the enablement team or by technical builders. |
 | Scoped tool publishing | v1 | Technical builders publish to their team scope; wider scopes require review. Business builders use tools but do not create them. The same review applies to skills that contain scripts. |
-| Knowledge connectors | v1 | Confluence and SharePoint searched live through their own search APIs with the caller's delegated credential (no copies, exact permissions). File upload and S3-compatible storage indexed in pgvector with hybrid search. Jira, ServiceNow, SQL later. |
+| Knowledge connectors | v1 | File upload and S3-compatible storage, indexed in pgvector with hybrid search. Jira, ServiceNow, SQL later. |
+| Live search for Confluence and SharePoint | Later | Searched through their own search APIs with the caller's delegated credential (no copies, exact permissions). |
 | Indexed connectors with ACL sync | Later | Semantic indexing of Confluence, SharePoint, and others where live search quality is insufficient. |
 | Permission-aware retrieval | v1 | Enforce source-system ACLs for the acting identity. |
 | Citations | v1 | Link answers back to source documents and passages. |

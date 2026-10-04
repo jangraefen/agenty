@@ -7,12 +7,16 @@ vars:
   GO_PACKAGES: ./server/... ./sandbox/...
   # Exact: lint results depend on the version.
   GOLANGCI_LINT_VERSION: 2.14.0
+  # Exact: mutants and threshold handling depend on the version.
+  GREMLINS_VERSION: 0.6.0
   # Minimum versions.
   TASK_MIN_VERSION: 3.54.0
   LEFTHOOK_MIN_VERSION: 2.1.16
   DOCKER_MIN_VERSION: 25.0.0
   NODE_MIN_VERSION: 24.15.0 # matches web/package.json engines
   PNPM_MIN_VERSION: 12.8.1 # matches web/package.json packageManager
+  # Exact: detected licenses depend on the version.
+  GO_LICENSES_VERSION: 2.0.1
   VERSION:
     sh: git describe --tags --always --dirty 2>/dev/null || echo dev
 
@@ -54,11 +58,17 @@ tasks:
         have=$(golangci-lint version --short 2>/dev/null)
         [ "$have" = {{.GOLANGCI_LINT_VERSION}} ]; report golangci-lint "$have" $? "exactly {{.GOLANGCI_LINT_VERSION}}" "https://golangci-lint.run/docs/welcome/install/"
 
+        have=$(gremlins --version 2>/dev/null | awk '{print $3}')
+        [ "$have" = {{.GREMLINS_VERSION}} ]; report gremlins "$have" $? "exactly {{.GREMLINS_VERSION}}" "brew tap go-gremlins/tap && brew install gremlins"
+
         have=$(node --version 2>/dev/null | sed 's/^v//')
         [ -n "$have" ] && at_least "$have" {{.NODE_MIN_VERSION}}; report node "$have" $? ">= {{.NODE_MIN_VERSION}}" "brew install node, or https://nodejs.org/en/download"
 
         have=$(pnpm --version 2>/dev/null)
         [ -n "$have" ] && at_least "$have" {{.PNPM_MIN_VERSION}}; report pnpm "$have" $? ">= {{.PNPM_MIN_VERSION}}" "brew install pnpm"
+
+        have=$(go version -m "$(command -v go-licenses)" 2>/dev/null | awk '$1 == "mod" { sub(/^v/, "", $3); print $3 }')
+        [ "$have" = {{.GO_LICENSES_VERSION}} ]; report go-licenses "$have" $? "exactly {{.GO_LICENSES_VERSION}}" "go install github.com/google/go-licenses/v2@v{{.GO_LICENSES_VERSION}}"
 
         exit $failed
 
@@ -109,6 +119,7 @@ tasks:
       - task: test:gates
       - task: test:unit
       - task: test:module
+      - task: check:coverage
       - task: test:integration
       - task: test:e2e
       - task: test:ui
@@ -118,7 +129,62 @@ tasks:
   check:licenses:
     desc: Check dependency licenses against the allowlist (ARCHITECTURE §16)
     cmds:
+      - task: check:licenses:go
       - task: check:licenses:web
+
+  check:licenses:go:
+    desc: Check Go dependency licenses (shipped and all, including transitive) against go-licenses-allowlist.txt
+    cmds:
+      - for: { var: GO_MODULES }
+        task: check:licenses:go:module
+        vars: { MODULE: "{{.ITEM}}" }
+
+  # Checks one Go module directory: packages linked into its binaries (./cmd/...) against the "shipped"
+  # licenses, and all its packages including test-only imports against "shipped" plus "dev". go-licenses
+  # resolves build-constrained files for one platform, so each scope runs for linux/amd64 and linux/arm64
+  # (the container image platforms) and, if different, the host platform.
+  check:licenses:go:module:
+    internal: true
+    silent: true
+    dir: "{{.MODULE}}"
+    vars:
+      ALLOWLIST: '{{.ALLOWLIST | default (print .ROOT_DIR "/go-licenses-allowlist.txt")}}'
+    cmds:
+      - |
+        [ -f "{{.ALLOWLIST}}" ] || { echo "missing allowlist {{.ALLOWLIST}}" >&2; exit 1; }
+        list() { awk -v scopes="$1" '
+          /^[[:space:]]*(#|$)/ { next }
+          NF != 2 || ($1 != "shipped" && $1 != "dev") { print "invalid allowlist line: " $0 > "/dev/stderr"; exit 1 }
+          index(scopes, $1) { printf "%s%s", sep, $2; sep = "," }' "{{.ALLOWLIST}}"; }
+        shipped=$(list shipped) || exit 1
+        all=$(list "shipped dev") || exit 1
+        # An empty --allowed_licenses would make go-licenses ignore the allowlist.
+        [ -n "$shipped" ] || { echo "invalid allowlist {{.ALLOWLIST}}: no shipped licenses" >&2; exit 1; }
+        host=$(go env GOOS)/$(go env GOARCH)
+        platforms="linux/amd64 linux/arm64"
+        case " $platforms " in *" $host "*) ;; *) platforms="$platforms $host" ;; esac
+        check() { # platform, scope, allowed licenses, go-licenses arguments
+          platform=$1; scope=$2; allowed=$3; shift 3
+          # Our own modules are not licensed yet (VISION §13); their dependencies are still checked.
+          # --ignore matches by string prefix, so the trailing slash keeps it from also matching other
+          # modules such as github.com/jangraefen/agenty-sdk or github.com/jangraefen/agenty/server-x. A package
+          # at a module root (none exists) would not be ignored and would fail the check.
+          if out=$(GOOS=${platform%/*} GOARCH=${platform#*/} go-licenses check \
+              --ignore github.com/jangraefen/agenty/server/ --ignore github.com/jangraefen/agenty/sandbox/ \
+              --allowed_licenses="$allowed" "$@" 2>&1); then
+            echo "ok      licenses go {{.MODULE}} $scope $platform"
+          else
+            echo "FAILED  licenses go {{.MODULE}} $scope $platform: not in the allowlist ($allowed)" >&2
+            # Drop go-licenses' warnings about assembly files, which it cannot inspect.
+            printf '%s\n' "$out" | grep -v -e '^W[0-9]' -e '^/' >&2
+            return 1
+          fi
+        }
+        for platform in $platforms; do
+          check $platform shipped "$shipped" ./cmd/... || failed=1
+          check $platform all "$all" --include_tests ./... || failed=1
+        done
+        exit ${failed:-0}
 
   check:licenses:web:
     desc: Check web dependency licenses (shipped and all) against the allowlists in web/scripts/check-licenses.mjs
@@ -130,7 +196,9 @@ tasks:
   test:unit:
     desc: Run unit tests
     cmds:
-      - go test -count=1 {{.GO_PACKAGES}}
+      # Remove the previous profile first so a failed run never leaves a stale one for check:coverage.
+      - mkdir -p coverage && rm -f coverage/unit.out
+      - go test -count=1 -coverprofile=coverage/unit.out {{.GO_PACKAGES}}
       - task: test:unit:web
 
   test:unit:web:
@@ -144,7 +212,17 @@ tasks:
     desc: Run module tests (build tag "module")
     cmds:
       - task: go-tier
-        vars: { TIER: module }
+        vars: { TIER: module, COVER: "true" }
+
+  check:coverage:
+    desc: Check per-package statement coverage against .covergate.yaml (ARCHITECTURE §15.3); consumes coverage/unit.out and coverage/module.out written by test:unit and test:module, so run those first
+    preconditions:
+      - sh: test -f coverage/unit.out
+        msg: "coverage/unit.out is missing: run task test:unit first"
+      - sh: test -f coverage/module.out
+        msg: "coverage/module.out is missing: run task test:module first"
+    cmds:
+      - go run ./server/internal/testinfra/covergate -config .covergate.yaml coverage/unit.out coverage/module.out
 
   test:integration:
     desc: Run integration tests against the Docker Compose stack (build tag "integration")
@@ -163,10 +241,37 @@ tasks:
     cmds:
       - echo "test:ui - no tests yet"
 
+  # Mutation testing (ARCHITECTURE §15.3): Gremlins mutates each package in MUTATION_PACKAGES with the
+  # settings in .gremlins.yaml (efficacy threshold 80 %), and the task fails naming every package below it.
+  # Override the list for one run with `task test:mutation MUTATION_PACKAGES="server/internal/<pkg>"`.
   test:mutation:
-    desc: Run mutation tests on the critical packages
+    desc: Run mutation tests (Gremlins) on the critical packages
+    silent: true
+    vars:
+      # Critical packages (toolgateway, policy, credentials, identity, runs) as repository-relative
+      # paths, space-separated; empty until they exist.
+      MUTATION_PACKAGES: '{{.MUTATION_PACKAGES | default ""}}'
     cmds:
-      - echo "test:mutation - no tests yet"
+      - |
+        set -u
+        pkgs="{{.MUTATION_PACKAGES}}"
+        if [ -z "$pkgs" ]; then
+          echo "test:mutation - no packages configured (MUTATION_PACKAGES in Taskfile.yml)"
+          exit 0
+        fi
+        config="$PWD/.gremlins.yaml"
+        failed=""
+        for pkg in $pkgs; do
+          echo "test:mutation - $pkg"
+          # Run from the package's own module; GOWORK=off keeps go.work.sum untouched (no cross-module imports).
+          dir=$(cd "$pkg" && pwd -P) && module=$(cd "$dir" && dirname "$(GOWORK=off go env GOMOD)") \
+            && (cd "$module" && GOWORK=off gremlins unleash --config "$config" ".${dir#"$module"}") \
+            || failed="$failed $pkg"
+        done
+        if [ -n "$failed" ]; then
+          echo "test:mutation - FAILED (efficacy below threshold or error):$failed"
+          exit 1
+        fi
 
   test:gates:
     desc: Prove that every quality gate fails when its rule is violated
@@ -199,6 +304,7 @@ tasks:
       PATTERN: '{{if .RUN}}^func {{.RUN}}\b{{else}}^//go:build .*\b{{.TIER}}\b{{end}}'
     cmds:
       - |
+        {{if .COVER}}mkdir -p coverage && rm -f coverage/{{.TIER}}.out{{end}}
         if grep -rqE --include='*_test.go' '{{.PATTERN}}' {{.GO_MODULES}}; then
           # testcontainers-go ignores Docker contexts; on macOS (Colima, Lima, Docker Desktop) point it at the
           # active context's socket and tell it the socket path inside the VM.
@@ -206,7 +312,7 @@ tasks:
             export DOCKER_HOST="${DOCKER_HOST:-$(docker context inspect --format '{{"{{"}}.Endpoints.docker.Host{{"}}"}}' 2>/dev/null)}"
             export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE="${TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE:-/var/run/docker.sock}"
           fi
-          go test -count=1 -tags {{.TIER}} {{if .RUN}}-run '^{{.RUN}}$'{{end}} {{.GO_PACKAGES}}
+          go test -count=1 -tags {{.TIER}} {{if .COVER}}-coverprofile=coverage/{{.TIER}}.out {{end}}{{if .RUN}}-run '^{{.RUN}}$'{{end}} {{.GO_PACKAGES}}
         else
           echo "{{if .RUN}}test:milestone:{{.MILESTONE}}{{else}}test:{{.TIER}}{{end}} - no tests yet"
         fi

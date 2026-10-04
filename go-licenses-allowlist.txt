@@ -1,0 +1,19 @@
+# Licenses allowed for Go dependencies, including transitive ones (ARCHITECTURE §1 and §16).
+# Checked by `task check:licenses:go` with go-licenses; identifiers are SPDX IDs as go-licenses reports them.
+# Keep in line with the allowlists for web/ in web/scripts/check-licenses.mjs.
+#
+# Format: one "<scope> <SPDX ID>" per line.
+#   shipped  allowed for packages linked into the agenty and agenty-sandbox binaries (must be permissive)
+#   dev      additionally allowed for test-only and tooling packages, which are not distributed
+
+shipped MIT
+shipped ISC
+shipped Apache-2.0
+shipped BSD-2-Clause
+shipped BSD-3-Clause
+shipped 0BSD
+
+dev MIT-0
+dev BlueOak-1.0.0
+dev CC0-1.0
+dev MPL-2.0

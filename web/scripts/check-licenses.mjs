@@ -2,6 +2,7 @@
 // Package data comes from `pnpm licenses list --json`, which covers every package in the
 // lockfile that is installed for this platform, including optional native binaries.
 // Exits non-zero and names each offending package and its license.
+// Keep the allowlists in line with the Go allowlist in go-licenses-allowlist.txt.
 import { execFileSync } from "node:child_process"
 
 // Production dependencies are shipped in the built assets and must be permissive.

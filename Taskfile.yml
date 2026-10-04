@@ -13,6 +13,8 @@ vars:
   DOCKER_MIN_VERSION: 25.0.0
   NODE_MIN_VERSION: 24.15.0 # matches web/package.json engines
   PNPM_MIN_VERSION: 12.8.1 # matches web/package.json packageManager
+  # Exact: detected licenses depend on the version.
+  GO_LICENSES_VERSION: 2.0.1
   VERSION:
     sh: git describe --tags --always --dirty 2>/dev/null || echo dev
 
@@ -59,6 +61,9 @@ tasks:
 
         have=$(pnpm --version 2>/dev/null)
         [ -n "$have" ] && at_least "$have" {{.PNPM_MIN_VERSION}}; report pnpm "$have" $? ">= {{.PNPM_MIN_VERSION}}" "brew install pnpm"
+
+        have=$(go version -m "$(command -v go-licenses)" 2>/dev/null | awk '$1 == "mod" { sub(/^v/, "", $3); print $3 }')
+        [ "$have" = {{.GO_LICENSES_VERSION}} ]; report go-licenses "$have" $? "exactly {{.GO_LICENSES_VERSION}}" "go install github.com/google/go-licenses/v2@v{{.GO_LICENSES_VERSION}}"
 
         exit $failed
 
@@ -118,7 +123,47 @@ tasks:
   check:licenses:
     desc: Check dependency licenses against the allowlist (ARCHITECTURE §16)
     cmds:
+      - task: check:licenses:go
       - task: check:licenses:web
+
+  check:licenses:go:
+    desc: Check Go dependency licenses (shipped and all, including transitive) against go-licenses-allowlist.txt
+    cmds:
+      - for: { var: GO_MODULES }
+        task: check:licenses:go:module
+        vars: { MODULE: "{{.ITEM}}" }
+
+  # Checks one Go module directory: packages linked into its binaries (./cmd/...) against the "shipped"
+  # licenses, and all its packages including test-only imports against "shipped" plus "dev".
+  check:licenses:go:module:
+    internal: true
+    silent: true
+    dir: "{{.MODULE}}"
+    vars:
+      ALLOWLIST: '{{.ALLOWLIST | default (print .ROOT_DIR "/go-licenses-allowlist.txt")}}'
+    cmds:
+      - |
+        list() { awk -v scopes="$1" '
+          /^[[:space:]]*(#|$)/ { next }
+          NF != 2 || ($1 != "shipped" && $1 != "dev") { print "invalid allowlist line: " $0 > "/dev/stderr"; exit 1 }
+          index(scopes, $1) { printf "%s%s", sep, $2; sep = "," }' "{{.ALLOWLIST}}"; }
+        shipped=$(list shipped) || exit 1
+        all=$(list "shipped dev") || exit 1
+        check() { # scope, allowed licenses, go-licenses arguments
+          scope=$1; allowed=$2; shift 2
+          # Our own packages are not licensed yet (VISION §13); their dependencies are still checked.
+          if out=$(go-licenses check --ignore github.com/jangraefen/agenty --allowed_licenses="$allowed" "$@" 2>&1); then
+            echo "ok      licenses go {{.MODULE}} $scope"
+          else
+            echo "FAILED  licenses go {{.MODULE}} $scope: not in the allowlist ($allowed)" >&2
+            # Drop go-licenses' warnings about assembly files, which it cannot inspect.
+            printf '%s\n' "$out" | grep -v -e '^W[0-9]' -e '^/' >&2
+            return 1
+          fi
+        }
+        check "shipped" "$shipped" ./cmd/... || failed=1
+        check "all" "$all" --include_tests ./... || failed=1
+        exit ${failed:-0}
 
   check:licenses:web:
     desc: Check web dependency licenses (shipped and all) against the allowlists in web/scripts/check-licenses.mjs

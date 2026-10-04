@@ -462,7 +462,7 @@ A **scripted model** returns predefined responses (including tool calls) step by
 - **Tools** (Go, Task, Lefthook, golangci-lint, Docker) are installed by the developer on the `PATH`. `task setup` verifies their versions (golangci-lint exactly, because lint results depend on it; the others as minimums) and installs the Lefthook hooks.
 - **Web tools**: Node.js and pnpm are `PATH` tools verified by `task setup` (minimums, matching `engines` and `packageManager` in `web/package.json`). The repository uses pnpm, never npm. Biome (the single source of its version; `biome.json` references the same schema version), TypeScript, Vite, and Vitest are dev dependencies pinned by `web/pnpm-lock.yaml`; the Task targets install them with `pnpm install --frozen-lockfile` when the lockfile changes. pnpm blocks dependency build scripts by default and none is allowed: no installed package needs one (Vite uses prebuilt native binaries). `task lint` runs Biome and the type check (`tsc --noEmit`), `task build:web` builds `web/dist` with Vite (also part of `task check`), and `task test:unit` runs Vitest.
 - **Lefthook**: pre-commit → lint, architecture rules, unit tests; pre-push → module tests.
-- **macOS**: gVisor requires Linux; `runsc`-based sandbox tests run in a Colima or Lima VM. Without it, sandbox tests fall back to `insecure_dev_mode` and report that clearly.
+- **macOS**: gVisor requires Linux; `runsc`-based sandbox tests run in a Colima or Lima VM, set up as described in the [macOS sandbox guide](guides/macos-sandbox.md). Without it, sandbox tests fall back to `insecure_dev_mode` and report that clearly.
 
 **CI (GitHub Actions)**
 

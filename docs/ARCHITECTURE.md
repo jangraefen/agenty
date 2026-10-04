@@ -415,7 +415,7 @@ React, Vite, TypeScript (linted and formatted with Biome); TanStack Router; TanS
 - **Images**: `agenty` (server, UI embedded and optionally served), `agenty-sandbox`, the sandbox runtime image; published to GitHub Container Registry by the release workflow.
 - **Single VM**: Docker Compose with `agenty` (all roles), `agenty-sandbox` (with `runsc` on the host), PostgreSQL with pgvector, a volume for blobs.
 - **Scaled**: separate `api`, `worker`, `scheduler` processes against the same database; sandbox runners per host.
-- **Configuration**: file and environment; master key for envelope encryption from file or environment in v1.
+- **Configuration**: a YAML file (`agenty --config <file>`) with `AGENTY_*` environment variables overriding its values; invalid configuration aborts startup naming the field. `--roles` selects any combination of `api`, `worker`, `scheduler` (default: all). Only the `api` role listens for HTTP and serves `/healthz` (reporting the active roles) and `/readyz`. Master key for envelope encryption from file or environment in v1.
 - **Later**: Helm chart, Kubernetes sandbox backend.
 
 ---
@@ -485,7 +485,7 @@ Verified 2026-10-04 against each project's repository. **Before adding any depen
 | Open Policy Agent, gVisor, connect-go, oapi-codegen | Apache-2.0 |
 | MCP Go SDK | Apache-2.0 (new contributions) / MIT (not-yet-relicensed parts) |
 | openai-go, go-genai, aws-sdk-go-v2, go-oidc, opentelemetry-go | Apache-2.0 |
-| anthropic-sdk-go, charmbracelet/log, Gin | MIT |
+| anthropic-sdk-go, charmbracelet/log, Gin, goccy/go-yaml (configuration file; already required by Gin) | MIT |
 | crewjam/saml | BSD-2-Clause |
 | openapi-typescript, openapi-fetch, React, Vite, TanStack Router/Query, shadcn/ui, Radix, Tailwind | MIT |
 

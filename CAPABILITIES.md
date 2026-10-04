@@ -18,7 +18,7 @@ Phases:
 | Visual harness builder | v1 | Configure entry points, instructions, model, tools, skills, knowledge, rules, approvals, and output contract. |
 | Entry points: chat, form, API | v1 | Every entry point requires an authenticated caller (person or service account); the run acts on their behalf. |
 | Schedules | v1 | Recurring invocations of an entry point with saved parameters. Personal schedules run as their owner; workspace schedules run as a workspace service account. |
-| Schedule disabling | v1 | Personal schedules are disabled when the owner leaves, loses access, or their delegated credentials expire; the harness owner is notified. All schedules of a retired harness are disabled. |
+| Schedule disabling | v1 | Personal schedules are disabled when the owner leaves, loses access, or their delegated credentials expire; the harness owner is notified. All schedules of a retired harness are disabled. Without SCIM (Later), departure is detected when the person's login or credential refresh fails. |
 | Typed parameters and prompt templates | v1 | One parameter definition drives API validation and the portal form; values are rendered as untrusted data. |
 | Synchronous and asynchronous runs | v1 | Wait for the structured result, or receive a run reference. |
 | Connector event entry points | Later | First-class integrations from external systems (e.g., "GitLab issue labeled `change`"), including payload-to-parameter mapping. |
@@ -48,14 +48,14 @@ Phases:
 | Conversation memory | v1 | Memory within a run or chat conversation only. |
 | Long-term memory | Later | Explicit scopes (e.g., per user, per agent), retention rules, inspection, and erasure. |
 | Bounded auto-mode | Later | Autonomous within policy and budget; falls back to interactive on high-risk actions. |
-| Run versions pinned at start | v1 | In-flight runs finish on the version they started with; rollback affects new runs only. |
+| Run versions pinned at start | v1 | In-flight runs finish on the version they started with; new runs, including those from schedules and API callers, use the harness's active version. Rollback affects new runs only. |
 
 ## 3. Catalog & Integrations
 
 | Capability | Phase | Notes |
 |---|---|---|
 | Starter kit of maintained connectors | v1 | Common enterprise systems, so a fresh install is usable on day one. Initial set to be decided, e.g., GitLab, GitHub, Jira, Confluence, ServiceNow, Microsoft 365. Likely delivered as MCP servers. |
-| Catalog with visibility scopes | v1 | Team, department, enterprise. |
+| Catalog with visibility scopes | v1 | Workspace and enterprise. Department scope comes with hierarchical workspaces. |
 | Review and publishing flow | v1 | Enablement team approves components before wider publication. |
 | MCP client | v1 | |
 | MCP server | Later | Expose Agenty agents and tools to other MCP clients. |
@@ -85,7 +85,8 @@ Phases:
 | Policy evaluation (OPA) before every tool call | v1 | |
 | Untrusted-content tracking | v1 | Policies can restrict actions influenced by untrusted input. |
 | Centrally mandated approval gates | v1 | Builders can add gates, not remove mandated ones. |
-| Approvals inbox (web) | v1 | |
+| Approvals inbox (web) | v1 | Personal context: the run's user approves. Workspace context: any workspace member approves. |
+| Designated approvers and four-eyes | Later | Named approvers or roles, and approvals that must come from someone other than the caller. |
 | Approvals in Slack and Microsoft Teams | Later | |
 | Approval evidence | Later | Approval and rejection rates and approver edits per action, to support deliberate relaxation of approval requirements. Never automatic. |
 | Approval SLAs and escalation | Later | Timeouts route to a secondary approver or a safe fallback. |
@@ -99,10 +100,10 @@ Phases:
 | OIDC and SAML single sign-on | v1 | |
 | SCIM provisioning | Later | |
 | Workspaces | v1 | Team collaboration under common ownership; isolation of harnesses, schedules, service accounts, data, and budgets. No credentials of their own. |
-| Workspace service accounts | v1 | Non-human identities for API calls and workspace schedules; usable only by authorized members; every run records the configuring person. |
+| Workspace service accounts | v1 | Non-human identities for API calls and workspace schedules; usable by every member of the workspace; every run records the configuring person. |
 | RBAC | v1 | |
 | Attribute-based access via policy | Later | |
-| Agent identities and on-behalf-of execution | v1 | Intersection of agent and user permissions. |
+| Agent identities and on-behalf-of execution | v1 | Intersection of agent and caller permissions. |
 | Hierarchical workspaces (department → team) | Later | |
 
 ## 7. Observability, Audit & Cost
@@ -141,3 +142,29 @@ Phases:
 | No phone-home | v1 | |
 | High availability | Later | |
 | Offline / air-gapped installation | Explore | Possible, not guaranteed (see VISION non-goals). |
+
+---
+
+## 10. Inputs for Architecture
+
+### Constraints derived from the vision
+
+- **Open, self-hostable dependencies.** Every v1 capability must work with dependencies that are open source and free to self-host, without requiring a commercial or enterprise tier of any dependency (VISION principle 3).
+- **Operability.** A regular enterprise IT team must be able to run Agenty (principle 6); minimize the number of distinct stateful components.
+- **Framework-agnostic definition.** The harness definition must not leak the agent framework or runtime chosen internally (principle 5). The runtime may use an existing framework.
+- **Deterministic enforcement outside the model.** Identity, policy (OPA), approvals, and untrusted-content tracking sit in the execution path of every tool call and script execution, not in prompts (VISION trust model).
+- **The reference scenarios** in VISION are the end-to-end acceptance cases for v1.
+
+### Decisions deliberately left to the architecture
+
+- Implementation language(s) and agent framework or runtime.
+- Durable execution approach (runs that pause for days and resume).
+- Deployment topology and minimum footprint.
+- Storage: relational state, audit log, documents and embeddings for retrieval.
+- Sandbox technology for custom tools and skill scripts.
+- Mechanism for untrusted-content tracking and how policies consume it.
+- Key management for crypto-shredding.
+- Credential broker design: storage, encryption, delegated token refresh.
+- How starter-kit connectors are packaged and run (likely MCP servers).
+- The declarative harness definition schema.
+- API design for entry points, synchronous and asynchronous runs.

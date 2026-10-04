@@ -416,7 +416,7 @@ React, Vite, TypeScript (linted and formatted with Biome); TanStack Router; TanS
 - **Images**: `agenty` (server, UI embedded and optionally served), `agenty-sandbox`, the sandbox runtime image; published to GitHub Container Registry by the release workflow.
 - **Single VM**: Docker Compose with `agenty` (all roles), `agenty-sandbox` (with `runsc` on the host), PostgreSQL with pgvector, a volume for blobs.
 - **Scaled**: separate `api`, `worker`, `scheduler` processes against the same database; sandbox runners per host.
-- **Configuration**: file and environment; master key for envelope encryption from file or environment in v1.
+- **Configuration**: a YAML file (`agenty --config <file>`) with `AGENTY_*` environment variables overriding its values; invalid configuration aborts startup naming the field. `--roles` selects any combination of `api`, `worker`, `scheduler` (default: all). Only the `api` role listens for HTTP and serves `/healthz` (reporting the active roles) and `/readyz`. Master key for envelope encryption from file or environment in v1.
 - **Later**: Helm chart, Kubernetes sandbox backend.
 
 ---
@@ -457,7 +457,8 @@ A **scripted model** returns predefined responses (including tool calls) step by
 
 - **Task** targets: `test:unit`, `test:module`, `test:integration`, `test:e2e`, `test:ui`, `test:mutation`, `test:gates`, `test:milestone:Mx` (automated milestone demos), `test:nightly` (real model, not gating), `check:licenses`, and `check` (all gating tiers plus gates). `task check` must pass before merging to `main`. Tiers without tests report "no tests yet" and succeed.
 - **Go test tiers** are selected by build tag: untagged tests are unit tests; `module`, `integration`, `e2e`, and `milestone` tag the other tiers. A milestone demo is the test `TestMilestone<Mx>`.
-- **Tools** (Go, Task, Lefthook, golangci-lint) are installed by the developer on the `PATH`. `task setup` verifies their versions (golangci-lint exactly, because lint results depend on it; the others as minimums) and installs the Lefthook hooks.
+- **PostgreSQL in tests**: `server/internal/testinfra/pgtest` starts one PostgreSQL-with-pgvector container per test package (testcontainers-go, from `TestMain`) and gives each test its own database. `deploy/compose.yaml` runs the same pinned image for local development; a unit test keeps the two in sync. On macOS, the Task test targets point testcontainers-go at the active Docker context.
+- **Tools** (Go, Task, Lefthook, golangci-lint, Docker) are installed by the developer on the `PATH`. `task setup` verifies their versions (golangci-lint exactly, because lint results depend on it; the others as minimums) and installs the Lefthook hooks.
 - **Web tools**: Node.js and pnpm are `PATH` tools verified by `task setup` (minimums, matching `engines` and `packageManager` in `web/package.json`). The repository uses pnpm, never npm. Biome (the single source of its version; `biome.json` references the same schema version), TypeScript, Vite, and Vitest are dev dependencies pinned by `web/pnpm-lock.yaml`; the Task targets install them with `pnpm install --frozen-lockfile` when the lockfile changes. pnpm blocks dependency build scripts by default and none is allowed: no installed package needs one (Vite uses prebuilt native binaries). `task lint` runs Biome and the type check (`tsc --noEmit`), `task build:web` builds `web/dist` with Vite (also part of `task check`), and `task test:unit` runs Vitest.
 - **Lefthook**: pre-commit → lint, architecture rules, unit tests; pre-push → module tests.
 - **macOS**: gVisor requires Linux; `runsc`-based sandbox tests run in a Colima or Lima VM. Without it, sandbox tests fall back to `insecure_dev_mode` and report that clearly.
@@ -487,7 +488,7 @@ Verified 2026-10-04 against each project's repository. **Before adding any depen
 | Open Policy Agent, gVisor, connect-go, oapi-codegen | Apache-2.0 |
 | MCP Go SDK | Apache-2.0 (new contributions) / MIT (not-yet-relicensed parts) |
 | openai-go, go-genai, aws-sdk-go-v2, go-oidc, opentelemetry-go | Apache-2.0 |
-| anthropic-sdk-go, charmbracelet/log, Gin | MIT |
+| anthropic-sdk-go, charmbracelet/log, Gin, goccy/go-yaml (configuration file; already required by Gin) | MIT |
 | crewjam/saml | BSD-2-Clause |
 | openapi-typescript, openapi-fetch, React, Vite, TanStack Router/Query, shadcn/ui, Radix, Tailwind | MIT |
 
@@ -495,8 +496,8 @@ Verified 2026-10-04 against each project's repository. **Before adding any depen
 
 | Project | License |
 |---|---|
-| testcontainers-go, Vitest, Testing Library, Task, Lefthook, Colima, actionlint | MIT |
-| Playwright, Gremlins, Stryker, Dex, Lima, go-licenses | Apache-2.0 |
+| testcontainers-go (incl. its `postgres` module), Vitest, Testing Library, Task, Lefthook, Colima, actionlint | MIT |
+| Playwright, Gremlins, Stryker, Dex, Lima, go-licenses, Docker Engine and CLI | Apache-2.0 |
 | Biome (@biomejs/biome npm package) | MIT OR Apache-2.0 |
 | axe-core | MPL-2.0 |
 | golangci-lint | GPL-3.0 (standalone tool, not linked) |

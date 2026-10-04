@@ -10,6 +10,7 @@ vars:
   # Minimum versions.
   TASK_MIN_VERSION: 3.54.0
   LEFTHOOK_MIN_VERSION: 2.1.16
+  DOCKER_MIN_VERSION: 25.0.0
   NODE_MIN_VERSION: 24.15.0 # matches web/package.json engines
   PNPM_MIN_VERSION: 12.8.1 # matches web/package.json packageManager
   VERSION:
@@ -46,6 +47,9 @@ tasks:
 
         have=$(lefthook version 2>/dev/null)
         [ -n "$have" ] && at_least "$have" {{.LEFTHOOK_MIN_VERSION}}; report lefthook "$have" $? ">= {{.LEFTHOOK_MIN_VERSION}}" "brew install lefthook, or https://lefthook.dev/installation"
+
+        have=$(docker version --format '{{"{{"}}.Client.Version{{"}}"}}' 2>/dev/null)
+        [ -n "$have" ] && at_least "$have" {{.DOCKER_MIN_VERSION}}; report docker "$have" $? ">= {{.DOCKER_MIN_VERSION}}" "brew install colima docker && colima start, or https://docs.docker.com/engine/install/"
 
         have=$(golangci-lint version --short 2>/dev/null)
         [ "$have" = {{.GOLANGCI_LINT_VERSION}} ]; report golangci-lint "$have" $? "exactly {{.GOLANGCI_LINT_VERSION}}" "https://golangci-lint.run/docs/welcome/install/"
@@ -196,6 +200,12 @@ tasks:
     cmds:
       - |
         if grep -rqE --include='*_test.go' '{{.PATTERN}}' {{.GO_MODULES}}; then
+          # testcontainers-go ignores Docker contexts; on macOS (Colima, Lima, Docker Desktop) point it at the
+          # active context's socket and tell it the socket path inside the VM.
+          if [ "$(uname)" = Darwin ]; then
+            export DOCKER_HOST="${DOCKER_HOST:-$(docker context inspect --format '{{"{{"}}.Endpoints.docker.Host{{"}}"}}' 2>/dev/null)}"
+            export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE="${TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE:-/var/run/docker.sock}"
+          fi
           go test -count=1 -tags {{.TIER}} {{if .RUN}}-run '^{{.RUN}}$'{{end}} {{.GO_PACKAGES}}
         else
           echo "{{if .RUN}}test:milestone:{{.MILESTONE}}{{else}}test:{{.TIER}}{{end}} - no tests yet"

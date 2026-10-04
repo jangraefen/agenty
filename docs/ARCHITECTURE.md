@@ -444,7 +444,7 @@ A **scripted model** returns predefined responses (including tool calls) step by
 - **Coverage**: ≥ 90 % statement coverage per package; 100 % statement coverage for `toolgateway`, `policy`, `credentials`, `identity`, `runs`. (Go tooling measures statements, not branches; mutation testing covers branch logic.)
 - **Mutation testing** on those packages: Gremlins (Go), Stryker (TypeScript); initial efficacy threshold 80 %.
 - **Gate self-tests**: `task test:gates` proves every gate fails when its rule is violated.
-- **Architecture rules** (golangci-lint `depguard`, in `.golangci.yaml`): only `toolgateway` imports `server/internal/executor/...` (executor packages may import each other); `server` and `sandbox` do not import each other; `web/` only uses the generated client.
+- **Architecture rules** (golangci-lint `depguard`, in `.golangci.yaml`): only `toolgateway` imports `server/internal/executor/...` (executor packages may import each other); `server` and `sandbox` do not import each other. Access to another package's `internal/` is already rejected by the Go compiler. That `web/` only uses the generated client is enforced separately for the web app (E03).
 - **Invariant suites**: one named suite per invariant in §3.
 - **Crash tests**: fault injection between steps and mid-tool-call; runs resume or land in `needs_attention`.
 - **Policy tests**: reference Rego ships with `opa test` suites.

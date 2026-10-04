@@ -1,4 +1,11 @@
 version: "2"
+run:
+  # Lint every test tier, not only untagged files (ARCHITECTURE §15.4).
+  build-tags:
+    - module
+    - integration
+    - e2e
+    - milestone
 linters:
   default: none
   enable:
@@ -33,20 +40,27 @@ linters:
             - $all
             - "!**/server/internal/toolgateway/**"
             - "!**/server/internal/executor/**"
+          # Exact package ($) plus subpackages (/); a bare prefix would also match e.g. ".../executorx".
           deny:
-            - pkg: github.com/jangraefen/agenty/server/internal/executor
+            - pkg: github.com/jangraefen/agenty/server/internal/executor$
+              desc: "executors are imported only by toolgateway, the single side-effect path (ARCHITECTURE §3 invariant 1)"
+            - pkg: github.com/jangraefen/agenty/server/internal/executor/
               desc: "executors are imported only by toolgateway, the single side-effect path (ARCHITECTURE §3 invariant 1)"
         server-module:
           files:
             - "**/server/**"
           deny:
-            - pkg: github.com/jangraefen/agenty/sandbox
+            - pkg: github.com/jangraefen/agenty/sandbox$
+              desc: "server and sandbox share only generated contracts from api/ (ARCHITECTURE §4)"
+            - pkg: github.com/jangraefen/agenty/sandbox/
               desc: "server and sandbox share only generated contracts from api/ (ARCHITECTURE §4)"
         sandbox-module:
           files:
             - "**/sandbox/**"
           deny:
-            - pkg: github.com/jangraefen/agenty/server
+            - pkg: github.com/jangraefen/agenty/server$
+              desc: "server and sandbox share only generated contracts from api/ (ARCHITECTURE §4)"
+            - pkg: github.com/jangraefen/agenty/server/
               desc: "server and sandbox share only generated contracts from api/ (ARCHITECTURE §4)"
     govet:
       disable:

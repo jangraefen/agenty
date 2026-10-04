@@ -30,11 +30,15 @@ Central teams keep oversight, and builders gain confidence in changes.
 
 - VISION §6, §8
 
-## Definition of done
+## Acceptance criteria
 
-In addition to the [common definition of done](README.md#common-definition-of-done):
+The [common acceptance criteria](README.md#common-acceptance-criteria) apply in addition to:
 
-- UI tests for inventory, reassignment, and replay comparison.
+- [ ] **AC-E20-1** — The inventory lists every harness across workspaces with owner, tools, data access, cost, last run, and schedules (including disabled ones); only central roles can see it. *Verified by:* Module tests and Playwright.
+- [ ] **AC-E20-2** — Workspace administrators can reassign a harness owner; the change is audited. *Verified by:* Module tests.
+- [ ] **AC-E20-3** — The playground runs a draft version without activating it. *Verified by:* Integration tests.
+- [ ] **AC-E20-4** — Example runs can be saved, replayed against a chosen version, and compared side by side. *Verified by:* Integration tests and Playwright.
+- [ ] **AC-E20-5** — The replay side-effect strategy is decided, recorded in ARCHITECTURE §2, and enforced: replay never repeats real side effects. *Verified by:* Integration tests.
 
 ## Notes
 

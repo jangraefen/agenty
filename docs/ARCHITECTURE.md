@@ -438,8 +438,9 @@ A **scripted model** returns predefined responses (including tool calls) step by
 
 ### 15.3 Quality gates
 
-- **Coverage**: ≥ 90 % line coverage overall; 100 % branch coverage for `toolgateway`, `policy`, `credentials`, `identity`, `runs`.
-- **Mutation testing** on those packages: Gremlins (Go), Stryker (TypeScript).
+- **Coverage**: ≥ 90 % statement coverage per package; 100 % statement coverage for `toolgateway`, `policy`, `credentials`, `identity`, `runs`. (Go tooling measures statements, not branches; mutation testing covers branch logic.)
+- **Mutation testing** on those packages: Gremlins (Go), Stryker (TypeScript); initial efficacy threshold 80 %.
+- **Gate self-tests**: `task test:gates` proves every gate fails when its rule is violated.
 - **Architecture rules** (golangci-lint): only `toolgateway` imports executors; no cross-package internals; `web/` only uses the generated client.
 - **Invariant suites**: one named suite per invariant in §3.
 - **Crash tests**: fault injection between steps and mid-tool-call; runs resume or land in `needs_attention`.
@@ -449,7 +450,7 @@ A **scripted model** returns predefined responses (including tool calls) step by
 
 ### 15.4 Local execution
 
-- **Task** targets: `test:unit`, `test:module`, `test:integration`, `test:e2e`, `test:ui`, `test:mutation`, `check:licenses`, and `check` (all tiers plus gates). `task check` must pass before merging to `main`.
+- **Task** targets: `test:unit`, `test:module`, `test:integration`, `test:e2e`, `test:ui`, `test:mutation`, `test:gates`, `test:milestone:Mx` (automated milestone demos), `test:nightly` (real model, not gating), `check:licenses`, and `check` (all gating tiers plus gates). `task check` must pass before merging to `main`.
 - **Lefthook**: pre-commit → lint, architecture rules, unit tests; pre-push → module tests.
 - **macOS**: gVisor requires Linux; `runsc`-based sandbox tests run in a Colima or Lima VM. Without it, sandbox tests fall back to `insecure_dev_mode` and report that clearly.
 - CI can reuse the same `task` targets later.
@@ -508,7 +509,7 @@ Kubernetes sandbox backend and Helm chart · HA beyond role separation · KMS/Va
 | Risk | Mitigation |
 |---|---|
 | v1 scope for a single maintainer | Delivery slices and roadmap planned separately; components testable in isolation. |
-| Own durable execution has subtle failure modes | Small explicit state machine; crash-injection tests; 100 % branch coverage on `runs`. |
+| Own durable execution has subtle failure modes | Small explicit state machine; crash-injection tests; 100 % statement coverage and mutation testing on `runs`. |
 | Per-run tainting causes approval fatigue | Reference policies target writes and external communication; approval evidence (Later). |
 | gVisor setup burden (operators, macOS development) | Documented host setup; Colima/Lima; explicit `insecure_dev_mode`. |
 | Third-party MCP server quality and licensing | Curated starter kit; policy enforced before every call. |

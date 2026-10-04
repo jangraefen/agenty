@@ -36,12 +36,21 @@ People and automations can authenticate, and workspaces with members, roles, and
 
 - ARCHITECTURE D13, D16, §8.1, §8.2; VISION §6
 
-## Definition of done
+## Acceptance criteria
 
-In addition to the [common definition of done](README.md#common-definition-of-done):
+The [common acceptance criteria](README.md#common-acceptance-criteria) apply in addition to:
 
-- Integration tests against Dex (OIDC) and a SAML test identity provider.
-- Tests for invariant 5 (authenticated caller) at the API boundary.
+- [ ] **AC-E04-1** — OIDC login against Dex completes; the session cookie is HttpOnly, Secure, and SameSite; no tokens are stored in browser storage. *Verified by:* Integration and Playwright tests.
+- [ ] **AC-E04-2** — SAML 2.0 login against a test identity provider completes. *Verified by:* Integration test.
+- [ ] **AC-E04-3** — Logout invalidates the session on the server. *Verified by:* Integration test.
+- [ ] **AC-E04-4** — Credentialed requests from configured origins succeed; requests from other origins are rejected. *Verified by:* Module test.
+- [ ] **AC-E04-5** — Every API route requires authentication except an explicit allowlist of public routes. *Verified by:* Invariant 5 suite (enumerates all OpenAPI routes).
+- [ ] **AC-E04-6** — Each platform role's permissions are enforced on every endpoint. *Verified by:* Table-driven tests per endpoint and role.
+- [ ] **AC-E04-7** — Workspace admins create workspaces and manage members; non-members cannot see workspace resources. *Verified by:* Module and invariant 13 tests.
+- [ ] **AC-E04-8** — Personal access tokens can be created with scopes and expiry, revoked, and are stored only as hashes; expired or revoked tokens are rejected. *Verified by:* Module tests including database inspection.
+- [ ] **AC-E04-9** — Service accounts can be created in a workspace with Agenty-issued tokens and client credentials; the client-credentials endpoint issues short-lived tokens; every workspace member can use them, non-members cannot. *Verified by:* Module tests.
+- [ ] **AC-E04-10** — Group claims from OIDC and SAML are stored; the audience check returns correct results for workspace, group, and all-authenticated audiences. *Verified by:* Unit tests.
+- [ ] **AC-E04-11** — UI flows for login, workspace management, members, service accounts, and personal tokens work and pass accessibility checks. *Verified by:* Playwright with axe-core.
 
 ## Stories
 

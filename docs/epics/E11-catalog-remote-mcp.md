@@ -34,11 +34,18 @@ The enablement team publishes governed building blocks, and agents use remote MC
 
 - ARCHITECTURE D6, §10
 
-## Definition of done
+## Acceptance criteria
 
-In addition to the [common definition of done](README.md#common-definition-of-done):
+The [common acceptance criteria](README.md#common-acceptance-criteria) apply in addition to:
 
-- Integration tests with mock remote MCP servers using OAuth and static credentials.
+- [ ] **AC-E11-1** — Catalog items have versions and a scope (workspace or enterprise); visibility follows the scope. *Verified by:* Module tests.
+- [ ] **AC-E11-2** — Publishing from workspace to enterprise scope requires review by the enablement team; reviews can approve or reject. *Verified by:* Module tests.
+- [ ] **AC-E11-3** — Tools listed by an MCP server can be referenced by harnesses only after their metadata (effect, trust, idempotency) is set. *Verified by:* Module tests.
+- [ ] **AC-E11-4** — Remote MCP calls use per-user OAuth tokens for on-behalf-of execution and static tokens for service accounts; servers with static credentials cannot be used on behalf of users. *Verified by:* Integration tests with mock MCP servers.
+- [ ] **AC-E11-5** — Imported OpenAPI operations become typed tools; arguments are validated and calls use broker credentials. *Verified by:* Integration tests.
+- [ ] **AC-E11-6** — Model configurations are catalog items referenced by harnesses; configurations created in E07 are migrated. *Verified by:* Module tests.
+- [ ] **AC-E11-7** — A harness calls a mock remote MCP tool through the gateway with policy applied. *Verified by:* Integration test.
+- [ ] **AC-E11-8** — The catalog UI supports browsing, publishing, and reviewing. *Verified by:* Playwright with axe-core.
 
 ## Stories
 

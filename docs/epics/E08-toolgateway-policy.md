@@ -39,12 +39,22 @@ Every side effect flows through one governed path with layered, non-bypassable p
 
 - ARCHITECTURE D8, D9, D10, §7.3–§7.5; invariants 1–4, 7
 
-## Definition of done
+## Acceptance criteria
 
-In addition to the [common definition of done](README.md#common-definition-of-done):
+The [common acceptance criteria](README.md#common-acceptance-criteria) apply in addition to:
 
-- Invariant suites 1–4.
-- 100 % branch coverage for `toolgateway` and `policy`; mutation gate passing.
+- [ ] **AC-E08-1** — Executors are reachable only through `toolgateway`. *Verified by:* `depguard` rule and invariant 1 suite.
+- [ ] **AC-E08-2** — Calls to tools not granted to the harness's agent principal are denied. *Verified by:* Invariant 2 suite.
+- [ ] **AC-E08-3** — For every combination of layer results, the strictest wins; `allow` or other outputs from harness layers have no effect. *Verified by:* Invariant 3 suite (table-driven).
+- [ ] **AC-E08-4** — Effective permissions are the intersection of agent grants and caller permissions. *Verified by:* Invariant 4 suite.
+- [ ] **AC-E08-5** — Policy evaluation errors and timeouts deny the call (fail closed). *Verified by:* Unit tests.
+- [ ] **AC-E08-6** — Structured rules are stored as data and evaluated by the fixed Rego policy, which ships with an `opa test` suite. *Verified by:* `opa test` and module tests.
+- [ ] **AC-E08-7** — Custom harness Rego with compile errors, disallowed rule names, or forbidden built-ins (such as `http.send`) is rejected on save with a clear message; attached `opa test` suites run on save. *Verified by:* Module tests.
+- [ ] **AC-E08-8** — Central bundles load by upload, HTTP, OCI registry, and directory; bundles with invalid signatures are rejected when signing is required; every `policy_decision` step records the bundle versions used. *Verified by:* Module tests.
+- [ ] **AC-E08-9** — Untrusted parameters and tool outputs mark the run as tainted and add their source; policy input contains both. *Verified by:* Module tests.
+- [ ] **AC-E08-10** — Reference policies require approval for writes in tainted runs and deny `external_communication` in tainted runs; they ship with `opa test` suites. *Verified by:* `opa test`.
+- [ ] **AC-E08-11** — The rule builder, custom Rego tab, and compliance policy administration work in the UI. *Verified by:* Playwright with axe-core.
+- [ ] **AC-E08-12** — `toolgateway` and `policy` have 100 % statement coverage and meet the mutation threshold. *Verified by:* `task check`.
 
 ## Stories
 

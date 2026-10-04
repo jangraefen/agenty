@@ -39,13 +39,22 @@ Harnesses can be started through the API and portal forms, run durably, and be o
 
 - ARCHITECTURE D3, D4, §6, §13.1; invariants 8, 9, 10
 
-## Definition of done
+## Acceptance criteria
 
-In addition to the [common definition of done](README.md#common-definition-of-done):
+The [common acceptance criteria](README.md#common-acceptance-criteria) apply in addition to:
 
-- Crash tests: runs resume after worker death; non-idempotent unknown outcomes land in `needs_attention`.
-- 100 % branch coverage for `runs`.
-- Invariant suites 8, 9, 10.
+- [ ] **AC-E06-1** — Every run state transition in ARCHITECTURE §6.1 is implemented; any other transition is rejected. *Verified by:* Unit tests.
+- [ ] **AC-E06-2** — Valid entry-point parameters create a run; invalid parameters return 422 problem details naming each parameter; callers outside the harness audience receive 403. *Verified by:* Module tests.
+- [ ] **AC-E06-3** — With `wait`, a run finishing in time returns 200 with the result, otherwise 202 with a run reference; repeating a request with the same `Idempotency-Key` returns the same run without creating another. *Verified by:* Module tests.
+- [ ] **AC-E06-4** — Runs started by service accounts record both the service account and the configuring person. *Verified by:* Invariant 5 suite.
+- [ ] **AC-E06-5** — Each step is committed before the next begins; killing a worker between any two steps never loses or duplicates a step. *Verified by:* Crash tests (invariant 8 suite).
+- [ ] **AC-E06-6** — When a worker dies mid-run, another worker resumes the run from the step log after the lease expires. *Verified by:* Crash tests.
+- [ ] **AC-E06-7** — A non-idempotent tool call with unknown outcome moves the run to `needs_attention`, where it can be resumed or cancelled; idempotent calls are retried. *Verified by:* Invariant 9 suite.
+- [ ] **AC-E06-8** — Activating a new harness version does not affect runs already in progress. *Verified by:* Invariant 10 suite.
+- [ ] **AC-E06-9** — Server-sent events deliver step updates; reconnecting with `Last-Event-ID` resumes without gaps. *Verified by:* Module tests.
+- [ ] **AC-E06-10** — The portal form is generated from the entry point's parameters and validates exactly like the API. *Verified by:* Shared-schema tests and Playwright.
+- [ ] **AC-E06-11** — Run list, run detail, and the trace view render the step log. *Verified by:* Playwright.
+- [ ] **AC-E06-12** — `runs` has 100 % statement coverage and meets the mutation threshold. *Verified by:* `task check`.
 
 ## Stories
 

@@ -30,11 +30,14 @@ Operators and FinOps see what runs do and what they cost, and budgets stop runaw
 
 - ARCHITECTURE §12.2, §12.3
 
-## Definition of done
+## Acceptance criteria
 
-In addition to the [common definition of done](README.md#common-definition-of-done):
+The [common acceptance criteria](README.md#common-acceptance-criteria) apply in addition to:
 
-- Tests that a budget stops a run mid-loop and that historical cost is unaffected by price changes.
+- [ ] **AC-E19-1** — Spans exist for runs, model calls, tool calls, policy decisions, and sandbox executions with GenAI attributes; they are exported via OTLP only when an endpoint is configured. *Verified by:* Module tests with a test collector.
+- [ ] **AC-E19-2** — Each model step records tokens and, for commercial models, cost at the price valid at that time; changing a price does not change historical cost; local models record tokens only. *Verified by:* Module tests.
+- [ ] **AC-E19-3** — Budgets per run, harness, and workspace are checked before every model call; exceeding one fails the run with `budget_exceeded`, also mid-loop. *Verified by:* Integration tests.
+- [ ] **AC-E19-4** — FinOps views show usage and cost per workspace and harness over time. *Verified by:* Playwright with axe-core.
 
 ## Stories
 

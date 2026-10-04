@@ -32,12 +32,20 @@ The shared runtime of the `agenty` server that every domain package builds on.
 
 - ARCHITECTURE D4, D5, D18, D19, §5, §6.4, §11.1, §12.2, §13.1
 
-## Definition of done
+## Acceptance criteria
 
-In addition to the [common definition of done](README.md#common-definition-of-done):
+The [common acceptance criteria](README.md#common-acceptance-criteria) apply in addition to:
 
-- Module tests against real PostgreSQL for migrations, notifier (including lost-notification fallback), and blob backends.
-- Invariant 13 (workspace isolation) helper covered by tests.
+- [ ] **AC-E02-1** — The server starts from a configuration file plus environment overrides; invalid configuration aborts startup with a message naming the offending field. *Verified by:* Unit and module tests.
+- [ ] **AC-E02-2** — `--roles` starts only the selected roles (any combination of api, worker, scheduler); the health endpoint reports the active roles. *Verified by:* Module tests.
+- [ ] **AC-E02-3** — Log output is text in development and JSON or logfmt in production; values registered as secrets are redacted in every format. *Verified by:* Unit tests.
+- [ ] **AC-E02-4** — Migrations run at startup; two instances starting concurrently apply each migration exactly once. *Verified by:* Module test against PostgreSQL.
+- [ ] **AC-E02-5** — Workspace-scoped repository functions cannot be called without a `workspace_id`, and a query for one workspace never returns another workspace's rows. *Verified by:* Invariant 13 suite.
+- [ ] **AC-E02-6** — A notification published after commit wakes subscribers on another server instance; with notifications deliberately dropped, waiters still observe the new state within the polling interval. *Verified by:* Module tests.
+- [ ] **AC-E02-7** — The `Blob` interface passes one shared contract test suite for the local-volume and S3-compatible implementations (S3 tested against a license-checked S3-compatible test server). *Verified by:* Module tests.
+- [ ] **AC-E02-8** — The minimal audit writer appends events; the application's database role cannot update or delete them. *Verified by:* Module test with role permissions.
+- [ ] **AC-E02-9** — `task generate` regenerates Go and TypeScript code from `api/`; `task check` fails if generated code is out of date. *Verified by:* `task test:gates`.
+- [ ] **AC-E02-10** — `/healthz` and `/readyz` exist; readiness requires database connectivity and applied migrations; errors use RFC 9457 problem details; shutdown completes in-flight requests. *Verified by:* Module tests.
 
 ## Stories
 

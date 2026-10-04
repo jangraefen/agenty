@@ -29,11 +29,16 @@ Local MCP servers and image-based custom tools run governed inside the sandbox.
 
 - ARCHITECTURE D7, §9, §10; invariant 14
 
-## Definition of done
+## Acceptance criteria
 
-In addition to the [common definition of done](README.md#common-definition-of-done):
+The [common acceptance criteria](README.md#common-acceptance-criteria) apply in addition to:
 
-- End-to-end tests with a sample local MCP server image and a sample custom tool.
+- [ ] **AC-E13-1** — Local MCP catalog entries require an image digest, a credential-to-environment mapping, and an egress allowlist. *Verified by:* Module tests.
+- [ ] **AC-E13-2** — Each run and identity gets its own session; different users never share an instance; sessions end with their run. *Verified by:* Integration tests.
+- [ ] **AC-E13-3** — Sessions receive the acting user's delegated credential in personal contexts and the service account's credential in workspace contexts. *Verified by:* Integration tests.
+- [ ] **AC-E13-4** — Custom tools run as images with typed schemas and return validated results. *Verified by:* Integration tests.
+- [ ] **AC-E13-5** — Publishing local MCP entries or custom tools to enterprise scope requires review. *Verified by:* Module tests.
+- [ ] **AC-E13-6** — A sample local MCP server and a sample custom tool work end to end through the gateway. *Verified by:* E2E test and invariant 14 suite.
 
 ## Stories
 

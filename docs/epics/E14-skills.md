@@ -29,11 +29,15 @@ Builders give agents expertise through skills with instructions, scripts, and re
 
 - VISION §6; ARCHITECTURE §7.2, §9
 
-## Definition of done
+## Acceptance criteria
 
-In addition to the [common definition of done](README.md#common-definition-of-done):
+The [common acceptance criteria](README.md#common-acceptance-criteria) apply in addition to:
 
-- Tests that skill scripts get no network or credentials unless granted.
+- [ ] **AC-E14-1** — Skills consist of `SKILL.md`, scripts, and resources; import and export are compatible with the Agent Skills format. *Verified by:* Tests with fixtures from the public format examples.
+- [ ] **AC-E14-2** — Skills with scripts require review beyond workspace scope; instruction-only skills do not. *Verified by:* Module tests.
+- [ ] **AC-E14-3** — The system prompt contains only the skill index; `load_skill` returns the instructions; `run_skill_script` executes through the gateway in a one-shot sandbox with policy applied. *Verified by:* Integration tests.
+- [ ] **AC-E14-4** — Skill scripts have no network access or credentials unless explicitly granted. *Verified by:* Invariant 14 suite.
+- [ ] **AC-E14-5** — Skills with files can be created and edited in the UI. *Verified by:* Playwright with axe-core.
 
 ## Stories
 

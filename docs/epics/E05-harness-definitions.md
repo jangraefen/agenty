@@ -35,13 +35,18 @@ Harnesses can be defined visually or as YAML, versioned immutably, and moved thr
 
 - VISION §6, principle 5; ARCHITECTURE §13.2
 
-## Definition of done
+## Acceptance criteria
 
-In addition to the [common definition of done](README.md#common-definition-of-done):
+The [common acceptance criteria](README.md#common-acceptance-criteria) apply in addition to:
 
-- YAML round-trip tests (import → store → export is lossless).
-- Schema validation tests, including invalid definitions.
-- UI tests for the builder.
+- [ ] **AC-E05-1** — The JSON Schema in `schemas/` validates every harness section; invalid definitions are rejected with the path of each error. *Verified by:* Unit tests with valid and invalid fixtures.
+- [ ] **AC-E05-2** — Importing a YAML definition and exporting it again is lossless. *Verified by:* Round-trip tests over fixtures.
+- [ ] **AC-E05-3** — Every save creates an immutable version; attempts to modify a version are rejected. *Verified by:* Module tests.
+- [ ] **AC-E05-4** — Activating a version and rolling back change only the active pointer; all versions remain available. *Verified by:* Module tests.
+- [ ] **AC-E05-5** — Lifecycle transitions follow a defined table; disallowed transitions are rejected; a retired harness cannot be activated. *Verified by:* Unit tests.
+- [ ] **AC-E05-6** — Each harness has an agent principal whose grants can be changed only by authorized roles. *Verified by:* Module tests.
+- [ ] **AC-E05-7** — A complete harness can be created in the visual builder, and its exported YAML matches the expected fixture. *Verified by:* Playwright.
+- [ ] **AC-E05-8** — The example in ARCHITECTURE §13.2 is updated to the final schema and imports successfully as a test fixture. *Verified by:* Unit test; documentation updated.
 
 ## Stories
 

@@ -63,12 +63,13 @@ flowchart LR
 
 E21 depends on all other epics.
 
-## Common definition of done
+## Common acceptance criteria
 
-Every epic is done only when:
+An epic is accepted only when all of its own acceptance criteria and all of the following hold:
 
 - All in-scope items are implemented with tests written first.
 - `task check` passes locally, including coverage, mutation, architecture, and license gates (ARCHITECTURE §15.3).
+- Acceptance criteria are checked off in the epic file only when their verification has been run and passed.
 - Invariants in ARCHITECTURE §3 that the epic touches have dedicated tests.
 - API changes are made in `api/` first; generated code is not hand-edited.
 - New dependencies are license-checked and recorded in ARCHITECTURE §16.
@@ -77,4 +78,4 @@ Every epic is done only when:
 
 ## Epic file template
 
-Each epic file contains: status, dependencies, goal, capabilities covered, in scope, out of scope, references, definition of done, optional notes, and stories.
+Each epic file contains: status, dependencies, goal, capabilities covered, in scope, out of scope, references, acceptance criteria (numbered `AC-Exx-n`, each with how it is verified), optional notes, and stories. Stories reference the acceptance criteria they satisfy.

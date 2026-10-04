@@ -30,11 +30,16 @@ Harnesses run on schedules, personally or on behalf of a workspace.
 
 - ARCHITECTURE D14, §6.3
 
-## Definition of done
+## Acceptance criteria
 
-In addition to the [common definition of done](README.md#common-definition-of-done):
+The [common acceptance criteria](README.md#common-acceptance-criteria) apply in addition to:
 
-- Tests for leader failover, missed-fire handling, and every disabling condition.
+- [ ] **AC-E17-1** — Personal and workspace schedules can be created with saved parameters; invalid cron expressions are rejected. *Verified by:* Module tests.
+- [ ] **AC-E17-2** — Exactly one scheduler is leader; when it dies, another takes over within the lock timeout. *Verified by:* Module tests.
+- [ ] **AC-E17-3** — Personal schedules fire as their owner, workspace schedules as the selected service account, with the saved parameters. *Verified by:* Integration tests.
+- [ ] **AC-E17-4** — Fires missed during downtime are skipped and recorded, not replayed. *Verified by:* Module tests.
+- [ ] **AC-E17-5** — Fire-time checks fail closed; departure, credential invalidation, lost harness access, and harness retirement disable the affected schedules with a reason and notify the harness owner. *Verified by:* Module tests for each condition.
+- [ ] **AC-E17-6** — Schedules can be managed in the UI, which shows disabled schedules and their reason. *Verified by:* Playwright with axe-core.
 
 ## Stories
 

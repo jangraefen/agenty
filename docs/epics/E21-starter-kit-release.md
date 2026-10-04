@@ -31,11 +31,16 @@ A fresh installation is useful on day one and can be operated with confidence.
 
 - VISION §9; ARCHITECTURE §14, §16
 
-## Definition of done
+## Acceptance criteria
 
-In addition to the [common definition of done](README.md#common-definition-of-done):
+The [common acceptance criteria](README.md#common-acceptance-criteria) apply in addition to:
 
-- Both reference scenarios pass end to end; the no-phone-home test passes.
+- [ ] **AC-E21-1** — At least GitLab and ServiceNow MCP servers are verified against the dependency rule, recorded in ARCHITECTURE §16, and shipped as catalog entries with reference deployments; other candidates are documented with a decision. *Verified by:* Review of §16 and catalog entries.
+- [ ] **AC-E21-2** — Both reference scenarios pass as end-to-end suites using starter-kit servers or equivalent mocks. *Verified by:* E2E suites.
+- [ ] **AC-E21-3** — A network capture during a full end-to-end run shows outbound traffic only to configured endpoints. *Verified by:* Invariant 12 suite.
+- [ ] **AC-E21-4** — Following the operator documentation on a clean VM installs a working production Compose deployment, including `runsc`, backup and restore, and an upgrade. *Verified by:* Manual verification checklist, recorded.
+- [ ] **AC-E21-5** — Documentation covers installation, configuration, key management, backup and restore, upgrades, hardening, and the crypto-shredding limitation. *Verified by:* Documentation review.
+- [ ] **AC-E21-6** — A tagged release publishes images and a changelog; `agenty --version` matches the tag. *Verified by:* Release checklist.
 
 ## Notes
 

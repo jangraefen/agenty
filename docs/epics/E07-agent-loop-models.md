@@ -35,13 +35,18 @@ Runs execute a real, model-driven agent loop with structured results.
 
 - ARCHITECTURE D2, §7.1, §7.2; invariant 7
 
-## Definition of done
+## Acceptance criteria
 
-In addition to the [common definition of done](README.md#common-definition-of-done):
+The [common acceptance criteria](README.md#common-acceptance-criteria) apply in addition to:
 
-- Provider tests against recorded fixtures or fake servers for each provider.
-- Optional `task test:nightly` against a real model.
-- Invariant 7 (parameters are untrusted data) suite.
+- [ ] **AC-E07-1** — Providers for OpenAI and OpenAI-compatible endpoints, Anthropic, Google, and AWS Bedrock pass one shared provider contract suite (streaming, tool calls, usage reporting). *Verified by:* Module tests against fakes or recorded fixtures.
+- [ ] **AC-E07-2** — The scripted model exists as a Go implementation and as a fake OpenAI-compatible HTTP server, and drives the integration stack deterministically. *Verified by:* Integration tests.
+- [ ] **AC-E07-3** — The system prompt contains the platform preamble, instructions, and skill index; parameters appear only inside data blocks and cannot escape them (e.g., a value containing a closing tag). *Verified by:* Invariant 7 suite.
+- [ ] **AC-E07-4** — A valid `final_answer` completes the run with the structured result; an invalid one triggers corrective retries up to the limit, then fails the run with `output_invalid`. *Verified by:* Module tests.
+- [ ] **AC-E07-5** — Exceeding the step or token limit fails the run with `step_limit`. *Verified by:* Module tests.
+- [ ] **AC-E07-6** — Tool calls reach the `ToolGateway` interface; with the deny-all stub, the model receives a tool error and the run continues. *Verified by:* Module tests.
+- [ ] **AC-E07-7** — Model configurations can be managed by administrators and referenced by harnesses; provider API keys are never logged or returned by the API. *Verified by:* Module tests and redaction tests.
+- [ ] **AC-E07-8** — `task test:nightly` runs a scenario against a configured real model and is not part of `task check`. *Verified by:* Manual run.
 
 ## Stories
 

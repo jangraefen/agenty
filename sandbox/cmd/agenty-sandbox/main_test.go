@@ -5,6 +5,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRunPrintsVersion(t *testing.T) {
@@ -12,12 +15,8 @@ func TestRunPrintsVersion(t *testing.T) {
 
 	code := run([]string{"--version"}, &stdout, &stderr)
 
-	if code != 0 {
-		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr.String())
-	}
-	if got, want := stdout.String(), "agenty-sandbox dev\n"; got != want {
-		t.Errorf("stdout = %q, want %q", got, want)
-	}
+	require.Equal(t, 0, code, "exit code (stderr: %q)", stderr.String())
+	assert.Equal(t, "agenty-sandbox dev\n", stdout.String(), "stdout")
 }
 
 func TestRunRejectsUnknownFlag(t *testing.T) {
@@ -25,12 +24,8 @@ func TestRunRejectsUnknownFlag(t *testing.T) {
 
 	code := run([]string{"--no-such-flag"}, &stdout, &stderr)
 
-	if code != 2 {
-		t.Errorf("exit code = %d, want 2", code)
-	}
-	if stderr.Len() == 0 {
-		t.Error("stderr is empty, want an error message")
-	}
+	assert.Equal(t, 2, code, "exit code")
+	assert.NotZero(t, stderr.Len(), "stderr is empty, want an error message")
 }
 
 func TestRunWithoutArgumentsPrintsUsage(t *testing.T) {
@@ -38,12 +33,8 @@ func TestRunWithoutArgumentsPrintsUsage(t *testing.T) {
 
 	code := run(nil, &stdout, &stderr)
 
-	if code != 2 {
-		t.Errorf("exit code = %d, want 2", code)
-	}
-	if !bytes.Contains(stderr.Bytes(), []byte("Usage")) {
-		t.Errorf("stderr = %q, want usage text", stderr.String())
-	}
+	assert.Equal(t, 2, code, "exit code")
+	assert.Contains(t, stderr.String(), "Usage", "stderr must contain usage text")
 }
 
 func TestVersionIsInjectedAtBuildTime(t *testing.T) {
@@ -54,16 +45,11 @@ func TestVersionIsInjectedAtBuildTime(t *testing.T) {
 	build := exec.Command("go", "build",
 		"-ldflags", "-X github.com/jangraefen/agenty/sandbox/internal/buildinfo.Version=1.2.3",
 		"-o", bin, ".")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build: %v\n%s", err, out)
-	}
+	out, err := build.CombinedOutput()
+	require.NoError(t, err, "go build:\n%s", out)
 
-	out, err := exec.Command(bin, "--version").Output()
+	out, err = exec.Command(bin, "--version").Output()
 
-	if err != nil {
-		t.Fatalf("run binary: %v", err)
-	}
-	if got, want := string(out), "agenty-sandbox 1.2.3\n"; got != want {
-		t.Errorf("output = %q, want %q", got, want)
-	}
+	require.NoError(t, err, "run binary")
+	assert.Equal(t, "agenty-sandbox 1.2.3\n", string(out), "output")
 }

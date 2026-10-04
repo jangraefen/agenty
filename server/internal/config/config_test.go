@@ -3,9 +3,11 @@ package config_test
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jangraefen/agenty/server/internal/config"
 )
@@ -13,9 +15,7 @@ import (
 func writeFile(t *testing.T, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "agenty.yaml")
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600), "write config")
 	return path
 }
 
@@ -31,15 +31,9 @@ func TestLoadReadsFile(t *testing.T) {
 
 	cfg, err := config.Load(path, env(nil))
 
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.Server.Address != "127.0.0.1:9000" {
-		t.Errorf("Server.Address = %q, want %q", cfg.Server.Address, "127.0.0.1:9000")
-	}
-	if cfg.Server.ShutdownTimeout != 5*time.Second {
-		t.Errorf("Server.ShutdownTimeout = %v, want 5s", cfg.Server.ShutdownTimeout)
-	}
+	require.NoError(t, err, "Load")
+	assert.Equal(t, "127.0.0.1:9000", cfg.Server.Address, "Server.Address")
+	assert.Equal(t, 5*time.Second, cfg.Server.ShutdownTimeout, "Server.ShutdownTimeout")
 }
 
 func TestLoadAppliesDefaults(t *testing.T) {
@@ -47,15 +41,9 @@ func TestLoadAppliesDefaults(t *testing.T) {
 
 	cfg, err := config.Load(path, env(nil))
 
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.Server.Address != ":8080" {
-		t.Errorf("Server.Address = %q, want %q", cfg.Server.Address, ":8080")
-	}
-	if cfg.Server.ShutdownTimeout != 30*time.Second {
-		t.Errorf("Server.ShutdownTimeout = %v, want 30s", cfg.Server.ShutdownTimeout)
-	}
+	require.NoError(t, err, "Load")
+	assert.Equal(t, ":8080", cfg.Server.Address, "Server.Address")
+	assert.Equal(t, 30*time.Second, cfg.Server.ShutdownTimeout, "Server.ShutdownTimeout")
 }
 
 func TestLoadEnvironmentOverridesFile(t *testing.T) {
@@ -66,15 +54,9 @@ func TestLoadEnvironmentOverridesFile(t *testing.T) {
 		"AGENTY_SERVER_SHUTDOWN_TIMEOUT": "1m",
 	}))
 
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.Server.Address != "0.0.0.0:9100" {
-		t.Errorf("Server.Address = %q, want %q", cfg.Server.Address, "0.0.0.0:9100")
-	}
-	if cfg.Server.ShutdownTimeout != time.Minute {
-		t.Errorf("Server.ShutdownTimeout = %v, want 1m", cfg.Server.ShutdownTimeout)
-	}
+	require.NoError(t, err, "Load")
+	assert.Equal(t, "0.0.0.0:9100", cfg.Server.Address, "Server.Address")
+	assert.Equal(t, time.Minute, cfg.Server.ShutdownTimeout, "Server.ShutdownTimeout")
 }
 
 func TestLoadRejectsInvalidConfiguration(t *testing.T) {
@@ -141,13 +123,9 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
 
 			_, err := config.Load(path, env(tt.env))
 
-			if err == nil {
-				t.Fatal("Load succeeded, want error")
-			}
+			require.Error(t, err, "Load succeeded, want error")
 			for _, want := range tt.wantInErr {
-				if !strings.Contains(err.Error(), want) {
-					t.Errorf("error %q does not mention %q", err, want)
-				}
+				assert.ErrorContains(t, err, want)
 			}
 		})
 	}
@@ -158,7 +136,5 @@ func TestLoadReportsMissingFile(t *testing.T) {
 
 	_, err := config.Load(path, env(nil))
 
-	if err == nil || !strings.Contains(err.Error(), "missing.yaml") {
-		t.Errorf("error = %v, want one naming the file", err)
-	}
+	assert.ErrorContains(t, err, "missing.yaml", "error must name the file")
 }

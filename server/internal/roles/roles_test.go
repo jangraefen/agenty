@@ -3,10 +3,11 @@ package roles_test
 import (
 	"context"
 	"errors"
-	"slices"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jangraefen/agenty/server/internal/roles"
 )
@@ -29,12 +30,8 @@ func TestParseAcceptsAnyCombination(t *testing.T) {
 		t.Run(tt.in, func(t *testing.T) {
 			got, err := roles.Parse(tt.in)
 
-			if err != nil {
-				t.Fatalf("Parse(%q): %v", tt.in, err)
-			}
-			if !slices.Equal(got, tt.want) {
-				t.Errorf("Parse(%q) = %v, want %v", tt.in, got, tt.want)
-			}
+			require.NoError(t, err, "Parse(%q)", tt.in)
+			assert.Equal(t, tt.want, got, "Parse(%q)", tt.in)
 		})
 	}
 }
@@ -52,28 +49,18 @@ func TestParseRejectsInvalidInput(t *testing.T) {
 		t.Run(tt.in, func(t *testing.T) {
 			_, err := roles.Parse(tt.in)
 
-			if err == nil {
-				t.Fatalf("Parse(%q) succeeded, want error", tt.in)
-			}
-			if !strings.Contains(err.Error(), tt.wantInErr) {
-				t.Errorf("error %q does not mention %q", err, tt.wantInErr)
-			}
+			require.Error(t, err, "Parse(%q) succeeded, want error", tt.in)
+			assert.ErrorContains(t, err, tt.wantInErr)
 		})
 	}
 }
 
 func TestAllListsEveryRole(t *testing.T) {
-	want := []roles.Role{roles.API, roles.Worker, roles.Scheduler}
-	if got := roles.All(); !slices.Equal(got, want) {
-		t.Errorf("All() = %v, want %v", got, want)
-	}
+	assert.Equal(t, []roles.Role{roles.API, roles.Worker, roles.Scheduler}, roles.All(), "All()")
 }
 
 func TestStringsConvertsRoles(t *testing.T) {
-	got := roles.Strings([]roles.Role{roles.API, roles.Scheduler})
-	if want := []string{"api", "scheduler"}; !slices.Equal(got, want) {
-		t.Errorf("Strings = %v, want %v", got, want)
-	}
+	assert.Equal(t, []string{"api", "scheduler"}, roles.Strings([]roles.Role{roles.API, roles.Scheduler}), "Strings")
 }
 
 type fakeComponent struct {
@@ -106,11 +93,9 @@ func TestRunStartsEveryComponentAndStopsOnCancel(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if err != nil {
-			t.Errorf("Run = %v, want nil", err)
-		}
+		assert.NoError(t, err, "Run")
 	case <-time.After(5 * time.Second):
-		t.Fatal("Run did not return after cancel")
+		require.Fail(t, "Run did not return after cancel")
 	}
 }
 
@@ -125,14 +110,10 @@ func TestRunStopsAllComponentsWhenOneFails(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if !errors.Is(err, boom) {
-			t.Errorf("Run = %v, want %v", err, boom)
-		}
-		if !strings.Contains(err.Error(), "api") {
-			t.Errorf("error %q does not name the failing role", err)
-		}
+		require.ErrorIs(t, err, boom, "Run")
+		assert.ErrorContains(t, err, "api", "error does not name the failing role")
 	case <-time.After(5 * time.Second):
-		t.Fatal("Run did not return after a component failed")
+		require.Fail(t, "Run did not return after a component failed")
 	}
 }
 
@@ -143,12 +124,10 @@ func TestIdleRunsUntilCanceled(t *testing.T) {
 	go func() { done <- roles.Idle().Run(ctx) }()
 	select {
 	case <-done:
-		t.Fatal("Idle returned before cancel")
+		require.Fail(t, "Idle returned before cancel")
 	case <-time.After(20 * time.Millisecond):
 	}
 	cancel()
 
-	if err := <-done; err != nil {
-		t.Errorf("Idle.Run = %v, want nil", err)
-	}
+	assert.NoError(t, <-done, "Idle.Run")
 }

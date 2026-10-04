@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const mod = "example.com/m"
@@ -13,9 +16,7 @@ const mod = "example.com/m"
 func writeFile(t *testing.T, name, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatalf("write %s: %v", name, err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600), "write %s", name)
 	return path
 }
 
@@ -41,12 +42,10 @@ func TestPackageAtThresholdPasses(t *testing.T) {
 		mod+"/a/a.go:3.1,4.1 1 0",
 	))
 
-	if code != 0 {
-		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr)
-	}
-	if !strings.Contains(stdout, "ok") || !strings.Contains(stdout, "90.0%") || !strings.Contains(stdout, mod+"/a") {
-		t.Errorf("stdout = %q, want an ok line with 90.0%% for %s/a", stdout, mod)
-	}
+	require.Equal(t, 0, code, "exit code (stderr: %q)", stderr)
+	assert.Contains(t, stdout, "ok", "want an ok line")
+	assert.Contains(t, stdout, "90.0%", "want 90.0%")
+	assert.Contains(t, stdout, mod+"/a", "want the package")
 }
 
 func TestPackageBelowThresholdFailsNamingPackageAndCoverage(t *testing.T) {
@@ -56,19 +55,10 @@ func TestPackageBelowThresholdFailsNamingPackageAndCoverage(t *testing.T) {
 		mod+"/b/b.go:1.1,2.1 1 1",
 	))
 
-	if code != 1 {
-		t.Fatalf("exit code = %d, want 1", code)
-	}
-	want := "FAIL  " + mod + "/a: 75.0% of statements, below the 90% threshold"
-	if !strings.Contains(stdout, want) {
-		t.Errorf("stdout = %q, want it to contain %q", stdout, want)
-	}
-	if !strings.Contains(stderr, "1 package below its coverage threshold") {
-		t.Errorf("stderr = %q, want a summary of failing packages", stderr)
-	}
-	if strings.Contains(stdout, "FAIL  "+mod+"/b") {
-		t.Errorf("stdout = %q, package b is fully covered and must not fail", stdout)
-	}
+	require.Equal(t, 1, code, "exit code")
+	assert.Contains(t, stdout, "FAIL  "+mod+"/a: 75.0% of statements, below the 90% threshold")
+	assert.Contains(t, stderr, "1 package below its coverage threshold", "want a summary of failing packages")
+	assert.NotContains(t, stdout, "FAIL  "+mod+"/b", "package b is fully covered and must not fail")
 }
 
 func TestCoverageIsTruncatedNotRounded(t *testing.T) {
@@ -78,12 +68,8 @@ func TestCoverageIsTruncatedNotRounded(t *testing.T) {
 		mod+"/a/a.go:3.1,4.1 101 0",
 	))
 
-	if code != 1 {
-		t.Fatalf("exit code = %d, want 1", code)
-	}
-	if !strings.Contains(stdout, "89.9%") {
-		t.Errorf("stdout = %q, want 89.9%%", stdout)
-	}
+	require.Equal(t, 1, code, "exit code")
+	assert.Contains(t, stdout, "89.9%")
 }
 
 func TestProfilesAreMergedAcrossTiers(t *testing.T) {
@@ -99,12 +85,8 @@ func TestProfilesAreMergedAcrossTiers(t *testing.T) {
 
 	code, stdout, stderr := gate(t, "default: 100\n", unit, module)
 
-	if code != 0 {
-		t.Fatalf("exit code = %d, want 0 (stdout: %q, stderr: %q)", code, stdout, stderr)
-	}
-	if !strings.Contains(stdout, "100.0%") {
-		t.Errorf("stdout = %q, want 100.0%%", stdout)
-	}
+	require.Equal(t, 0, code, "exit code (stdout: %q, stderr: %q)", stdout, stderr)
+	assert.Contains(t, stdout, "100.0%")
 }
 
 func TestBlocksRepeatedWithinOneProfileCountOnce(t *testing.T) {
@@ -117,9 +99,8 @@ func TestBlocksRepeatedWithinOneProfileCountOnce(t *testing.T) {
 		mod+"/a/a.go:3.1,4.1 1 0",
 	))
 
-	if code != 0 || !strings.Contains(stdout, "50.0%") {
-		t.Errorf("exit code = %d, stdout = %q, want 0 and 50.0%%", code, stdout)
-	}
+	assert.Equal(t, 0, code, "exit code")
+	assert.Contains(t, stdout, "50.0%")
 }
 
 func TestPackageThresholdOverridesDefault(t *testing.T) {
@@ -132,15 +113,10 @@ func TestPackageThresholdOverridesDefault(t *testing.T) {
 		mod+"/other/o.go:3.1,4.1 1 0",
 	))
 
-	if code != 1 {
-		t.Fatalf("exit code = %d, want 1", code)
-	}
-	if !strings.Contains(stdout, "FAIL  "+mod+"/critical: 99.0% of statements, below the 100% threshold") {
-		t.Errorf("stdout = %q, want critical to fail against 100%%", stdout)
-	}
-	if strings.Contains(stdout, "FAIL  "+mod+"/other") {
-		t.Errorf("stdout = %q, other must pass against the 90%% default", stdout)
-	}
+	require.Equal(t, 1, code, "exit code")
+	assert.Contains(t, stdout, "FAIL  "+mod+"/critical: 99.0% of statements, below the 100% threshold",
+		"want critical to fail against 100%")
+	assert.NotContains(t, stdout, "FAIL  "+mod+"/other", "other must pass against the 90% default")
 }
 
 func TestThresholdForPattern(t *testing.T) {
@@ -167,9 +143,7 @@ func TestThresholdForPattern(t *testing.T) {
 		mod + "/elsewhere":            90,
 	}
 	for pkg, want := range tests {
-		if got := cfg.threshold(pkg); got != want {
-			t.Errorf("threshold(%q) = %d, want %d", pkg, got, want)
-		}
+		assert.Equal(t, want, cfg.threshold(pkg), "threshold(%q)", pkg)
 	}
 }
 
@@ -198,12 +172,8 @@ func TestRejectsInvalidInput(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			code, _, stderr := gate(t, tt.cfg, tt.profile)
 
-			if code != 2 {
-				t.Errorf("exit code = %d, want 2", code)
-			}
-			if !strings.Contains(stderr, tt.want) {
-				t.Errorf("stderr = %q, want it to mention %q", stderr, tt.want)
-			}
+			assert.Equal(t, 2, code, "exit code")
+			assert.Contains(t, stderr, tt.want)
 		})
 	}
 }
@@ -218,9 +188,7 @@ func TestRejectsMissingFiles(t *testing.T) {
 		"missing config":  {"-config", missing, prof},
 		"missing profile": {"-config", cfg, missing},
 	} {
-		if code := run(args, &stdout, &stderr); code != 2 {
-			t.Errorf("%s: exit code = %d, want 2", name, code)
-		}
+		assert.Equal(t, 2, run(args, &stdout, &stderr), "%s: exit code", name)
 	}
 }
 
@@ -233,12 +201,8 @@ func TestRejectsBadUsage(t *testing.T) {
 		"nothing at all": nil,
 	} {
 		var stdout, stderr bytes.Buffer
-		if code := run(args, &stdout, &stderr); code != 2 {
-			t.Errorf("%s: exit code = %d, want 2", name, code)
-		}
-		if !strings.Contains(stderr.String(), "Usage") {
-			t.Errorf("%s: stderr = %q, want usage text", name, stderr.String())
-		}
+		assert.Equal(t, 2, run(args, &stdout, &stderr), "%s: exit code", name)
+		assert.Contains(t, stderr.String(), "Usage", "%s: want usage text", name)
 	}
 }
 
@@ -246,21 +210,13 @@ func TestRejectsBadUsage(t *testing.T) {
 // packages (ARCHITECTURE §15.3), including packages that do not exist yet.
 func TestRepositoryConfiguration(t *testing.T) {
 	cfg, err := loadConfig(filepath.Join("..", "..", "..", "..", ".covergate.yaml"))
-	if err != nil {
-		t.Fatalf("load repository configuration: %v", err)
-	}
-	if cfg.Default != 90 {
-		t.Errorf("default = %d, want 90", cfg.Default)
-	}
+	require.NoError(t, err, "load repository configuration")
+	assert.Equal(t, 90, cfg.Default, "default")
 	const server = "github.com/jangraefen/agenty/server/internal/"
 	for _, pkg := range []string{"toolgateway", "policy", "credentials", "identity", "runs", "identity/oidc"} {
-		if got := cfg.threshold(server + pkg); got != 100 {
-			t.Errorf("threshold(%s) = %d, want 100", pkg, got)
-		}
+		assert.Equal(t, 100, cfg.threshold(server+pkg), "threshold(%s)", pkg)
 	}
-	if got := cfg.threshold(server + "config"); got != 90 {
-		t.Errorf("threshold(config) = %d, want 90", got)
-	}
+	assert.Equal(t, 90, cfg.threshold(server+"config"), "threshold(config)")
 }
 
 func TestSummaryCountsAllFailingPackages(t *testing.T) {
@@ -270,25 +226,22 @@ func TestSummaryCountsAllFailingPackages(t *testing.T) {
 		mod+"/b/b.go:1.1,2.1 1 0",
 	))
 
-	if code != 1 || !strings.Contains(stderr, "2 packages below") {
-		t.Errorf("exit code = %d, stderr = %q, want 1 and a summary naming 2 packages", code, stderr)
-	}
+	assert.Equal(t, 1, code, "exit code")
+	assert.Contains(t, stderr, "2 packages below", "want a summary naming 2 packages")
 }
 
 func TestPackageWithoutStatementsPasses(t *testing.T) {
 	code, stdout, _ := gate(t, "default: 100\n", profile(mod+"/a/a.go:1.1,2.1 0 0"))
 
-	if code != 0 || !strings.Contains(stdout, "100.0%") {
-		t.Errorf("exit code = %d, stdout = %q, want 0 and 100.0%%", code, stdout)
-	}
+	assert.Equal(t, 0, code, "exit code")
+	assert.Contains(t, stdout, "100.0%")
 }
 
 func TestRejectsUnreadableProfileLine(t *testing.T) {
 	code, _, stderr := gate(t, "default: 90\n", profile(strings.Repeat("x", 1<<17)))
 
-	if code != 2 || !strings.Contains(stderr, "read profile") {
-		t.Errorf("exit code = %d, stderr = %q, want 2 and a read error", code, stderr)
-	}
+	assert.Equal(t, 2, code, "exit code")
+	assert.Contains(t, stderr, "read profile", "want a read error")
 }
 
 func TestRejectsNestedPatternThatLowersThreshold(t *testing.T) {
@@ -304,12 +257,9 @@ func TestRejectsNestedPatternThatLowersThreshold(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			code, _, stderr := gate(t, cfg, ok)
 
-			if code != 2 {
-				t.Errorf("exit code = %d, want 2", code)
-			}
-			if !strings.Contains(stderr, "lower than") || !strings.Contains(stderr, "nested patterns may only raise") {
-				t.Errorf("stderr = %q, want a nested-threshold error", stderr)
-			}
+			assert.Equal(t, 2, code, "exit code")
+			assert.Contains(t, stderr, "lower than", "want a nested-threshold error")
+			assert.Contains(t, stderr, "nested patterns may only raise", "want a nested-threshold error")
 		})
 	}
 }
@@ -324,9 +274,8 @@ func TestAllowsNestedPatternThatRaisesOrKeepsThreshold(t *testing.T) {
 	}
 	for name, cfg := range tests {
 		t.Run(name, func(t *testing.T) {
-			if _, err := loadConfig(writeFile(t, "covergate.yaml", cfg)); err != nil {
-				t.Errorf("loadConfig: %v, want no error", err)
-			}
+			_, err := loadConfig(writeFile(t, "covergate.yaml", cfg))
+			assert.NoError(t, err, "loadConfig")
 		})
 	}
 }

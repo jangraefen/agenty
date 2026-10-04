@@ -23,6 +23,7 @@ These documents are the source of truth for product, scope, and architecture. Do
 - **Tests first**: write the failing test before the implementation. Security-relevant changes extend the matching invariant suites. Coverage and mutation gates are defined in ARCHITECTURE.md §15.3.
 - **Dependencies**: check every new dependency against the dependency rule and record it in ARCHITECTURE.md §16 before use.
 - **No logic in the database**: no triggers or stored procedures.
+- **Go tests**: use testify; `require` for preconditions where the test cannot continue, `assert` for independent checks; prefer table-driven tests.
 - **Logging**: use the `log/slog` API (handler: `charmbracelet/log`).
 - **Package manager**: the repository uses pnpm, never npm, for `web/` and any Node tooling (`pnpm install`, `pnpm run`, `pnpm exec`; no `npm` or `npx`).
 

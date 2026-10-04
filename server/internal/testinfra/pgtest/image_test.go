@@ -4,8 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jangraefen/agenty/server/internal/testinfra/pgtest"
 )
@@ -13,17 +15,11 @@ import (
 // The Compose file for local development must run the same image as the tests.
 func TestComposeUsesSameImage(t *testing.T) {
 	compose, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "deploy", "compose.yaml"))
-	if err != nil {
-		t.Fatalf("read compose file: %v", err)
-	}
-	if want := "image: " + pgtest.Image; !strings.Contains(string(compose), want) {
-		t.Errorf("deploy/compose.yaml does not contain %q", want)
-	}
+	require.NoError(t, err, "read compose file")
+	assert.Contains(t, string(compose), "image: "+pgtest.Image, "deploy/compose.yaml does not run the test image")
 }
 
 func TestImageMatchesPostgresMajor(t *testing.T) {
 	image, tag := pgtest.Image, "-pg"+strconv.Itoa(pgtest.PostgresMajor)+"-"
-	if !strings.Contains(image, tag) {
-		t.Errorf("Image %q does not contain %q", image, tag)
-	}
+	assert.Contains(t, image, tag, "Image does not match PostgresMajor")
 }

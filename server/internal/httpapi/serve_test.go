@@ -4,13 +4,14 @@ package httpapi_test
 
 import (
 	"context"
-	"errors"
 	"io"
 	"net"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jangraefen/agenty/server/internal/httpapi"
 )
@@ -20,9 +21,7 @@ import (
 func slowServer(t *testing.T, timeout time.Duration) (addr string, arrived <-chan struct{}, release chan<- struct{}, cancel context.CancelFunc, done <-chan error) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	require.NoError(t, err, "listen")
 	arrivedCh, releaseCh := make(chan struct{}, 1), make(chan struct{})
 	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		arrivedCh <- struct{}{}
@@ -65,21 +64,17 @@ func TestServeCompletesInFlightRequestsOnShutdown(t *testing.T) {
 	cancel()
 	select {
 	case err := <-done:
-		t.Fatalf("Serve returned %v while a request was in flight", err)
+		require.Fail(t, "Serve returned while a request was in flight", "Serve = %v", err)
 	case <-time.After(100 * time.Millisecond):
 	}
 	close(release)
 
 	res := <-resCh
-	if res.err != nil || res.body != "finished" {
-		t.Errorf("in-flight request = (%q, %v), want (finished, nil)", res.body, res.err)
-	}
-	if err := <-done; err != nil {
-		t.Errorf("Serve = %v, want nil", err)
-	}
-	if _, err := get(addr); err == nil {
-		t.Error("server still accepts requests after shutdown")
-	}
+	assert.NoError(t, res.err, "in-flight request")
+	assert.Equal(t, "finished", res.body, "in-flight request body")
+	assert.NoError(t, <-done, "Serve")
+	_, err := get(addr)
+	assert.Error(t, err, "server still accepts requests after shutdown")
 }
 
 func TestServeGivesUpAfterShutdownTimeout(t *testing.T) {
@@ -93,27 +88,21 @@ func TestServeGivesUpAfterShutdownTimeout(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "shutdown") {
-			t.Errorf("Serve = %v, want shutdown deadline error", err)
-		}
-		if elapsed := time.Since(start); elapsed > 3*time.Second {
-			t.Errorf("Serve took %v to give up, want about the timeout", elapsed)
-		}
+		assert.ErrorIs(t, err, context.DeadlineExceeded, "Serve, want shutdown deadline error")
+		assert.ErrorContains(t, err, "shutdown", "Serve, want shutdown deadline error")
+		elapsed := time.Since(start)
+		assert.LessOrEqual(t, elapsed, 3*time.Second, "Serve took %v to give up, want about the timeout", elapsed)
 	case <-time.After(5 * time.Second):
-		t.Fatal("Serve did not return after the shutdown timeout")
+		require.Fail(t, "Serve did not return after the shutdown timeout")
 	}
 }
 
 func TestServeReportsListenerFailure(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	require.NoError(t, err, "listen")
 	_ = ln.Close()
 
 	err = httpapi.Serve(context.Background(), ln, http.NotFoundHandler(), time.Second)
 
-	if err == nil {
-		t.Error("Serve on a closed listener succeeded, want error")
-	}
+	assert.Error(t, err, "Serve on a closed listener succeeded, want error")
 }

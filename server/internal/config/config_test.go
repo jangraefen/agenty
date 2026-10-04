@@ -322,3 +322,28 @@ func TestDatabasePrintsTheTargetWithoutPassword(t *testing.T) {
 		fmt.Sprintf("%+v", config.Config{Database: db}), "%+v of Config")
 	assert.Equal(t, "[redacted]", config.Database{URL: "postgres://agenty:hunter2@db.example:notaport/x"}.String(), "invalid URL")
 }
+
+func TestDatabaseSecretsContainThePasswordAndItsEscapedForms(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+		want []string
+	}{
+		{"URL with escaped password", "postgres://agenty:s3cr3t%2Fp%40ss@db:5432/agenty", []string{"s3cr3t/p@ss", "s3cr3t%2Fp%40ss"}},
+		{"keyword/value string", "host=db user=agenty password=hunter2 dbname=agenty", []string{"hunter2"}},
+		{"no password", "postgres://agenty@db:5432/agenty", nil},
+		{"invalid URL", "postgres://agenty:hunter2@db:notaport/agenty", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := config.Database{URL: tt.url}.Secrets()
+
+			for _, w := range tt.want {
+				assert.Contains(t, got, w)
+			}
+			if tt.want == nil {
+				assert.Empty(t, got)
+			}
+		})
+	}
+}

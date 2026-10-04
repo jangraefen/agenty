@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -105,6 +106,28 @@ func (d Database) Format(f fmt.State, verb rune) {
 // MarshalJSON encodes d with the URL redacted as in String.
 func (d Database) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct{ URL string }{URL: d.String()})
+}
+
+// Secrets returns the password and the forms in which it can appear inside a
+// connection URL, for registration with the log redaction (ARCHITECTURE §3
+// invariant 6). It returns nil when there is no password or the URL cannot be
+// parsed.
+func (d Database) Secrets() []string {
+	c, err := pgconn.ParseConfig(d.URL)
+	if err != nil || c.Password == "" {
+		return nil
+	}
+	forms := []string{c.Password}
+	for _, escaped := range []string{
+		url.UserPassword("", c.Password).String()[1:], // userinfo escaping, without the leading ':'
+		url.QueryEscape(c.Password),
+		url.PathEscape(c.Password),
+	} {
+		if !slices.Contains(forms, escaped) {
+			forms = append(forms, escaped)
+		}
+	}
+	return forms
 }
 
 // LogValue logs the connection target without the password, so a Database

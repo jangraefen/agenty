@@ -98,10 +98,7 @@ func runContext(ctx context.Context, args []string, stdout, stderr io.Writer, op
 		_, _ = fmt.Fprintln(stderr, err)
 		return 1
 	}
-	// Components register secret values here as they load them (e.g.,
-	// database passwords) so that the logger redacts them.
-	secrets := logging.NewSecrets()
-	logger, err := logging.New(stderr, logging.Options{Format: cfg.Log.Format, Level: cfg.Log.Level}, secrets)
+	logger, err := newLogger(cfg, stderr)
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, err)
 		return 1
@@ -114,6 +111,16 @@ func runContext(ctx context.Context, args []string, stdout, stderr io.Writer, op
 		return 1
 	}
 	return 0
+}
+
+// newLogger builds the redacting logger from cfg. Secret values known from the
+// configuration, such as the database password, are registered before the
+// first record is written, so they never reach the logs (ARCHITECTURE §3
+// invariant 6). Components register further secrets as they load them.
+func newLogger(cfg config.Config, w io.Writer) (*slog.Logger, error) {
+	secrets := logging.NewSecrets()
+	secrets.Register(cfg.Database.Secrets()...)
+	return logging.New(w, logging.Options{Format: cfg.Log.Format, Level: cfg.Log.Level}, secrets)
 }
 
 // serve starts the selected roles and blocks until ctx is canceled and all of

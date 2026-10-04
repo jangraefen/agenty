@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jangraefen/agenty/server/internal/config"
+	"github.com/jangraefen/agenty/server/internal/logging"
 )
 
 func writeFile(t *testing.T, content string) string {
@@ -122,6 +124,61 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
 			path := writeFile(t, tt.file)
 
 			_, err := config.Load(path, env(tt.env))
+
+			require.Error(t, err, "Load succeeded, want error")
+			for _, want := range tt.wantInErr {
+				assert.ErrorContains(t, err, want)
+			}
+		})
+	}
+}
+
+func TestLoadReadsLogSettings(t *testing.T) {
+	path := writeFile(t, "log:\n  format: json\n  level: debug\n")
+
+	cfg, err := config.Load(path, env(nil))
+
+	require.NoError(t, err, "Load")
+	assert.Equal(t, logging.FormatJSON, cfg.Log.Format, "Log.Format")
+	assert.Equal(t, slog.LevelDebug, cfg.Log.Level, "Log.Level")
+}
+
+func TestLoadDefaultsToTextLogAtInfo(t *testing.T) {
+	cfg, err := config.Load(writeFile(t, ""), env(nil))
+
+	require.NoError(t, err, "Load")
+	assert.Equal(t, logging.FormatText, cfg.Log.Format, "Log.Format")
+	assert.Equal(t, slog.LevelInfo, cfg.Log.Level, "Log.Level")
+}
+
+func TestLoadLogSettingsFromEnvironment(t *testing.T) {
+	path := writeFile(t, "log:\n  format: json\n  level: debug\n")
+
+	cfg, err := config.Load(path, env(map[string]string{"AGENTY_LOG_FORMAT": "logfmt", "AGENTY_LOG_LEVEL": "WARN"}))
+
+	require.NoError(t, err, "Load")
+	assert.Equal(t, logging.FormatLogfmt, cfg.Log.Format, "Log.Format")
+	assert.Equal(t, slog.LevelWarn, cfg.Log.Level, "Log.Level")
+}
+
+func TestLoadRejectsInvalidLogSettings(t *testing.T) {
+	tests := []struct {
+		name      string
+		file      string
+		env       map[string]string
+		wantInErr []string
+	}{
+		{"unknown format", "log:\n  format: xml\n", nil, []string{"log.format", "xml"}},
+		{"unknown level", "log:\n  level: loud\n", nil, []string{"log.level", "loud"}},
+		{"level with offset", "log:\n  level: info+2\n", nil, []string{"log.level", "info+2"}},
+		{"level with negative offset", "", map[string]string{"AGENTY_LOG_LEVEL": "WARN-1"}, []string{"log.level", "AGENTY_LOG_LEVEL", "WARN-1"}},
+		{"format from environment", "", map[string]string{"AGENTY_LOG_FORMAT": "yaml"}, []string{"log.format", "AGENTY_LOG_FORMAT", "yaml"}},
+		{"level from environment", "", map[string]string{"AGENTY_LOG_LEVEL": ""}, []string{"log.level", "AGENTY_LOG_LEVEL"}},
+		{"unknown log field", "log:\n  colour: true\n", nil, []string{"colour"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := config.Load(writeFile(t, tt.file), env(tt.env))
 
 			require.Error(t, err, "Load succeeded, want error")
 			for _, want := range tt.wantInErr {

@@ -27,7 +27,7 @@
 | Operable by a regular enterprise IT team | VISION principle 6 | PostgreSQL is the only required stateful service. |
 | Harness definition independent of any agent framework | VISION principle 5 | Agenty owns its agent loop and definition schema. |
 | Deterministic enforcement outside the model | VISION trust model | Every side effect passes through one Tool Gateway (§7.3). |
-| No CI for now | Decision | Every test tier runs locally through Task (§15.4). |
+| Public repository; CI on GitHub Actions (since 2026-10-05) | Decision | Every change lands through a pull request with required CI checks; all CI jobs run the same Task targets as local development (§15.4). |
 
 ---
 
@@ -56,8 +56,9 @@ Each decision lists what was chosen, why, and what was rejected. All decided 202
 | D17 | **Frontend: React + Vite SPA**, static assets, runtime `config.json`; embeddable in the server binary or hosted on any static host. | No SSR need for an internal app; keeps all hosting options open. | Next.js (adds a Node server). |
 | D18 | **Public API: REST/JSON with OpenAPI 3.1 as source of truth**; **internal: Connect RPC** between server and sandbox. | Generated Go server and TS client; Connect supports streaming for sandbox sessions. | gRPC-only public API; GraphQL. |
 | D19 | **Logging via `log/slog` API with `charmbracelet/log` as handler.** | Maintainer preference; slog keeps libraries consistent and the handler swappable. | Raw charm logger API throughout; zap/zerolog. |
-| D20 | **Testing: five tiers, coverage and mutation gates, all local via Task and Lefthook.** | AI-written code needs strong, honest tests; no CI budget. | CI-based gates (deferred). |
+| D20 | **Testing: five tiers, coverage and mutation gates, run through Task locally and in CI.** | AI-written code needs strong, honest tests; one set of commands for both environments. | Separate CI-only scripts. |
 | D21 | **Cron parsing with `gronx`**. | Maintained, MIT. | `robfig/cron` (inactive since mid-2024). |
+| D23 | **CI on GitHub Actions with a pull-request workflow; squash merge only** (decided 2026-10-05). | Repository is public, so standard runners are free; required checks keep `main` green; squash merge gives one conventional commit per PR. | Local-only gates; rebase or merge commits. |
 | D22 | **Biome** for TypeScript linting and formatting (decided 2026-10-05). | One fast tool for lint and format; configuration already in the repository. | ESLint + Prettier. |
 
 ---
@@ -410,7 +411,7 @@ React, Vite, TypeScript (linted and formatted with Biome); TanStack Router; TanS
 
 ## 14. Deployment
 
-- **Images**: `agenty` (server, UI embedded and optionally served), `agenty-sandbox`, the sandbox runtime image.
+- **Images**: `agenty` (server, UI embedded and optionally served), `agenty-sandbox`, the sandbox runtime image; published to GitHub Container Registry by the release workflow.
 - **Single VM**: Docker Compose with `agenty` (all roles), `agenty-sandbox` (with `runsc` on the host), PostgreSQL with pgvector, a volume for blobs.
 - **Scaled**: separate `api`, `worker`, `scheduler` processes against the same database; sandbox runners per host.
 - **Configuration**: file and environment; master key for envelope encryption from file or environment in v1.
@@ -448,12 +449,23 @@ A **scripted model** returns predefined responses (including tool calls) step by
 - **Contract tests**: server vs. OpenAPI; server and runner vs. sandbox protocol.
 - **License check**: `task check:licenses` (§16).
 
-### 15.4 Local execution
+### 15.4 Local and CI execution
+
+**Local**
 
 - **Task** targets: `test:unit`, `test:module`, `test:integration`, `test:e2e`, `test:ui`, `test:mutation`, `test:gates`, `test:milestone:Mx` (automated milestone demos), `test:nightly` (real model, not gating), `check:licenses`, and `check` (all gating tiers plus gates). `task check` must pass before merging to `main`.
 - **Lefthook**: pre-commit → lint, architecture rules, unit tests; pre-push → module tests.
 - **macOS**: gVisor requires Linux; `runsc`-based sandbox tests run in a Colima or Lima VM. Without it, sandbox tests fall back to `insecure_dev_mode` and report that clearly.
-- CI can reuse the same `task` targets later.
+
+**CI (GitHub Actions)**
+
+- CI jobs call the same Task targets; there is no CI-only test logic.
+- **On every pull request and push to `main`**: lint, architecture rules, gate self-tests, license check, unit, module (including sandbox tests with real `runsc` on Linux runners), integration, E2E, UI, and the milestone demos that exist. Mutation tests run for pull requests that touch the critical packages.
+- **Nightly (scheduled)**: full mutation testing and `test:nightly` against a real model. Model credentials are repository secrets and are never exposed to pull-request workflows.
+- **Security scanning**: CodeQL for Go and TypeScript; Dependabot for Go modules, npm, GitHub Actions, and Docker images.
+- **Workflow hardening**: third-party actions pinned by commit SHA; least-privilege `permissions` per job; no `pull_request_target` for untrusted code.
+- **Branch protection on `main`**: pull requests required; required checks must pass; squash merge only (linear history); no force pushes.
+- **Release** (E21): a version tag builds and publishes images to GitHub Container Registry with a changelog.
 
 ---
 
@@ -478,10 +490,12 @@ Verified 2026-10-04 against each project's repository. **Before adding any depen
 
 | Project | License |
 |---|---|
-| testcontainers-go, Vitest, Testing Library, Task, Lefthook, Colima | MIT |
+| testcontainers-go, Vitest, Testing Library, Task, Lefthook, Colima, actionlint | MIT |
 | Playwright, Gremlins, Stryker, Dex, Lima, go-licenses, Biome | Apache-2.0 |
 | axe-core | MPL-2.0 |
 | golangci-lint | GPL-3.0 (standalone tool, not linked) |
+
+**Services used for development** (not dependencies of Agenty): GitHub Actions, CodeQL, Dependabot, GitHub Container Registry.
 
 **Transitive dependencies**: `task check:licenses` runs `go-licenses` over all Go modules and fails outside an allowlist; an npm equivalent is chosen and verified when `web/` is scaffolded.
 
@@ -497,12 +511,13 @@ Verified 2026-10-04 against each project's repository. **Before adding any depen
 - **Security-relevant changes** (gateway, policy, credentials, identity, runs, sandbox) must extend the matching invariant suites.
 - **Dependencies**: license check (§16) and record before use; prefer the standard library and existing dependencies.
 - **Decisions**: if a task requires deviating from this document, update §2 and the affected sections in the same change.
+- **Pull requests**: one story per pull request where practical, on a branch named `<type>/<issue>-<slug>` (e.g., `feat/42-entrypoint-api`). The PR title uses conventional-commit format, because it becomes the squash commit message. The description references the story (`Closes #42`) and the acceptance criteria it addresses. Merge only when all required checks pass.
 
 ---
 
 ## 18. Deliberately Deferred
 
-Kubernetes sandbox backend and Helm chart · HA beyond role separation · KMS/Vault for the master key · token exchange · indexed connectors with ACL sync · long-term memory · workflow canvas and any generic workflow engine (reassess then) · sandbox warm pools and local MCP instance reuse · external notification transport (NATS) · CI pipeline.
+Kubernetes sandbox backend and Helm chart · HA beyond role separation · KMS/Vault for the master key · token exchange · indexed connectors with ACL sync · long-term memory · workflow canvas and any generic workflow engine (reassess then) · sandbox warm pools and local MCP instance reuse · external notification transport (NATS).
 
 ## 19. Risks
 

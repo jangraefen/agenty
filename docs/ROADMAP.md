@@ -41,6 +41,7 @@ flowchart LR
 - **AC-M1-3** — `docker compose up` from `deploy/` starts `agenty` and PostgreSQL; `/readyz` reports ready; the UI shell loads at the root URL. Automated as `task test:milestone:M1`.
 - **AC-M1-4** — The sandbox spike report in `docs/spikes/` answers, with evidence, whether (a) `runsc` works with Docker or Podman in a Colima or Lima VM, (b) stdio of an MCP server can be relayed over a stream, and (c) an egress proxy can restrict outbound traffic by hostname. Contradictions with ARCHITECTURE D11 or §9 are recorded as decisions.
 - **AC-M1-5** — Invariant 13 suite passes.
+- **AC-M1-6** — CI is green on `main`, branch protection with required checks and squash-only merging is active, and every M1 change reached `main` through a pull request.
 
 ### M2 — First governed run
 
@@ -75,7 +76,7 @@ flowchart LR
 
 - **AC-M4-1** — All acceptance criteria of E12, E13, E14, and E17 are met.
 - **AC-M4-2** — Automated demo (`task test:milestone:M4`) of reference scenario 2: a workspace schedule fires the triage harness as a service account; the agent reads new requests; loads the taxonomy skill; runs a diagnosis script in a sandbox; categorizes requests; closing requires approval; a priority 1–2 request is never closed (denied by rule).
-- **AC-M4-3** — The milestone demo passes inside a Colima or Lima VM with `runsc` (not `insecure_dev_mode`).
+- **AC-M4-3** — The milestone demo passes with `runsc` (not `insecure_dev_mode`), both in CI on Linux runners and inside a Colima or Lima VM on macOS.
 - **AC-M4-4** — Invariant suites 1–10, 13, and 14 pass.
 
 ### M5 — Copilots & knowledge
@@ -102,6 +103,6 @@ flowchart LR
 
 ## Maintaining this roadmap
 
-- **Status lives on GitHub.** Each milestone here corresponds to a GitHub milestone holding its epic issues; acceptance criteria are checked off there. A milestone is done only when all of its acceptance criteria are checked off; each milestone demo is an automated test (`task test:milestone:Mx`) except where a criterion says otherwise.
+- **Status lives on GitHub.** Each milestone here corresponds to a GitHub milestone holding its epic issues; acceptance criteria are checked off there. A milestone is done only when all of its acceptance criteria are checked off; each milestone demo is an automated test (`task test:milestone:Mx`) that runs in CI on every pull request once it exists, except where a criterion says otherwise.
 - **Scope lives here.** Reordering milestones, moving epics between them, or changing acceptance criteria is recorded in this file (with date and reason) and mirrored to the GitHub milestone and issues in the same change.
 - After M1, add relative or time estimates based on observed velocity.

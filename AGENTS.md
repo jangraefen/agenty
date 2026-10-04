@@ -27,7 +27,7 @@ These documents are the source of truth for product, scope, and architecture. Do
 
 ## Commands
 
-All entry points live in `Taskfile.yml` (to be created with the first code). Planned targets: `test:unit`, `test:module`, `test:integration`, `test:e2e`, `test:ui`, `test:mutation`, `test:gates`, `test:milestone:Mx`, `test:nightly` (not gating), `check:licenses`, and `check`. `task check` must pass before merging to `main`. There is no CI; everything runs locally.
+All entry points live in `Taskfile.yml` (to be created with the first code). Planned targets: `test:unit`, `test:module`, `test:integration`, `test:e2e`, `test:ui`, `test:mutation`, `test:gates`, `test:milestone:Mx`, `test:nightly` (not gating), `check:licenses`, and `check`. CI (GitHub Actions) runs the same targets on every pull request; run `task check` locally before opening one.
 
 ## Planning and tracking
 
@@ -51,9 +51,13 @@ Never record status, progress, or stories in the repository files.
 
 ## Git
 
-- Conventional commit prefixes (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`).
+- **Never commit directly to `main`.** Work on a branch named `<type>/<issue>-<slug>` (e.g., `feat/42-entrypoint-api`) and open a pull request.
+- One story per pull request where practical. The PR title uses conventional-commit format (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`), because pull requests are squash-merged and the title becomes the commit message.
+- The PR description references the story (`Closes #42`), lists the acceptance criteria it addresses, and states how they were verified.
+- Merge only when all required CI checks pass. Do not merge, push, or rewrite history unless asked.
 - Commit author email is the GitHub no-reply address configured in the repository; do not change git identity settings.
-- Do not push or rewrite history unless asked.
+- The repository is public but not yet licensed (see docs/VISION.md §13); do not add a license or accept external contributions without the maintainer's decision.
+- Never put secrets in the repository, workflow files, or logs; CI secrets are only used by scheduled workflows.
 
 ## Keeping documents current
 

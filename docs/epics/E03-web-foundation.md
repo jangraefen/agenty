@@ -40,6 +40,7 @@ The [common acceptance criteria](README.md#common-acceptance-criteria) apply in 
 - **AC-E03-5** — The shell provides layout, navigation, error boundary, loading states, and a not-found page; axe-core reports no violations on shell pages. *Verified by:* Playwright with axe-core.
 - **AC-E03-6** — UI code accesses the API only through the generated client. *Verified by:* Biome or lint rule, covered by `task test:gates`.
 - **AC-E03-7** — Stryker runs with a configured threshold; an npm license checker is selected, recorded in ARCHITECTURE §16, and fails on disallowed licenses. *Verified by:* `task test:gates`.
+- **AC-E03-8** — Biome, Vitest, Playwright (with axe-core), and Stryker for changed UI code run in CI on every pull request. *Verified by:* CI run on a pull request touching `web/`.
 
 ## Stories
 

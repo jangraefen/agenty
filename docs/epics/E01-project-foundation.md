@@ -22,6 +22,10 @@ A repository in which every later epic can add code with tests, quality gates, a
 - testcontainers-go helper for PostgreSQL with pgvector; Docker Compose skeleton for integration tests.
 - Dockerfiles for `agenty` and `agenty-sandbox` (multi-stage builds).
 - Guide for running sandbox tests on macOS in a Colima or Lima VM.
+- GitHub Actions CI running the Task targets on pull requests and pushes to `main` (ARCHITECTURE §15.4), with caching for Go modules and Docker layers; nightly workflow skeleton.
+- Workflow hardening: actions pinned by commit SHA, least-privilege permissions, no `pull_request_target` for untrusted code.
+- CodeQL (Go, TypeScript) and Dependabot (Go modules, npm, GitHub Actions, Docker).
+- Pull request template (story reference, acceptance criteria addressed, verification, docs updated); branch protection on `main` with required checks, squash merge only, no force pushes.
 
 ## Out of scope
 
@@ -47,6 +51,11 @@ The [common acceptance criteria](README.md#common-acceptance-criteria) apply in 
 - **AC-E01-9** — A testcontainers-go helper starts an isolated PostgreSQL with pgvector per test package; a Compose file starts the same for local use. *Verified by:* Module test of the helper.
 - **AC-E01-10** — `task build:images` builds the `agenty` and `agenty-sandbox` images; both binaries respond to `--version`. *Verified by:* `task build:images` and a smoke test.
 - **AC-E01-11** — The macOS guide for Colima or Lima exists, and following it runs a container with `runsc`. *Verified by:* Manual verification, recorded in the guide.
+- **AC-E01-12** — CI runs lint, gate self-tests, license check, unit, and module tests on every pull request and push to `main`, by calling the same Task targets as local development. *Verified by:* A pull request with a deliberately failing test is blocked; the fix turns CI green.
+- **AC-E01-13** — Branch protection on `main` requires a pull request and passing required checks, allows only squash merges, and blocks force pushes. *Verified by:* Repository settings review and a rejected direct push.
+- **AC-E01-14** — All third-party actions are pinned by commit SHA, every job declares least-privilege `permissions`, and no workflow uses `pull_request_target`. *Verified by:* A workflow lint step in CI (actionlint) plus review.
+- **AC-E01-15** — CodeQL runs for Go and TypeScript, and Dependabot is configured for Go modules, npm, GitHub Actions, and Docker. *Verified by:* First CodeQL run and first Dependabot pull request visible on GitHub.
+- **AC-E01-16** — A pull request template asks for the story reference, addressed acceptance criteria, verification, and documentation updates. *Verified by:* Opening a pull request.
 
 ## Stories
 

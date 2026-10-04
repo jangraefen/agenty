@@ -6,7 +6,8 @@ FROM golang:1.27.1-trixie@sha256:3b77fc618ec235a1ab412de7737f120dd507c57e8d87de4
 # Build the module on its own (server and sandbox do not import each other), with the image's toolchain.
 ENV GOWORK=off GOTOOLCHAIN=local CGO_ENABLED=0
 WORKDIR /src
-COPY sandbox/go.mod ./
+# The glob go.su[m] copies go.sum when it exists and matches nothing while the module has no dependencies yet.
+COPY sandbox/go.mod sandbox/go.su[m] ./
 RUN go mod download
 COPY sandbox/ ./
 ARG VERSION=dev

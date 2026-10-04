@@ -37,6 +37,11 @@ func TestDockerfile(t *testing.T) {
 	if want := `org.opencontainers.image.version="${VERSION}"`; !strings.Contains(dockerfile, want) {
 		t.Errorf("Dockerfile does not set the OCI version label: missing %q", want)
 	}
+	// Dependencies are downloaded in their own layer from go.mod and go.sum, so
+	// that source changes do not invalidate the module cache.
+	if !regexp.MustCompile(`(?m)^COPY\s+sandbox/go\.mod\s+sandbox/go\.su(m|\[m\])\s+\./\s*\nRUN go mod download$`).MatchString(dockerfile) {
+		t.Error("Dockerfile does not copy go.mod and go.sum before `go mod download`")
+	}
 	users := regexp.MustCompile(`(?m)^USER\s+(\S+)`).FindAllStringSubmatch(dockerfile, -1)
 	if len(users) == 0 {
 		t.Fatal("Dockerfile sets no USER")

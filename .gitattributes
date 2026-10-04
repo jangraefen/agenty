@@ -1,0 +1,3 @@
+# Generated code (ARCHITECTURE §4) is collapsed in GitHub diffs; regenerate it with `task generate`.
+*.gen.go linguist-generated=true
+*.gen.ts linguist-generated=true

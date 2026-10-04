@@ -46,12 +46,29 @@ func TestHealthzReportsActiveRoles(t *testing.T) {
 	rec := do(t, h, http.MethodGet, "/healthz")
 
 	require.Equal(t, http.StatusOK, rec.Code, "status")
-	body := decode[struct {
-		Status string   `json:"status"`
-		Roles  []string `json:"roles"`
-	}](t, rec)
-	assert.Equal(t, "ok", body.Status, "status")
+	assert.Equal(t, "application/json; charset=utf-8", rec.Header().Get("Content-Type"), "Content-Type")
+	body := decode[httpapi.Health](t, rec)
+	assert.Equal(t, httpapi.HealthStatusOk, body.Status, "status")
 	assert.Equal(t, []string{"api", "scheduler"}, body.Roles, "roles")
+}
+
+func TestHealthzReportsEmptyRolesAsArray(t *testing.T) {
+	h := httpapi.NewRouter(httpapi.Options{})
+
+	rec := do(t, h, http.MethodGet, "/healthz")
+
+	require.Equal(t, http.StatusOK, rec.Code, "status")
+	assert.JSONEq(t, `{"status":"ok","roles":[]}`, rec.Body.String(), "body")
+}
+
+func TestHealthzDoesNotShareRolesWithCaller(t *testing.T) {
+	roles := []string{"api"}
+	h := httpapi.NewRouter(httpapi.Options{Roles: roles})
+	roles[0] = "worker"
+
+	rec := do(t, h, http.MethodGet, "/healthz")
+
+	assert.Equal(t, []string{"api"}, decode[httpapi.Health](t, rec).Roles, "roles")
 }
 
 func TestReadyzReportsReadyWithoutChecks(t *testing.T) {
@@ -60,7 +77,19 @@ func TestReadyzReportsReadyWithoutChecks(t *testing.T) {
 	rec := do(t, h, http.MethodGet, "/readyz")
 
 	require.Equal(t, http.StatusOK, rec.Code, "status")
-	assert.Equal(t, "ready", decode[map[string]string](t, rec)["status"], "status")
+	assert.Equal(t, httpapi.ReadinessStatusReady, decode[httpapi.Readiness](t, rec).Status, "status")
+}
+
+func TestReadyzReportsReadyWhenCheckPasses(t *testing.T) {
+	h := httpapi.NewRouter(httpapi.Options{
+		Roles: []string{"api"},
+		Ready: func(context.Context) error { return nil },
+	})
+
+	rec := do(t, h, http.MethodGet, "/readyz")
+
+	require.Equal(t, http.StatusOK, rec.Code, "status")
+	assert.Equal(t, httpapi.ReadinessStatusReady, decode[httpapi.Readiness](t, rec).Status, "status")
 }
 
 func TestReadyzReportsNotReadyAsProblem(t *testing.T) {

@@ -17,6 +17,7 @@
 		"licenses": "node scripts/check-licenses.mjs"
 	},
 	"dependencies": {
+		"openapi-fetch": "^0.17.0",
 		"react": "^19.3.0",
 		"react-dom": "^19.3.0"
 	},

@@ -59,6 +59,7 @@ Each decision lists what was chosen, why, and what was rejected. All decided 202
 | D20 | **Testing: five tiers, coverage and mutation gates, run through Task locally and in CI.** | AI-written code needs strong, honest tests; one set of commands for both environments. | Separate CI-only scripts. |
 | D21 | **Cron parsing with `gronx`**. | Maintained, MIT. | `robfig/cron` (inactive since mid-2024). |
 | D23 | **CI on GitHub Actions with a pull-request workflow; squash merge only** (decided 2026-10-05). | Repository is public, so standard runners are free; required checks keep `main` green; squash merge gives one conventional commit per PR. | Local-only gates; rebase or merge commits. |
+| D24 | **Gin** as the HTTP framework for the public API (decided 2026-10-05). | Maintainer preference; mature and widely used; `oapi-codegen` generates Gin server code; supports streaming for server-sent events. | Standard library `net/http` routing; Echo; Chi. |
 | D22 | **Biome** for TypeScript linting and formatting (decided 2026-10-05). | One fast tool for lint and format; configuration already in the repository. | ESLint + Prettier. |
 
 ---
@@ -348,7 +349,7 @@ On deny or rejection, the model receives a tool error with the reason.
 
 ### 13.1 API
 
-- REST/JSON under `/v1`; OpenAPI 3.1 in `api/` is the source of truth; `oapi-codegen` (Go), `openapi-typescript` + `openapi-fetch` (TS); errors as RFC 9457 problem details.
+- REST/JSON under `/v1`, served with Gin; OpenAPI 3.1 in `api/` is the source of truth; `oapi-codegen` (Go, Gin server interfaces), `openapi-typescript` + `openapi-fetch` (TS); errors as RFC 9457 problem details.
 - **Start a run**: `POST /v1/harnesses/{id}/entrypoints/{name}/runs?wait=30s` → 200 with structured result if completed in time, else 202 with run reference. `Idempotency-Key` supported.
 - **Observe**: `GET /v1/runs/{id}`; `GET /v1/runs/{id}/events` (server-sent events).
 - **Chat**: one run per conversation alternating `running` / `waiting_input`.
@@ -482,7 +483,7 @@ Verified 2026-10-04 against each project's repository. **Before adding any depen
 | Open Policy Agent, gVisor, connect-go, oapi-codegen | Apache-2.0 |
 | MCP Go SDK | Apache-2.0 (new contributions) / MIT (not-yet-relicensed parts) |
 | openai-go, go-genai, aws-sdk-go-v2, go-oidc, opentelemetry-go | Apache-2.0 |
-| anthropic-sdk-go, charmbracelet/log | MIT |
+| anthropic-sdk-go, charmbracelet/log, Gin | MIT |
 | crewjam/saml | BSD-2-Clause |
 | openapi-typescript, openapi-fetch, React, Vite, TanStack Router/Query, shadcn/ui, Radix, Tailwind | MIT |
 

@@ -1,0 +1,13 @@
+# Git hooks (ARCHITECTURE §15.4); installed by `task setup`.
+pre-commit:
+  commands:
+    # Architecture rules run as part of lint (depguard).
+    lint:
+      run: task lint
+    test-unit:
+      run: task test:unit
+
+pre-push:
+  commands:
+    test-module:
+      run: task test:module

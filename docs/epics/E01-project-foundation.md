@@ -40,7 +40,7 @@ A repository in which every later epic can add code with tests, quality gates, a
 
 The [common acceptance criteria](README.md#common-acceptance-criteria) apply in addition to:
 
-- **AC-E01-1** — On a clean checkout, `task setup` installs all tooling prerequisites and the Lefthook git hooks on macOS and Linux. *Verified by:* Following the setup procedure on a clean checkout.
+- **AC-E01-1** — On a clean checkout, `task setup` installs or verifies all tooling prerequisites and installs the Lefthook git hooks on macOS and Linux. *Verified by:* Following the setup procedure on a clean checkout.
 - **AC-E01-2** — `task check` runs every tier target from ARCHITECTURE §15.4 and passes on the skeleton; tiers without tests report that explicitly instead of failing. *Verified by:* `task check`.
 - **AC-E01-3** — golangci-lint runs on all Go modules with the configured linters plus `errcheck`, `govet`, `ineffassign`, and `unused`; Biome runs on `web/`. *Verified by:* `task test:gates`.
 - **AC-E01-4** — `depguard` architecture rules are configured; an import that violates them (e.g., an executor package imported outside `toolgateway`) fails the lint step. *Verified by:* `task test:gates`.

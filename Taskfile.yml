@@ -1,0 +1,151 @@
+# All build, test, and check entry points (ARCHITECTURE §15.4).
+# Tools are installed on the PATH by the developer; `task setup` verifies their versions.
+version: "3"
+
+vars:
+  GO_MODULES: server sandbox
+  GO_PACKAGES: ./server/... ./sandbox/...
+  # Exact: lint results depend on the version.
+  GOLANGCI_LINT_VERSION: 2.14.0
+  # Minimum versions.
+  TASK_MIN_VERSION: 3.54.0
+  LEFTHOOK_MIN_VERSION: 2.1.16
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+
+tasks:
+  default:
+    cmds:
+      - task --list
+
+  setup:
+    desc: Verify tool prerequisites and install the Lefthook git hooks
+    cmds:
+      - task: setup:verify
+      - lefthook install
+
+  setup:verify:
+    internal: true
+    silent: true
+    cmds:
+      - |
+        failed=0
+        report() { # name, installed version, ok (0/1), requirement, install hint
+          if [ "$3" = 0 ]; then echo "ok      $1 $2"; else echo "FAILED  $1 ${2:-missing}: need $4 - $5"; failed=1; fi
+        }
+        at_least() { [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1)" = "$2" ]; }
+
+        have=$(go env GOVERSION 2>/dev/null | sed 's/^go//')
+        [ -n "$have" ]; report go "$have" $? "Go (toolchain from go.work is fetched automatically)" "https://go.dev/doc/install"
+
+        have="{{.TASK_VERSION}}"; have=${have#v}
+        at_least "$have" {{.TASK_MIN_VERSION}}; report task "$have" $? ">= {{.TASK_MIN_VERSION}}" "brew install go-task, or https://taskfile.dev/installation"
+
+        have=$(lefthook version 2>/dev/null)
+        [ -n "$have" ] && at_least "$have" {{.LEFTHOOK_MIN_VERSION}}; report lefthook "$have" $? ">= {{.LEFTHOOK_MIN_VERSION}}" "brew install lefthook, or https://lefthook.dev/installation"
+
+        have=$(golangci-lint version --short 2>/dev/null)
+        [ "$have" = {{.GOLANGCI_LINT_VERSION}} ]; report golangci-lint "$have" $? "exactly {{.GOLANGCI_LINT_VERSION}}" "https://golangci-lint.run/docs/welcome/install/"
+
+        exit $failed
+
+  build:
+    desc: Build the agenty and agenty-sandbox binaries into ./dist
+    cmds:
+      - go build -ldflags "-X github.com/jangraefen/agenty/server/internal/buildinfo.Version={{.VERSION}}" -o dist/agenty ./server/cmd/agenty
+      - go build -ldflags "-X github.com/jangraefen/agenty/sandbox/internal/buildinfo.Version={{.VERSION}}" -o dist/agenty-sandbox ./sandbox/cmd/agenty-sandbox
+
+  lint:
+    desc: Lint all Go modules, including architecture rules
+    cmds:
+      - for: { var: GO_MODULES }
+        cmd: cd {{.ITEM}} && golangci-lint run ./...
+
+  check:
+    desc: Run all gating targets in order; stops at the first failure
+    cmds:
+      - task: lint
+      - task: check:licenses
+      - task: test:gates
+      - task: test:unit
+      - task: test:module
+      - task: test:integration
+      - task: test:e2e
+      - task: test:ui
+      - task: test:mutation
+      - task: test:milestones
+
+  check:licenses:
+    desc: Check dependency licenses against the allowlist (ARCHITECTURE §16)
+    cmds:
+      - echo "check:licenses - no checks yet"
+
+  test:unit:
+    desc: Run unit tests
+    cmds:
+      - go test -count=1 {{.GO_PACKAGES}}
+
+  test:module:
+    desc: Run module tests (build tag "module")
+    cmds:
+      - task: go-tier
+        vars: { TIER: module }
+
+  test:integration:
+    desc: Run integration tests against the Docker Compose stack (build tag "integration")
+    cmds:
+      - task: go-tier
+        vars: { TIER: integration }
+
+  test:e2e:
+    desc: Run end-to-end scenarios (build tag "e2e")
+    cmds:
+      - task: go-tier
+        vars: { TIER: e2e }
+
+  test:ui:
+    desc: Run web component and browser tests
+    cmds:
+      - echo "test:ui - no tests yet"
+
+  test:mutation:
+    desc: Run mutation tests on the critical packages
+    cmds:
+      - echo "test:mutation - no tests yet"
+
+  test:gates:
+    desc: Prove that every quality gate fails when its rule is violated
+    cmds:
+      - echo "test:gates - no tests yet"
+
+  test:milestones:
+    desc: Run all automated milestone demos (build tag "milestone")
+    cmds:
+      - task: go-tier
+        vars: { TIER: milestone }
+
+  test:milestone:*:
+    desc: Run one automated milestone demo, e.g. task test:milestone:M1
+    vars:
+      MILESTONE: "{{index .MATCH 0}}"
+    cmds:
+      - task: go-tier
+        vars: { TIER: milestone, RUN: "TestMilestone{{.MILESTONE}}", MILESTONE: "{{.MILESTONE}}" }
+
+  test:nightly:
+    desc: Run quality checks against a real model (not gating)
+    cmds:
+      - echo "test:nightly - no tests yet"
+
+  go-tier:
+    internal: true
+    vars:
+      RUN: '{{.RUN | default ""}}'
+      PATTERN: '{{if .RUN}}^func {{.RUN}}\b{{else}}^//go:build .*\b{{.TIER}}\b{{end}}'
+    cmds:
+      - |
+        if grep -rqE --include='*_test.go' '{{.PATTERN}}' {{.GO_MODULES}}; then
+          go test -count=1 -tags {{.TIER}} {{if .RUN}}-run '^{{.RUN}}$'{{end}} {{.GO_PACKAGES}}
+        else
+          echo "{{if .RUN}}test:milestone:{{.MILESTONE}}{{else}}test:{{.TIER}}{{end}} - no tests yet"
+        fi

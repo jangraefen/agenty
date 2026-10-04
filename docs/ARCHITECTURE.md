@@ -454,7 +454,9 @@ A **scripted model** returns predefined responses (including tool calls) step by
 
 **Local**
 
-- **Task** targets: `test:unit`, `test:module`, `test:integration`, `test:e2e`, `test:ui`, `test:mutation`, `test:gates`, `test:milestone:Mx` (automated milestone demos), `test:nightly` (real model, not gating), `check:licenses`, and `check` (all gating tiers plus gates). `task check` must pass before merging to `main`.
+- **Task** targets: `test:unit`, `test:module`, `test:integration`, `test:e2e`, `test:ui`, `test:mutation`, `test:gates`, `test:milestone:Mx` (automated milestone demos), `test:nightly` (real model, not gating), `check:licenses`, and `check` (all gating tiers plus gates). `task check` must pass before merging to `main`. Tiers without tests report "no tests yet" and succeed.
+- **Go test tiers** are selected by build tag: untagged tests are unit tests; `module`, `integration`, `e2e`, and `milestone` tag the other tiers. A milestone demo is the test `TestMilestone<Mx>`.
+- **Tools** (Go, Task, Lefthook, golangci-lint) are installed by the developer on the `PATH`. `task setup` verifies their versions (golangci-lint exactly, because lint results depend on it; the others as minimums) and installs the Lefthook hooks.
 - **Lefthook**: pre-commit → lint, architecture rules, unit tests; pre-push → module tests.
 - **macOS**: gVisor requires Linux; `runsc`-based sandbox tests run in a Colima or Lima VM. Without it, sandbox tests fall back to `insecure_dev_mode` and report that clearly.
 

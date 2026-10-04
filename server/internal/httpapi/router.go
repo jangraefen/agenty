@@ -41,7 +41,7 @@ func NewRouter(opts Options) http.Handler {
 	}
 	// The request logger runs outside recovery, so it records the 500 that
 	// recovery writes after a panic.
-	r.Use(RequestLogger(logger))
+	r.Use(RequestLogger(logger, "/healthz", "/readyz"))
 	r.Use(gin.CustomRecoveryWithWriter(io.Discard, func(c *gin.Context, err any) {
 		logger.ErrorContext(c.Request.Context(), "panic while handling request",
 			"method", c.Request.Method, "path", c.Request.URL.Path, "panic", err)

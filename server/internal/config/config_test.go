@@ -170,6 +170,8 @@ func TestLoadRejectsInvalidLogSettings(t *testing.T) {
 	}{
 		{"unknown format", "log:\n  format: xml\n", nil, []string{"log.format", "xml"}},
 		{"unknown level", "log:\n  level: loud\n", nil, []string{"log.level", "loud"}},
+		{"level with offset", "log:\n  level: info+2\n", nil, []string{"log.level", "info+2"}},
+		{"level with negative offset", "", map[string]string{"AGENTY_LOG_LEVEL": "WARN-1"}, []string{"log.level", "AGENTY_LOG_LEVEL", "WARN-1"}},
 		{"format from environment", "", map[string]string{"AGENTY_LOG_FORMAT": "yaml"}, []string{"log.format", "AGENTY_LOG_FORMAT", "yaml"}},
 		{"level from environment", "", map[string]string{"AGENTY_LOG_LEVEL": ""}, []string{"log.level", "AGENTY_LOG_LEVEL"}},
 		{"unknown log field", "log:\n  colour: true\n", nil, []string{"colour"}},

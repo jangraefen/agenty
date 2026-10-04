@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -352,4 +353,59 @@ func TestRedactingHandlerWorksWithStandardJSONHandler(t *testing.T) {
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &got))
 	want := map[string]any{"creds": "&{User:alice Password:[REDACTED]}"} //nolint:gosec // Expected redacted output.
 	assert.Equal(t, want, got["req"])
+}
+
+type nilErr struct{ msg string }
+
+func (e *nilErr) Error() string { return e.msg }
+
+type nilMarshaler struct{ s string }
+
+func (m *nilMarshaler) MarshalText() ([]byte, error) { return []byte(m.s), nil }
+
+// A typed nil pointer passed as an error or TextMarshaler must be logged as
+// <nil>, as log/slog's handlers do, instead of panicking in the log call.
+func TestLogsTypedNilPointersWithoutPanicking(t *testing.T) {
+	for _, f := range formats {
+		t.Run(string(f), func(t *testing.T) {
+			secrets := logging.NewSecrets()
+			secrets.Register(secret)
+			logger, buf := newLogger(t, f, slog.LevelDebug, secrets)
+
+			var err *nilErr
+			var m *nilMarshaler
+			require.NotPanics(t, func() { logger.Info("m", "err", err, "text", m) })
+
+			assert.Equal(t, 2, strings.Count(buf.String(), "<nil>"), "output %q", buf.String())
+		})
+	}
+}
+
+// Durations, times, and floats are written differently by the JSON format
+// (encoding/json) than by the text formats (Value.String); a secret that
+// matches either form is redacted.
+func TestRedactsNonStringValuesWhoseJSONIsASecret(t *testing.T) {
+	ts := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	tsJSON, err := ts.MarshalJSON()
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name, secret string
+		attr         slog.Attr
+	}{
+		{"duration", "1500000000", slog.Duration("d", 1500*time.Millisecond)},
+		{"time", strings.Trim(string(tsJSON), `"`), slog.Time("t", ts)},
+		{"float", "100000000000000000000", slog.Float64("f", 1e20)},
+	} {
+		for _, f := range formats {
+			t.Run(tc.name+"/"+string(f), func(t *testing.T) {
+				secrets := logging.NewSecrets()
+				secrets.Register(tc.secret)
+				logger, buf := newLogger(t, f, slog.LevelDebug, secrets)
+
+				logger.LogAttrs(context.Background(), slog.LevelInfo, "m", tc.attr)
+
+				assert.NotContains(t, buf.String(), tc.secret, "output %q", buf.String())
+			})
+		}
+	}
 }

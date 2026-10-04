@@ -65,7 +65,7 @@ func TestRequestLoggingRecordsEachRequest(t *testing.T) {
 	reqs := requestRecords(records())
 	require.Len(t, reqs, 1)
 	r := reqs[0]
-	assert.Equal(t, "info", r["level"])
+	assert.Equal(t, "debug", r["level"], "probes are logged at debug level")
 	assert.Equal(t, "GET", r["method"])
 	assert.Equal(t, "/healthz", r["path"])
 	assert.Equal(t, "/healthz", r["route"])
@@ -156,7 +156,7 @@ func TestReadinessFailureIsLoggedWithRedaction(t *testing.T) {
 	assert.True(t, found, "no readiness failure record in %v", all)
 	reqs := requestRecords(all)
 	require.Len(t, reqs, 1)
-	assert.Equal(t, "error", reqs[0]["level"])
+	assert.Equal(t, "debug", reqs[0]["level"], "the 503 is reported by the warn record above")
 }
 
 func TestRequestLoggerMiddlewareStandalone(t *testing.T) {
@@ -178,4 +178,25 @@ func TestRequestLoggerMiddlewareStandalone(t *testing.T) {
 	assert.Equal(t, "/items/:id", got["route"])
 	assert.InDelta(t, http.StatusTeapot, got["status"], 0)
 	assert.InDelta(t, len("short"), got["bytes"], 0)
+}
+
+func TestRequestLoggerLogsQuietRoutesAtDebugLevel(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	gin.SetMode(gin.ReleaseMode)
+	r := gin.New()
+	r.Use(httpapi.RequestLogger(logger, "/probe"))
+	r.GET("/probe", func(c *gin.Context) { c.Status(http.StatusServiceUnavailable) })
+	r.GET("/other", func(c *gin.Context) { c.Status(http.StatusServiceUnavailable) })
+
+	do(t, r, http.MethodGet, "/probe")
+	do(t, r, http.MethodGet, "/other")
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	require.Len(t, lines, 2, "log %q", buf.String())
+	var probe, other map[string]any
+	require.NoError(t, json.Unmarshal([]byte(lines[0]), &probe))
+	require.NoError(t, json.Unmarshal([]byte(lines[1]), &other))
+	assert.Equal(t, "DEBUG", probe["level"], "quiet routes are logged at debug level whatever their status")
+	assert.Equal(t, "ERROR", other["level"])
 }

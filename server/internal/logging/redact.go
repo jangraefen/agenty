@@ -4,8 +4,10 @@ import (
 	"cmp"
 	"context"
 	"encoding"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -109,7 +111,8 @@ type scope struct {
 // (including nested groups, LogValuer results, and values that would be
 // formatted with fmt) of each record, then passes it to next. Values of
 // kind Any are rendered to strings first, so the text that is checked is the
-// text that is written whatever next's format.
+// text that is written whatever next's format; durations, times, and floats
+// are checked in both their text and their JSON form.
 func NewRedactingHandler(next slog.Handler, secrets *Secrets) slog.Handler {
 	return &redactingHandler{next: next, secrets: secrets}
 }
@@ -175,9 +178,21 @@ func (h *redactingHandler) redactAttr(a slog.Attr) slog.Attr {
 		return slog.String(key, h.secrets.Redact(v.String()))
 	case slog.KindAny:
 		return slog.String(key, h.secrets.Redact(render(v.Any())))
+	case slog.KindDuration, slog.KindTime, slog.KindFloat64:
+		// The JSON format writes these with encoding/json, the text formats
+		// with Value.String; the two differ (1500000000 versus 1.5s), so
+		// both are checked.
+		s := v.String()
+		if r := h.secrets.Redact(s); r != s {
+			return slog.String(key, r)
+		}
+		if j, err := json.Marshal(v.Any()); err == nil && h.secrets.Redact(string(j)) != string(j) {
+			return slog.String(key, s)
+		}
+		return slog.Attr{Key: key, Value: v}
 	default:
-		// Numbers, booleans, times, and durations keep their kind unless
-		// their text contains a secret.
+		// Integers and booleans are written as Value.String in every format
+		// and keep their kind unless that text contains a secret.
 		if s := v.String(); h.secrets.Redact(s) != s {
 			return slog.String(key, h.secrets.Redact(s))
 		}
@@ -186,8 +201,12 @@ func (h *redactingHandler) redactAttr(a slog.Attr) slog.Attr {
 }
 
 // render returns the text of a value of kind Any, as log/slog's text handler
-// would format it.
+// would format it. A nil pointer is written as <nil> instead of calling its
+// methods, which could panic inside the log call.
 func render(v any) string {
+	if rv := reflect.ValueOf(v); rv.Kind() == reflect.Pointer && rv.IsNil() {
+		return "<nil>"
+	}
 	switch t := v.(type) {
 	case error:
 		return t.Error()

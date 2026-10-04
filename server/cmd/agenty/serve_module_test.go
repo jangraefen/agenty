@@ -133,16 +133,21 @@ func TestServeLogsInConfiguredFormat(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.format, func(t *testing.T) {
 			s := startWithConfig(t, "api", "log:\n  format: "+tt.format+"\n")
-			healthRoles(t, s.addr)
+			// Probes are logged at debug level; an unknown path at info.
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+s.addr+"/no-such-path", http.NoBody)
+			require.NoError(t, err, "request")
+			resp, err := http.DefaultClient.Do(req)
+			require.NoError(t, err, "GET /no-such-path")
+			_ = resp.Body.Close()
 			s.stop(t)
 
 			lines := strings.Split(strings.TrimSpace(s.stderr.String()), "\n")
 			var requestLogged bool
 			for _, line := range lines {
 				tt.check(t, line)
-				requestLogged = requestLogged || strings.Contains(line, "/healthz")
+				requestLogged = requestLogged || strings.Contains(line, "/no-such-path")
 			}
-			assert.True(t, requestLogged, "no request log for /healthz in %q", s.stderr.String())
+			assert.True(t, requestLogged, "no request log for /no-such-path in %q", s.stderr.String())
 			assert.Contains(t, s.stderr.String(), "api role listening")
 		})
 	}

@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/goccy/go-yaml"
@@ -133,11 +134,16 @@ func parseLogFormat(v value, field string, dst *logging.Format) error {
 	return nil
 }
 
+// parseLogLevel accepts the four level names in any case, but not the
+// offsets (such as info+2) that slog.Level.UnmarshalText also accepts.
 func parseLogLevel(v value, field string, dst *slog.Level) error {
-	if err := dst.UnmarshalText([]byte(v.raw)); err != nil {
-		return fmt.Errorf("%s: %q is not a log level: use debug, info, warn, or error", v.source(field), v.raw)
+	for _, l := range []slog.Level{slog.LevelDebug, slog.LevelInfo, slog.LevelWarn, slog.LevelError} {
+		if strings.EqualFold(v.raw, l.String()) {
+			*dst = l
+			return nil
+		}
 	}
-	return nil
+	return fmt.Errorf("%s: %q is not a log level: use debug, info, warn, or error", v.source(field), v.raw)
 }
 
 func parsePositiveDuration(v value, field string, dst *time.Duration) error {

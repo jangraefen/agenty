@@ -1,2 +1,32 @@
+# Local assistant state
 .remember
 docs/superpowers
+.claude/worktrees/
+.claude/settings.local.json
+
+# Build output
+/bin/
+/dist/
+web/dist/
+web/dev-dist/
+
+# Coverage and test reports
+*.out
+*.coverprofile
+coverage.*
+coverage/
+web/playwright-report/
+web/test-results/
+reports/
+
+# Local tool caches
+.task/
+node_modules/
+.stryker-tmp/
+.gremlins/
+.cache/
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store

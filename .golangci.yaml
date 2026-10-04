@@ -1,0 +1,47 @@
+version: "2"
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - dupl
+    - funlen
+    - gocognit
+    - goconst
+    - gocritic
+    - gocyclo
+    - godot
+    - goprintffuncname
+    - gosec
+    - modernize
+    - prealloc
+    - revive
+    - staticcheck
+    - unconvert
+    - whitespace
+  settings:
+    govet:
+      disable:
+        - fieldalignment
+      enable-all: true
+    gosec:
+      excludes:
+        - G115
+        - G124
+    goconst:
+      min-occurrences: 15
+  exclusions:
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - govet
+        text: 'shadow: declaration of "(err|ctx)" shadows declaration at'
+      - linters:
+          - funlen
+        path: _test\.go$
+formatters:
+  enable:
+    - gofmt

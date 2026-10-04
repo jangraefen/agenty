@@ -43,9 +43,16 @@ Planning is split between the repository and GitHub (`jangraefen/agenty`). Each 
 
 Never record status, progress, or stories in the repository files.
 
+**Mirroring definitions to GitHub**
+- Epic issue bodies and milestone descriptions are copies of the files plus progress checkboxes. Absolute links replace relative ones, and dependencies appear as `#n (Exx)`.
+- When a definition changes, edit only the affected lines on GitHub (`gh issue view <n> --json body --jq .body`, change, `gh issue edit <n> --body-file -`). **Never regenerate a whole body from the file** once any checkbox is ticked: that would erase progress.
+
+**Labels**: `epic`, `story`, `spike` (time-boxed, throwaway investigation; findings go to `docs/spikes/`, its code is never merged).
+
 **Working with stories**
 - Find work: `gh issue list --label story --milestone "M1 — Foundations"`; epics: `gh issue list --label epic`.
-- Create a story: `gh issue create --label story --milestone "<milestone title>" --title "<Exx>: <story title>" --body "<description, references to AC-Exx-n it satisfies, test approach>"`, then attach it to its epic: `gh api repos/jangraefen/agenty/issues/<epic number>/sub_issues -F sub_issue_id=$(gh api repos/jangraefen/agenty/issues/<story number> --jq .id)`.
+- Story format: title `<Exx>: <story title>`; body sections `Part of epic #n (Exx).`, `## Context`, `## Acceptance criteria` (checkboxes), `**Contributes to:** AC-Exx-n, …`, `## Verification`, `## Depends on` (`#n` or `None`). A story is sized for roughly one pull request.
+- Create a story: `gh issue create --label story --milestone "<milestone title>" --title "<Exx>: <story title>" --body-file <file>`, then attach it to its epic: `gh api repos/jangraefen/agenty/issues/<epic number>/sub_issues -F sub_issue_id=$(gh api repos/jangraefen/agenty/issues/<story number> --jq .id)`.
 - Every story references the acceptance criteria it contributes to. Close a story only when its tests pass under `task check`.
 - Reference the story in commits and pull requests (e.g., `Closes #42`).
 
@@ -55,6 +62,7 @@ Never record status, progress, or stories in the repository files.
 - One story per pull request where practical. The PR title uses conventional-commit format (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`), because pull requests are squash-merged and the title becomes the commit message.
 - The PR description references the story (`Closes #42`), lists the acceptance criteria it addresses, and states how they were verified.
 - Merge only when all required CI checks pass. Do not merge, push, or rewrite history unless asked.
+- Do not repeat `Co-Authored-By` trailers in PR descriptions: GitHub carries them over from the branch commits into the squash commit.
 - Commit author email is the GitHub no-reply address configured in the repository; do not change git identity settings.
 - The repository is public but not yet licensed (see docs/VISION.md §13); do not add a license or accept external contributions without the maintainer's decision.
 - Never put secrets in the repository, workflow files, or logs; CI secrets are only used by scheduled workflows.

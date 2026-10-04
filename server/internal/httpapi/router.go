@@ -18,7 +18,8 @@ type Options struct {
 	// Roles are the active roles, reported by /healthz.
 	Roles []string
 	// Ready reports whether the server can serve traffic; a non-nil error
-	// makes /readyz answer 503 with the error as detail. Nil means always ready.
+	// makes /readyz answer 503 with a generic detail and is logged, never
+	// returned to the client. Nil means always ready.
 	Ready func(ctx context.Context) error
 	// Routes registers additional routes.
 	Routes func(r gin.IRouter)
@@ -50,7 +51,8 @@ func NewRouter(opts Options) http.Handler {
 	r.GET("/readyz", func(c *gin.Context) {
 		if opts.Ready != nil {
 			if err := opts.Ready(c.Request.Context()); err != nil {
-				WriteProblem(c, http.StatusServiceUnavailable, err.Error())
+				slog.WarnContext(c.Request.Context(), "readiness check failed", "error", err)
+				WriteProblem(c, http.StatusServiceUnavailable, "The server is not ready to serve traffic.")
 				return
 			}
 		}

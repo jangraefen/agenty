@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -90,9 +91,23 @@ func TestReadyzReportsNotReadyAsProblem(t *testing.T) {
 
 	rec := do(t, h, http.MethodGet, "/readyz")
 
-	p := assertProblem(t, rec, http.StatusServiceUnavailable, "/readyz")
-	if p.Detail != "database unreachable" {
-		t.Errorf("detail = %q, want %q", p.Detail, "database unreachable")
+	assertProblem(t, rec, http.StatusServiceUnavailable, "/readyz")
+}
+
+func TestReadyzDoesNotLeakCheckError(t *testing.T) {
+	const checkErr = "dial tcp db.internal:5432: user=agenty database=agenty"
+	h := httpapi.NewRouter(httpapi.Options{
+		Roles: []string{"api"},
+		Ready: func(context.Context) error { return errors.New(checkErr) },
+	})
+
+	rec := do(t, h, http.MethodGet, "/readyz")
+
+	assertProblem(t, rec, http.StatusServiceUnavailable, "/readyz")
+	for _, fragment := range []string{checkErr, "db.internal", "5432", "user=agenty"} {
+		if strings.Contains(rec.Body.String(), fragment) {
+			t.Errorf("response body %q leaks %q from the readiness error", rec.Body.String(), fragment)
+		}
 	}
 }
 

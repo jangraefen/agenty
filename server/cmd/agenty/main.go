@@ -27,16 +27,25 @@ func main() {
 }
 
 // run executes the command with the given arguments and returns the exit code.
-// It stops the server on SIGINT or SIGTERM.
+// The first SIGINT or SIGTERM stops the server gracefully; a second one
+// terminates the process immediately.
 func run(args []string, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go func() {
+		<-ctx.Done()
+		// Restore the default signal behavior so that a second signal
+		// terminates the process while the graceful shutdown waits.
+		stop()
+		slog.InfoContext(context.WithoutCancel(ctx), "shutting down gracefully; send the signal again to force exit")
+	}()
 	return runContext(ctx, args, stdout, stderr, nil)
 }
 
 // runContext is run with an explicit lifetime: the server stops when ctx is
-// canceled. onListen, if set, receives the address of the HTTP listener.
-func runContext(ctx context.Context, args []string, stdout, stderr io.Writer, onListen func(net.Addr)) int {
+// canceled. onStarted, if set, is called once all selected roles are set up,
+// with the address of the HTTP listener, or nil when the api role is inactive.
+func runContext(ctx context.Context, args []string, stdout, stderr io.Writer, onStarted func(net.Addr)) int {
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.Usage = func() {
@@ -74,7 +83,7 @@ func runContext(ctx context.Context, args []string, stdout, stderr io.Writer, on
 		_, _ = fmt.Fprintln(stderr, err)
 		return 1
 	}
-	if err := serve(ctx, cfg, selected, onListen); err != nil {
+	if err := serve(ctx, cfg, selected, onStarted); err != nil {
 		_, _ = fmt.Fprintln(stderr, err)
 		return 1
 	}
@@ -82,9 +91,10 @@ func runContext(ctx context.Context, args []string, stdout, stderr io.Writer, on
 }
 
 // serve starts the selected roles and blocks until ctx is canceled and all of
-// them have stopped.
-func serve(ctx context.Context, cfg config.Config, selected []roles.Role, onListen func(net.Addr)) error {
+// them have stopped. onStarted, if set, is called once all roles are set up.
+func serve(ctx context.Context, cfg config.Config, selected []roles.Role, onStarted func(net.Addr)) error {
 	components := make(map[roles.Role]roles.Component, len(selected))
+	var listenAddr net.Addr
 	for _, r := range selected {
 		switch r {
 		case roles.API:
@@ -93,9 +103,7 @@ func serve(ctx context.Context, cfg config.Config, selected []roles.Role, onList
 				return fmt.Errorf("listen on %s: %w", cfg.Server.Address, err)
 			}
 			slog.InfoContext(ctx, "api role listening", "address", ln.Addr().String())
-			if onListen != nil {
-				onListen(ln.Addr())
-			}
+			listenAddr = ln.Addr()
 			components[r] = apiComponent{
 				ln:      ln,
 				handler: httpapi.NewRouter(httpapi.Options{Roles: roles.Strings(selected)}),
@@ -108,6 +116,9 @@ func serve(ctx context.Context, cfg config.Config, selected []roles.Role, onList
 	}
 
 	slog.InfoContext(ctx, "starting agenty", "version", buildinfo.Version, "roles", roles.Strings(selected))
+	if onStarted != nil {
+		onStarted(listenAddr)
+	}
 	err := roles.Run(ctx, components)
 	slog.InfoContext(context.WithoutCancel(ctx), "agenty stopped")
 	return err

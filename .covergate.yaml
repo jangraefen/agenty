@@ -1,6 +1,7 @@
 # Statement coverage thresholds per package (ARCHITECTURE §15.3), enforced by `task check:coverage`
 # over the merged unit and module tier profiles. Patterns are import paths; "/..." also matches
-# subpackages; the longest matching pattern wins. Never lower a threshold to make the gate pass.
+# subpackages; the longest matching pattern wins. Nested patterns may only raise thresholds (enforced).
+# Never lower a threshold to make the gate pass.
 default: 90
 thresholds:
   # Critical packages: 100 %, applied automatically once the package exists.

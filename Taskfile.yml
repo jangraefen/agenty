@@ -131,7 +131,8 @@ tasks:
   test:unit:
     desc: Run unit tests
     cmds:
-      - mkdir -p coverage
+      # Remove the previous profile first so a failed run never leaves a stale one for check:coverage.
+      - mkdir -p coverage && rm -f coverage/unit.out
       - go test -count=1 -coverprofile=coverage/unit.out {{.GO_PACKAGES}}
       - task: test:unit:web
 
@@ -149,10 +150,14 @@ tasks:
         vars: { TIER: module, COVER: "true" }
 
   check:coverage:
-    desc: Check per-package statement coverage of the unit and module tiers against .covergate.yaml (ARCHITECTURE §15.3)
+    desc: Check per-package statement coverage against .covergate.yaml (ARCHITECTURE §15.3); consumes coverage/unit.out and coverage/module.out written by test:unit and test:module, so run those first
+    preconditions:
+      - sh: test -f coverage/unit.out
+        msg: "coverage/unit.out is missing: run task test:unit first"
+      - sh: test -f coverage/module.out
+        msg: "coverage/module.out is missing: run task test:module first"
     cmds:
-      # The module profile is absent while the tier has no tests (go-tier removes stale profiles).
-      - go run ./server/internal/testinfra/covergate -config .covergate.yaml coverage/unit.out $(ls coverage/module.out 2>/dev/null)
+      - go run ./server/internal/testinfra/covergate -config .covergate.yaml coverage/unit.out coverage/module.out
 
   test:integration:
     desc: Run integration tests against the Docker Compose stack (build tag "integration")

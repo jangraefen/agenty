@@ -10,7 +10,9 @@
 // A statement counts as covered when any profile covers it. Thresholds come
 // from the configuration file: a default for every package plus overrides by
 // package pattern (an import path, or an import path followed by "/..." for
-// the package and its subpackages; the longest matching pattern wins).
+// the package and its subpackages; the longest matching pattern wins). A
+// pattern nested in another may only raise the threshold, so no override can
+// lower part of a subtree, such as a subpackage of a critical package.
 //
 // Exit codes: 0 when every package meets its threshold, 1 when at least one
 // does not, 2 on invalid usage or input.
@@ -22,6 +24,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path"
 	"slices"
@@ -103,7 +106,26 @@ func loadConfig(file string) (config, error) {
 			return config{}, fmt.Errorf("invalid configuration %s: threshold for %q must be a percentage from 0 to 100", file, pattern)
 		}
 	}
+	if err := checkNesting(raw.Thresholds); err != nil {
+		return config{}, fmt.Errorf("invalid configuration %s: %w", file, err)
+	}
 	return config{Default: *raw.Default, Thresholds: raw.Thresholds}, nil
+}
+
+// checkNesting rejects a pattern whose threshold is lower than that of a
+// shorter pattern containing it: since the longest match wins, it would
+// silently lower the threshold of part of a subtree, such as a subpackage of
+// a critical package. Nested patterns may only raise thresholds.
+func checkNesting(thresholds map[string]int) error {
+	for _, outer := range slices.Sorted(maps.Keys(thresholds)) {
+		for _, inner := range slices.Sorted(maps.Keys(thresholds)) {
+			if inner != outer && matches(outer, strings.TrimSuffix(inner, "/...")) && thresholds[inner] < thresholds[outer] {
+				return fmt.Errorf("threshold %d%% for %q is lower than %d%% for the containing pattern %q; nested patterns may only raise thresholds",
+					thresholds[inner], inner, thresholds[outer], outer)
+			}
+		}
+	}
+	return nil
 }
 
 func validPercent(p int) bool { return p >= 0 && p <= 100 }

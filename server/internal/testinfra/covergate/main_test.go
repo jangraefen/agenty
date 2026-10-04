@@ -290,3 +290,43 @@ func TestRejectsUnreadableProfileLine(t *testing.T) {
 		t.Errorf("exit code = %d, stderr = %q, want 2 and a read error", code, stderr)
 	}
 }
+
+func TestRejectsNestedPatternThatLowersThreshold(t *testing.T) {
+	ok := profile(mod + "/a/a.go:1.1,2.1 1 1")
+	tests := map[string]string{
+		"subtree below subtree":        "default: 90\nthresholds:\n  " + mod + "/runs/...: 100\n  " + mod + "/runs/legacy/...: 50\n",
+		"package below subtree":        "default: 90\nthresholds:\n  " + mod + "/runs/...: 100\n  " + mod + "/runs/legacy: 99\n",
+		"root package of subtree":      "default: 90\nthresholds:\n  " + mod + "/runs/...: 100\n  " + mod + "/runs: 90\n",
+		"below a nested raise":         "default: 50\nthresholds:\n  " + mod + "/a/...: 60\n  " + mod + "/a/b/...: 80\n  " + mod + "/a/b/c: 70\n",
+		"subtree lowers exact package": "default: 90\nthresholds:\n  " + mod + "/runs: 100\n  " + mod + "/runs/...: 95\n",
+	}
+	for name, cfg := range tests {
+		t.Run(name, func(t *testing.T) {
+			code, _, stderr := gate(t, cfg, ok)
+
+			if code != 2 {
+				t.Errorf("exit code = %d, want 2", code)
+			}
+			if !strings.Contains(stderr, "lower than") || !strings.Contains(stderr, "nested patterns may only raise") {
+				t.Errorf("stderr = %q, want a nested-threshold error", stderr)
+			}
+		})
+	}
+}
+
+func TestAllowsNestedPatternThatRaisesOrKeepsThreshold(t *testing.T) {
+	tests := map[string]string{
+		"raise under subtree":      "default: 50\nthresholds:\n  " + mod + "/a/...: 60\n  " + mod + "/a/b/...: 80\n  " + mod + "/a/b/c: 90\n",
+		"equal under subtree":      "default: 90\nthresholds:\n  " + mod + "/runs/...: 100\n  " + mod + "/runs/legacy/...: 100\n",
+		"exact pattern is no tree": "default: 90\nthresholds:\n  " + mod + "/runs: 100\n  " + mod + "/runs/legacy: 50\n",
+		"sibling prefix":           "default: 90\nthresholds:\n  " + mod + "/runs/...: 100\n  " + mod + "/runsx/...: 50\n",
+		"lower than default":       "default: 90\nthresholds:\n  " + mod + "/legacy/...: 50\n",
+	}
+	for name, cfg := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, err := loadConfig(writeFile(t, "covergate.yaml", cfg)); err != nil {
+				t.Errorf("loadConfig: %v, want no error", err)
+			}
+		})
+	}
+}

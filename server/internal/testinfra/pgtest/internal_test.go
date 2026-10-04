@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"runtime"
 	"strings"
 	"testing"
@@ -133,8 +134,16 @@ func TestNewDatabaseFailsOnInvalidDSN(t *testing.T) {
 }
 
 func TestExecFailsWhenServerIsUnreachable(t *testing.T) {
-	// Port 1 on the loopback interface refuses connections immediately.
-	s := &Server{dsn: "postgres://agenty@127.0.0.1:1/agenty?sslmode=disable&connect_timeout=5"}
+	// A port that was just listened on and closed refuses connections immediately.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := ln.Addr().String()
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close listener: %v", err)
+	}
+	s := &Server{dsn: "postgres://agenty@" + addr + "/agenty?sslmode=disable&connect_timeout=5"}
 
 	msg := fatalOf(func(tb testing.TB) { s.exec(tb, "SELECT 1") })
 

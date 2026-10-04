@@ -1,6 +1,7 @@
 # E13 — Local MCP & custom tools
 
 > **Status**: Proposed
+> **Milestone**: [M4](../ROADMAP.md#m4--sandbox-skills--schedules)
 > **Depends on**: [E11](E11-catalog-remote-mcp.md), [E12](E12-sandbox-runner.md)
 
 ## Goal

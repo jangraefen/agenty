@@ -1,6 +1,7 @@
 # E19 — Observability & cost
 
 > **Status**: Proposed
+> **Milestone**: [M5](../ROADMAP.md#m5--copilots--knowledge)
 > **Depends on**: [E07](E07-agent-loop-models.md)
 
 ## Goal

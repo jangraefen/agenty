@@ -1,6 +1,6 @@
 # Epics
 
-Epics are cut by capability: each delivers a usable capability end to end (backend, API, UI, tests). E01–E03 are horizontal foundations. Every v1 row in [CAPABILITIES.md](../CAPABILITIES.md) belongs to exactly one epic. Stories are added to each epic file in the next planning step; sequencing happens on the roadmap.
+Epics are cut by capability: each delivers a usable capability end to end (backend, API, UI, tests). E01–E03 are horizontal foundations. Every v1 row in [CAPABILITIES.md](../CAPABILITIES.md) belongs to exactly one epic. Stories are added to each epic file in the next planning step. Sequencing into milestones is defined in the [roadmap](../ROADMAP.md).
 
 | Epic | Name | Goal | Depends on |
 |---|---|---|---|

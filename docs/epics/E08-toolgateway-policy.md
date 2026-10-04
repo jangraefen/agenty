@@ -1,6 +1,7 @@
 # E08 — Tool Gateway & policy
 
 > **Status**: Proposed
+> **Milestone**: [M2](../ROADMAP.md#m2--first-governed-run)
 > **Depends on**: [E07](E07-agent-loop-models.md)
 
 ## Goal

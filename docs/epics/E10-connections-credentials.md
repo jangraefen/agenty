@@ -1,6 +1,7 @@
 # E10 — Connections & credentials
 
 > **Status**: Proposed
+> **Milestone**: [M3](../ROADMAP.md#m3--connected-agents)
 > **Depends on**: [E04](E04-identity-workspaces.md)
 
 ## Goal

@@ -1,6 +1,7 @@
 # E04 — Identity & workspaces
 
 > **Status**: Proposed
+> **Milestone**: [M2](../ROADMAP.md#m2--first-governed-run)
 > **Depends on**: [E02](E02-server-core.md), [E03](E03-web-foundation.md)
 
 ## Goal

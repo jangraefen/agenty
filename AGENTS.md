@@ -12,7 +12,7 @@ Agenty is a fully open-source, self-hostable enterprise platform for building go
 2. [docs/CAPABILITIES.md](docs/CAPABILITIES.md) — what ships in v1 versus Later / Explore.
 3. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — how it is built: decision record (§2), invariants (§3), layout, components, testing, dependencies, conventions (§17).
 
-Planned work is organized as epics in [docs/epics/](docs/epics/README.md).
+Planned work is organized as epics in [docs/epics/](docs/epics/README.md), sequenced into milestones in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 These documents are the source of truth. Do not reopen decisions recorded in ARCHITECTURE.md §2 without recording a new decision there.
 

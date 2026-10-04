@@ -1,6 +1,7 @@
 # E21 — Starter kit & release readiness
 
 > **Status**: Proposed
+> **Milestone**: [M6](../ROADMAP.md#m6--governance--release)
 > **Depends on**: All other epics
 
 ## Goal

@@ -1,6 +1,7 @@
 # E20 — Oversight & quality
 
 > **Status**: Proposed
+> **Milestone**: [M6](../ROADMAP.md#m6--governance--release)
 > **Depends on**: [E06](E06-run-engine.md), [E16](E16-chat-copilots.md), [E19](E19-observability-cost.md)
 
 ## Goal

@@ -1,6 +1,7 @@
 # E03 — Web foundation
 
 > **Status**: Proposed
+> **Milestone**: [M1](../ROADMAP.md#m1--foundations)
 > **Depends on**: [E01](E01-project-foundation.md), [E02](E02-server-core.md)
 
 ## Goal

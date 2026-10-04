@@ -1,6 +1,7 @@
 # E05 — Harness definitions
 
 > **Status**: Proposed
+> **Milestone**: [M2](../ROADMAP.md#m2--first-governed-run)
 > **Depends on**: [E04](E04-identity-workspaces.md)
 
 ## Goal

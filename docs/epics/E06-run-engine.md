@@ -1,6 +1,7 @@
 # E06 — Run engine & entry points
 
 > **Status**: Proposed
+> **Milestone**: [M2](../ROADMAP.md#m2--first-governed-run)
 > **Depends on**: [E05](E05-harness-definitions.md)
 
 ## Goal

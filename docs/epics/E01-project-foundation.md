@@ -1,6 +1,7 @@
 # E01 — Project foundation
 
 > **Status**: Proposed
+> **Milestone**: [M1](../ROADMAP.md#m1--foundations)
 > **Depends on**: None
 
 ## Goal

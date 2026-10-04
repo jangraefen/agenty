@@ -1,6 +1,7 @@
 # E17 — Schedules
 
 > **Status**: Proposed
+> **Milestone**: [M4](../ROADMAP.md#m4--sandbox-skills--schedules)
 > **Depends on**: [E06](E06-run-engine.md), [E10](E10-connections-credentials.md)
 
 ## Goal

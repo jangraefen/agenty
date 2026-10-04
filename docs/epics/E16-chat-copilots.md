@@ -1,6 +1,7 @@
 # E16 — Chat copilots
 
 > **Status**: Proposed
+> **Milestone**: [M5](../ROADMAP.md#m5--copilots--knowledge)
 > **Depends on**: [E09](E09-approvals.md)
 
 ## Goal

@@ -1,6 +1,7 @@
 # E12 — Sandbox runner
 
 > **Status**: Proposed
+> **Milestone**: [M4](../ROADMAP.md#m4--sandbox-skills--schedules)
 > **Depends on**: [E01](E01-project-foundation.md)
 
 ## Goal

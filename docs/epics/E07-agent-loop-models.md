@@ -1,6 +1,7 @@
 # E07 — Agent loop & models
 
 > **Status**: Proposed
+> **Milestone**: [M2](../ROADMAP.md#m2--first-governed-run)
 > **Depends on**: [E06](E06-run-engine.md)
 
 ## Goal

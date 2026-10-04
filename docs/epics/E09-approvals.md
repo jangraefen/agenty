@@ -1,6 +1,7 @@
 # E09 — Approvals
 
 > **Status**: Proposed
+> **Milestone**: [M3](../ROADMAP.md#m3--connected-agents)
 > **Depends on**: [E08](E08-toolgateway-policy.md)
 
 ## Goal

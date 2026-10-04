@@ -1,6 +1,7 @@
 # E15 — Knowledge
 
 > **Status**: Proposed
+> **Milestone**: [M5](../ROADMAP.md#m5--copilots--knowledge)
 > **Depends on**: [E10](E10-connections-credentials.md), [E11](E11-catalog-remote-mcp.md), [E12](E12-sandbox-runner.md)
 
 ## Goal

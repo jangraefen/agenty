@@ -1,0 +1,67 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
+	"root": true,
+	"files": {
+		"includes": [
+			"frontend/**/*.*",
+			"frontend-old/**/*.*",
+			"frontend-e2e/**/*.*",
+			"!**/dev-dist/**/*.*",
+			"!**/dist/**/*.*"
+		]
+	},
+	"assist": {
+		"actions": {
+			"source": {
+				"organizeImports": "on"
+			}
+		}
+	},
+	"html": {
+		"experimentalFullSupportEnabled": true
+	},
+	"formatter": {
+		"enabled": true,
+		"formatWithErrors": true,
+		"lineWidth": 120,
+		"useEditorconfig": true
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"preset": "recommended",
+			"suspicious": {
+				"useAwait": "warn"
+			},
+			"style": {
+				"noNonNullAssertion": "warn",
+				"useExportType": "error",
+				"useImportType": "error",
+				"noParameterAssign": "error",
+				"useAsConstAssertion": "error",
+				"useDefaultParameterLast": "error",
+				"useEnumInitializers": "error",
+				"useSelfClosingElements": "error",
+				"useSingleVarDeclarator": "error",
+				"noUnusedTemplateLiteral": "error",
+				"useNumberNamespace": "error",
+				"noInferrableTypes": "error",
+				"noUselessElse": "error"
+			},
+			"complexity": {
+				"noUselessTernary": "warn"
+			}
+		}
+	},
+	"css": {
+		"parser": {
+			"tailwindDirectives": true
+		}
+	},
+	"javascript": {
+		"formatter": {
+			"semicolons": "asNeeded",
+			"trailingCommas": "es5"
+		}
+	}
+}

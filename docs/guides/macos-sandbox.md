@@ -12,11 +12,11 @@ The dedicated profile is called `agenty-runsc` throughout. Its Docker socket is 
 
 ## 1. Create the dedicated Colima profile
 
-`colima start` creates a Docker context for the profile **and switches the active Docker context to it**. To keep your current context (for example the `default` Colima profile) active, run it with a throwaway Docker config directory:
+`colima start` creates a Docker context for the profile **and switches the active Docker context to it**. To keep your current context (for example the `default` Colima profile) active, give it a separate Docker config directory, `~/.config/agenty-runsc/docker`. The directory is persistent, so every later `colima start` for this profile (step 3) uses the same one; the commands create it if it is missing:
 
 ```sh
-mkdir -p /tmp/agenty-runsc-dockercfg
-DOCKER_CONFIG=/tmp/agenty-runsc-dockercfg \
+mkdir -p ~/.config/agenty-runsc/docker
+DOCKER_CONFIG=$HOME/.config/agenty-runsc/docker \
   colima start --profile agenty-runsc --cpu 2 --memory 2 --disk 20 --vm-type vz --runtime docker
 docker context show   # still your previous context
 ```
@@ -57,7 +57,8 @@ Then restart the profile so Docker picks it up:
 
 ```sh
 colima stop --profile agenty-runsc
-DOCKER_CONFIG=/tmp/agenty-runsc-dockercfg colima start --profile agenty-runsc
+mkdir -p ~/.config/agenty-runsc/docker
+DOCKER_CONFIG=$HOME/.config/agenty-runsc/docker colima start --profile agenty-runsc
 colima ssh --profile agenty-runsc -- cat /etc/docker/daemon.json   # contains "runsc"
 ```
 
@@ -81,7 +82,7 @@ Expected:
 
 ## 5. Running the sandbox tests
 
-Point Docker at the profile when running the Task test targets, for example `DOCKER_HOST=unix://$HOME/.colima/agenty-runsc/docker.sock task test:module`. Without a `runsc` runtime, sandbox tests fall back to `insecure_dev_mode` and report that clearly (§15.4).
+> **Planned.** There are no sandbox tests yet; they arrive with the sandbox runner ([E12](../epics/E12-sandbox-runner.md)). Until then, steps 1–4 only prepare and verify the VM. How the sandbox tests select this profile, and how they behave without a `runsc` runtime, will be documented here when E12 lands; the intended behavior is described in [ARCHITECTURE.md §15.4](../ARCHITECTURE.md#154-local-and-ci-execution).
 
 ## Stopping and removing
 
@@ -96,7 +97,7 @@ Neither command touches other Colima profiles or Docker contexts.
 
 | Item | Value |
 |---|---|
-| Date | 2026-10-05 (2026-10-04T22:32:37Z) |
+| Date | 2026-10-05 (first run 2026-10-04T22:32:37Z; step 2 re-run 2026-10-04T22:45Z) |
 | macOS | 26.5.1 (build 25F80), arm64 |
 | Colima | 0.10.3 (`vz`, aarch64) |
 | Lima (`limactl`) | 2.2.0 |
@@ -104,7 +105,7 @@ Neither command touches other Colima profiles or Docker contexts.
 | Docker | client 29.8.2, server 29.5.2 (inside the VM) |
 | gVisor `runsc` | release-20260928.0 (OCI spec 1.2.1), platform `systrap` |
 
-Steps 1–4 were followed on a fresh `agenty-runsc` profile, including a profile restart after step 3. Step 2 was run as individual `colima ssh --profile agenty-runsc -- <command>` calls instead of an interactive shell: the key was downloaded to a file before `gpg --dearmor`, and the apt source file was copied in with `limactl copy`. The result is the same as the pipes shown above. Observed output:
+Steps 1–4 were followed on a fresh `agenty-runsc` profile, including a profile restart after step 3. Step 2 was then re-run exactly as written: `runsc`, the gVisor key, and the apt source were first removed from the VM, and the command block (without the final `exit`) was piped to `colima ssh --profile agenty-runsc -- bash -s` instead of being typed into an interactive shell. It installed `runsc` release-20260928.0 from the freshly configured, signed repository. For the re-run, the existing profile was started and then restarted (step 3) with the `~/.config/agenty-runsc/docker` config directory shown above (the first run used a temporary directory under `/tmp`), and step 4 was repeated after the restart with the output below. Observed output:
 
 ```text
 $ docker -H "$SOCK" run --rm --runtime=runsc hello-world

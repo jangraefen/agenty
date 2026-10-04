@@ -92,7 +92,7 @@ These must hold for every change. Each has a dedicated test suite (§15.3).
 agenty/
 ├── AGENTS.md        # Guidance for AI coding agents
 ├── .editorconfig, .golangci.yaml, biome.json   # Editor, Go lint, TS lint/format
-├── docs/            # VISION.md, CAPABILITIES.md, ARCHITECTURE.md, epics/
+├── docs/            # VISION.md, CAPABILITIES.md, ARCHITECTURE.md, ROADMAP.md, epics/, guides/, spikes/ (planned)
 ├── go.work          # Go workspace across the Go modules
 ├── api/             # Contracts: OpenAPI 3.1 (public API), protobuf/Connect (sandbox protocol),
 │                    # generated Go and TypeScript code

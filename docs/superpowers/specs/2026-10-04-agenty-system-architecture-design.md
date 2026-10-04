@@ -130,7 +130,7 @@ All implemented in `runs` without a queue dependency:
 - **Leases**: a claimed run holds a lease renewed by heartbeat. Expired leases make the run claimable again; the new worker resumes from the step log.
 - **Retries**: transient failures (model provider errors, network) retry with exponential backoff and jitter, within per-run limits.
 - **Pauses**: `waiting_approval` and `waiting_input` hold no worker. A decision or a user message commits the state change and marks the run runnable in the same transaction.
-- **Scheduling**: the `scheduler` role holds a Postgres advisory lock (leader election), evaluates due schedules (cron expressions parsed by a small library), and creates runs transactionally. Schedule identity checks (owner still active, access to the harness, valid credentials) happen at fire time (§7.3, §7.4).
+- **Scheduling**: the `scheduler` role holds a Postgres advisory lock (leader election), evaluates due schedules (cron expressions parsed with `gronx`), and creates runs transactionally. Schedule identity checks (owner still active, access to the harness, valid credentials) happen at fire time (§7.3, §7.4).
 - **Creation**: the API creates the run record and marks it runnable in one transaction; a run cannot be lost between steps.
 
 ### 5.4 Crash semantics for tool calls
@@ -351,7 +351,7 @@ No CI for now; everything runs locally.
 
 ## 14. Technology Summary
 
-All licenses must be verified against the dependency rule when each dependency is added.
+Licenses verified on 2026-10-04 against each project's repository (see §14.1). Any dependency added later must be checked against the dependency rule before use.
 
 | Purpose | Choice |
 |---|---|
@@ -368,7 +368,38 @@ All licenses must be verified against the dependency rule when each dependency i
 | Logging | `log/slog` + `charmbracelet/log` |
 | Telemetry | OpenTelemetry Go SDK |
 | Testing | Go `testing`, testcontainers-go, Vitest, Testing Library, Playwright, axe-core, Gremlins, Stryker, Dex (test IdP) |
-| Tooling | Task, Lefthook, golangci-lint, Colima/Lima (macOS) |
+| Tooling | Task, Lefthook, golangci-lint, go-licenses, Colima/Lima (macOS) |
+
+### 14.1 License verification
+
+**Shipped with Agenty (runtime)** — all permissive, compatible with self-hosting and a hosted offering:
+
+| Project | License |
+|---|---|
+| PostgreSQL, pgvector | PostgreSQL License |
+| pgx, sqlc, goose | MIT |
+| Open Policy Agent, gVisor, connect-go, oapi-codegen | Apache-2.0 |
+| MCP Go SDK | Apache-2.0 for new contributions, MIT for not-yet-relicensed parts (both permissive) |
+| openai-go, go-genai, aws-sdk-go-v2 | Apache-2.0 |
+| anthropic-sdk-go | MIT |
+| go-oidc, opentelemetry-go | Apache-2.0 |
+| crewjam/saml | BSD-2-Clause |
+| charmbracelet/log | MIT |
+| gronx (cron expression parsing) | MIT |
+| openapi-typescript / openapi-fetch, React, Vite, TanStack Router and Query, shadcn/ui, Radix, Tailwind | MIT |
+
+**Development and test only** — never distributed with Agenty, so copyleft terms do not affect it:
+
+| Project | License |
+|---|---|
+| testcontainers-go, Vitest, Testing Library, Task, Lefthook, Colima | MIT |
+| Playwright, Gremlins, Stryker, Dex, Lima | Apache-2.0 |
+| axe-core | MPL-2.0 |
+| golangci-lint | GPL-3.0 (used as a standalone tool, not linked) |
+
+**Notes**
+- `robfig/cron` was considered for cron parsing but has had no activity since mid-2024; `gronx` (actively maintained, MIT) is used instead.
+- Repository licenses do not cover transitive dependencies. `task check:licenses` runs `go-licenses` (Apache-2.0) over all Go modules and fails on licenses outside an allowlist; an equivalent npm license check is added when `web/` is scaffolded (tool to be verified then).
 
 ## 15. Deliberately Deferred
 

@@ -24,10 +24,11 @@ These documents are the source of truth for product, scope, and architecture. Do
 - **Dependencies**: check every new dependency against the dependency rule and record it in ARCHITECTURE.md §16 before use.
 - **No logic in the database**: no triggers or stored procedures.
 - **Logging**: use the `log/slog` API (handler: `charmbracelet/log`).
+- **Package manager**: the repository uses pnpm, never npm, for `web/` and any Node tooling (`pnpm install`, `pnpm run`, `pnpm exec`; no `npm` or `npx`).
 
 ## Commands
 
-All entry points live in `Taskfile.yml`; run `task --list` to see them. Prerequisites are Go, [Task](https://taskfile.dev) (not Taskwarrior: on macOS `brew install go-task`), Lefthook, golangci-lint, and Biome; `task setup` verifies their versions and installs the git hooks. Targets: `test:unit`, `test:module`, `test:integration`, `test:e2e`, `test:ui`, `test:mutation`, `test:gates`, `test:milestone:Mx`, `test:nightly` (not gating), `check:licenses`, and `check`. CI (GitHub Actions) runs the same targets on every pull request; run `task check` locally before opening one.
+All entry points live in `Taskfile.yml`; run `task --list` to see them. Prerequisites are Go, [Task](https://taskfile.dev) (not Taskwarrior: on macOS `brew install go-task`), Lefthook, golangci-lint, Node.js, and pnpm (web tools come from `web/pnpm-lock.yaml`); `task setup` verifies their versions and installs the git hooks. Targets: `test:unit`, `test:module`, `test:integration`, `test:e2e`, `test:ui`, `test:mutation`, `test:gates`, `test:milestone:Mx`, `test:nightly` (not gating), `check:licenses`, and `check`. CI (GitHub Actions) runs the same targets on every pull request; run `task check` locally before opening one.
 
 ## Planning and tracking
 

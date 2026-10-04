@@ -3,7 +3,8 @@
 	"root": true,
 	"files": {
 		"includes": [
-			"web/**",
+			"web/**/*.*",
+			"!**/node_modules/**/*.*",
 			"!**/dev-dist/**/*.*",
 			"!**/dist/**/*.*"
 		]

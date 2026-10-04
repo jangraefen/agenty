@@ -7,10 +7,12 @@ vars:
   GO_PACKAGES: ./server/... ./sandbox/...
   # Exact: lint results depend on the version.
   GOLANGCI_LINT_VERSION: 2.14.0
-  BIOME_VERSION: 2.5.15 # keep in sync with the $schema version in biome.json
   # Minimum versions.
   TASK_MIN_VERSION: 3.54.0
   LEFTHOOK_MIN_VERSION: 2.1.16
+  DOCKER_MIN_VERSION: 25.0.0
+  NODE_MIN_VERSION: 24.15.0 # matches web/package.json engines
+  PNPM_MIN_VERSION: 12.8.1 # matches web/package.json packageManager
   VERSION:
     sh: git describe --tags --always --dirty 2>/dev/null || echo dev
 
@@ -46,17 +48,24 @@ tasks:
         have=$(lefthook version 2>/dev/null)
         [ -n "$have" ] && at_least "$have" {{.LEFTHOOK_MIN_VERSION}}; report lefthook "$have" $? ">= {{.LEFTHOOK_MIN_VERSION}}" "brew install lefthook, or https://lefthook.dev/installation"
 
+        have=$(docker version --format '{{"{{"}}.Client.Version{{"}}"}}' 2>/dev/null)
+        [ -n "$have" ] && at_least "$have" {{.DOCKER_MIN_VERSION}}; report docker "$have" $? ">= {{.DOCKER_MIN_VERSION}}" "brew install colima docker && colima start, or https://docs.docker.com/engine/install/"
+
         have=$(golangci-lint version --short 2>/dev/null)
         [ "$have" = {{.GOLANGCI_LINT_VERSION}} ]; report golangci-lint "$have" $? "exactly {{.GOLANGCI_LINT_VERSION}}" "https://golangci-lint.run/docs/welcome/install/"
 
-        have=$(biome --version 2>/dev/null | sed 's/^Version: //')
-        [ "$have" = {{.BIOME_VERSION}} ]; report biome "$have" $? "exactly {{.BIOME_VERSION}}" "brew install biome, or https://biomejs.dev/guides/manual-installation/"
+        have=$(node --version 2>/dev/null | sed 's/^v//')
+        [ -n "$have" ] && at_least "$have" {{.NODE_MIN_VERSION}}; report node "$have" $? ">= {{.NODE_MIN_VERSION}}" "brew install node, or https://nodejs.org/en/download"
+
+        have=$(pnpm --version 2>/dev/null)
+        [ -n "$have" ] && at_least "$have" {{.PNPM_MIN_VERSION}}; report pnpm "$have" $? ">= {{.PNPM_MIN_VERSION}}" "brew install pnpm"
 
         exit $failed
 
   build:
-    desc: Build the agenty and agenty-sandbox binaries into ./dist
+    desc: Build the web UI and the agenty and agenty-sandbox binaries into ./dist
     cmds:
+      - task: build:web
       - go build -ldflags "-X github.com/jangraefen/agenty/server/internal/buildinfo.Version={{.VERSION}}" -o dist/agenty ./server/cmd/agenty
       - go build -ldflags "-X github.com/jangraefen/agenty/sandbox/internal/buildinfo.Version={{.VERSION}}" -o dist/agenty-sandbox ./sandbox/cmd/agenty-sandbox
 
@@ -65,13 +74,37 @@ tasks:
     cmds:
       - for: { var: GO_MODULES }
         cmd: cd {{.ITEM}} && golangci-lint run ./...
-      # Succeeds while web/ has nothing to check yet.
-      - biome check --no-errors-on-unmatched web
+      - task: lint:web
+
+  # Web (web/): packages pinned by pnpm-lock.yaml and installed with pnpm (never npm); tools run from node_modules.
+  web:deps:
+    internal: true
+    dir: web
+    sources: [package.json, pnpm-lock.yaml, pnpm-workspace.yaml]
+    generates: [node_modules/.modules.yaml]
+    cmds:
+      - pnpm install --frozen-lockfile
+
+  lint:web:
+    desc: Lint and format-check (Biome) and type-check (tsc) the web UI
+    deps: [web:deps]
+    dir: web
+    cmds:
+      - pnpm run --silent lint
+      - pnpm run --silent typecheck
+
+  build:web:
+    desc: Build the web UI into web/dist with Vite
+    deps: [web:deps]
+    dir: web
+    cmds:
+      - pnpm run --silent build
 
   check:
     desc: Run all gating targets in order; stops at the first failure
     cmds:
       - task: lint
+      - task: build:web
       - task: check:licenses
       - task: test:gates
       - task: test:unit
@@ -85,12 +118,27 @@ tasks:
   check:licenses:
     desc: Check dependency licenses against the allowlist (ARCHITECTURE §16)
     cmds:
-      - echo "check:licenses - no checks yet"
+      - task: check:licenses:web
+
+  check:licenses:web:
+    desc: Check web dependency licenses (shipped and all) against the allowlists in web/scripts/check-licenses.mjs
+    deps: [web:deps]
+    dir: web
+    cmds:
+      - pnpm run --silent licenses
 
   test:unit:
     desc: Run unit tests
     cmds:
       - go test -count=1 {{.GO_PACKAGES}}
+      - task: test:unit:web
+
+  test:unit:web:
+    desc: Run the web UI unit and component tests (Vitest)
+    deps: [web:deps]
+    dir: web
+    cmds:
+      - pnpm run --silent test
 
   test:module:
     desc: Run module tests (build tag "module")
@@ -152,6 +200,12 @@ tasks:
     cmds:
       - |
         if grep -rqE --include='*_test.go' '{{.PATTERN}}' {{.GO_MODULES}}; then
+          # testcontainers-go ignores Docker contexts; on macOS (Colima, Lima, Docker Desktop) point it at the
+          # active context's socket and tell it the socket path inside the VM.
+          if [ "$(uname)" = Darwin ]; then
+            export DOCKER_HOST="${DOCKER_HOST:-$(docker context inspect --format '{{"{{"}}.Endpoints.docker.Host{{"}}"}}' 2>/dev/null)}"
+            export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE="${TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE:-/var/run/docker.sock}"
+          fi
           go test -count=1 -tags {{.TIER}} {{if .RUN}}-run '^{{.RUN}}$'{{end}} {{.GO_PACKAGES}}
         else
           echo "{{if .RUN}}test:milestone:{{.MILESTONE}}{{else}}test:{{.TIER}}{{end}} - no tests yet"

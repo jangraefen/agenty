@@ -21,7 +21,7 @@ The shared runtime of the `agenty` server that every domain package builds on.
 - `Blob` interface with local-volume and S3-compatible implementations.
 - Minimal append-only audit writer (table and `audit` interface) so later epics can emit events; hardening follows in E18.
 - OpenAPI 3.1 skeleton in `api/` with `oapi-codegen` (Go) and `openapi-typescript`/`openapi-fetch` (TypeScript) generation tasks.
-- HTTP server skeleton: health and readiness endpoints, RFC 9457 errors, request logging, graceful shutdown.
+- HTTP server skeleton on Gin: health and readiness endpoints, RFC 9457 errors, request logging, graceful shutdown.
 
 ## Out of scope
 

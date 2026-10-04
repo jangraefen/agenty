@@ -3,7 +3,9 @@ linters:
   default: none
   enable:
     - bodyclose
+    - depguard
     - dupl
+    - errcheck
     - funlen
     - gocognit
     - goconst
@@ -12,13 +14,40 @@ linters:
     - godot
     - goprintffuncname
     - gosec
+    - govet
+    - ineffassign
     - modernize
     - prealloc
     - revive
     - staticcheck
     - unconvert
+    - unused
     - whitespace
   settings:
+    # Architecture boundaries (ARCHITECTURE §3, §4, §15.3). Package paths follow §5.1:
+    # server packages at server/internal/<package>, executors at server/internal/executor/<kind>.
+    depguard:
+      rules:
+        executors:
+          files:
+            - $all
+            - "!**/server/internal/toolgateway/**"
+            - "!**/server/internal/executor/**"
+          deny:
+            - pkg: github.com/jangraefen/agenty/server/internal/executor
+              desc: "executors are imported only by toolgateway, the single side-effect path (ARCHITECTURE §3 invariant 1)"
+        server-module:
+          files:
+            - "**/server/**"
+          deny:
+            - pkg: github.com/jangraefen/agenty/sandbox
+              desc: "server and sandbox share only generated contracts from api/ (ARCHITECTURE §4)"
+        sandbox-module:
+          files:
+            - "**/sandbox/**"
+          deny:
+            - pkg: github.com/jangraefen/agenty/server
+              desc: "server and sandbox share only generated contracts from api/ (ARCHITECTURE §4)"
     govet:
       disable:
         - fieldalignment

@@ -7,6 +7,7 @@ vars:
   GO_PACKAGES: ./server/... ./sandbox/...
   # Exact: lint results depend on the version.
   GOLANGCI_LINT_VERSION: 2.14.0
+  BIOME_VERSION: 2.5.15 # keep in sync with the $schema version in biome.json
   # Minimum versions.
   TASK_MIN_VERSION: 3.54.0
   LEFTHOOK_MIN_VERSION: 2.1.16
@@ -48,6 +49,9 @@ tasks:
         have=$(golangci-lint version --short 2>/dev/null)
         [ "$have" = {{.GOLANGCI_LINT_VERSION}} ]; report golangci-lint "$have" $? "exactly {{.GOLANGCI_LINT_VERSION}}" "https://golangci-lint.run/docs/welcome/install/"
 
+        have=$(biome --version 2>/dev/null | sed 's/^Version: //')
+        [ "$have" = {{.BIOME_VERSION}} ]; report biome "$have" $? "exactly {{.BIOME_VERSION}}" "brew install biome, or https://biomejs.dev/guides/manual-installation/"
+
         exit $failed
 
   build:
@@ -57,10 +61,12 @@ tasks:
       - go build -ldflags "-X github.com/jangraefen/agenty/sandbox/internal/buildinfo.Version={{.VERSION}}" -o dist/agenty-sandbox ./sandbox/cmd/agenty-sandbox
 
   lint:
-    desc: Lint all Go modules, including architecture rules
+    desc: Lint all Go modules, including architecture rules (depguard), and web/ with Biome
     cmds:
       - for: { var: GO_MODULES }
         cmd: cd {{.ITEM}} && golangci-lint run ./...
+      # Succeeds while web/ has nothing to check yet.
+      - biome check --no-errors-on-unmatched web
 
   check:
     desc: Run all gating targets in order; stops at the first failure

@@ -457,6 +457,7 @@ A **scripted model** returns predefined responses (including tool calls) step by
 - **Task** targets: `test:unit`, `test:module`, `test:integration`, `test:e2e`, `test:ui`, `test:mutation`, `test:gates`, `test:milestone:Mx` (automated milestone demos), `test:nightly` (real model, not gating), `check:licenses`, and `check` (all gating tiers plus gates). `task check` must pass before merging to `main`. Tiers without tests report "no tests yet" and succeed.
 - **Go test tiers** are selected by build tag: untagged tests are unit tests; `module`, `integration`, `e2e`, and `milestone` tag the other tiers. A milestone demo is the test `TestMilestone<Mx>`.
 - **Tools** (Go, Task, Lefthook, golangci-lint) are installed by the developer on the `PATH`. `task setup` verifies their versions (golangci-lint exactly, because lint results depend on it; the others as minimums) and installs the Lefthook hooks.
+- **Web tools**: Node.js (with npm) is a `PATH` tool verified by `task setup` (minimum, matching `engines` in `web/package.json`). Biome, TypeScript, Vite, Vitest, and the npm license checker are npm dev dependencies pinned by `web/package-lock.json`; the Task targets install them with `npm ci` when the lockfile changes. `task lint` runs Biome and the type check (`tsc --noEmit`), `task build:web` builds `web/dist` with Vite (also part of `task check`), and `task test:unit` runs Vitest.
 - **Lefthook**: pre-commit → lint, architecture rules, unit tests; pre-push → module tests.
 - **macOS**: gVisor requires Linux; `runsc`-based sandbox tests run in a Colima or Lima VM. Without it, sandbox tests fall back to `insecure_dev_mode` and report that clearly.
 
@@ -497,10 +498,14 @@ Verified 2026-10-04 against each project's repository. **Before adding any depen
 | Playwright, Gremlins, Stryker, Dex, Lima, go-licenses, Biome | Apache-2.0 |
 | axe-core | MPL-2.0 |
 | golangci-lint | GPL-3.0 (standalone tool, not linked) |
+| Node.js, @vitejs/plugin-react, jsdom, @types/react, @types/react-dom | MIT |
+| npm (bundled with Node.js) | Artistic-2.0 (standalone tool) |
+| TypeScript | Apache-2.0 |
+| license-checker-rseidelsohn (npm license checker, verified 2026-10-05) | BSD-3-Clause |
 
 **Services used for development** (not dependencies of Agenty): GitHub Actions, CodeQL, Dependabot, GitHub Container Registry.
 
-**Transitive dependencies**: `task check:licenses` runs `go-licenses` over all Go modules and fails outside an allowlist; an npm equivalent is chosen and verified when `web/` is scaffolded.
+**Transitive dependencies**: `task check:licenses` runs `go-licenses` over all Go modules and fails outside an allowlist. For `web/` it runs `license-checker-rseidelsohn` (`task check:licenses:web`, allowlists in `web/package.json`) twice: production dependencies, which are shipped in the built assets, must be permissive (MIT, ISC, Apache-2.0, BSD-2-Clause, BSD-3-Clause, 0BSD); all dependencies, including build and test tools, may additionally be MIT-0, BlueOak-1.0.0, CC0-1.0, CC-BY-3.0/4.0 (data packages), or MPL-2.0 (e.g., lightningcss inside Vite).
 
 ---
 

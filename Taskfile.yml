@@ -10,6 +10,7 @@ vars:
   # Minimum versions.
   TASK_MIN_VERSION: 3.54.0
   LEFTHOOK_MIN_VERSION: 2.1.16
+  NODE_MIN_VERSION: 24.15.0 # matches web/package.json engines
   VERSION:
     sh: git describe --tags --always --dirty 2>/dev/null || echo dev
 
@@ -48,11 +49,15 @@ tasks:
         have=$(golangci-lint version --short 2>/dev/null)
         [ "$have" = {{.GOLANGCI_LINT_VERSION}} ]; report golangci-lint "$have" $? "exactly {{.GOLANGCI_LINT_VERSION}}" "https://golangci-lint.run/docs/welcome/install/"
 
+        have=$(node --version 2>/dev/null | sed 's/^v//')
+        [ -n "$have" ] && at_least "$have" {{.NODE_MIN_VERSION}} && npm --version >/dev/null 2>&1; report node "$have" $? ">= {{.NODE_MIN_VERSION}} with npm" "brew install node, or https://nodejs.org/en/download"
+
         exit $failed
 
   build:
-    desc: Build the agenty and agenty-sandbox binaries into ./dist
+    desc: Build the web UI and the agenty and agenty-sandbox binaries into ./dist
     cmds:
+      - task: build:web
       - go build -ldflags "-X github.com/jangraefen/agenty/server/internal/buildinfo.Version={{.VERSION}}" -o dist/agenty ./server/cmd/agenty
       - go build -ldflags "-X github.com/jangraefen/agenty/sandbox/internal/buildinfo.Version={{.VERSION}}" -o dist/agenty-sandbox ./sandbox/cmd/agenty-sandbox
 
@@ -61,11 +66,37 @@ tasks:
     cmds:
       - for: { var: GO_MODULES }
         cmd: cd {{.ITEM}} && golangci-lint run ./...
+      - task: lint:web
+
+  # Web (web/): npm packages pinned by package-lock.json; tools run from node_modules.
+  web:deps:
+    internal: true
+    dir: web
+    sources: [package.json, package-lock.json]
+    generates: [node_modules/.package-lock.json]
+    cmds:
+      - npm ci --no-audit --no-fund
+
+  lint:web:
+    desc: Lint and format-check (Biome) and type-check (tsc) the web UI
+    deps: [web:deps]
+    dir: web
+    cmds:
+      - npm run --silent lint
+      - npm run --silent typecheck
+
+  build:web:
+    desc: Build the web UI into web/dist with Vite
+    deps: [web:deps]
+    dir: web
+    cmds:
+      - npm run --silent build
 
   check:
     desc: Run all gating targets in order; stops at the first failure
     cmds:
       - task: lint
+      - task: build:web
       - task: check:licenses
       - task: test:gates
       - task: test:unit
@@ -79,12 +110,27 @@ tasks:
   check:licenses:
     desc: Check dependency licenses against the allowlist (ARCHITECTURE §16)
     cmds:
-      - echo "check:licenses - no checks yet"
+      - task: check:licenses:web
+
+  check:licenses:web:
+    desc: Check npm dependency licenses (shipped and all) against the allowlists in web/package.json
+    deps: [web:deps]
+    dir: web
+    cmds:
+      - npm run --silent licenses
 
   test:unit:
     desc: Run unit tests
     cmds:
       - go test -count=1 {{.GO_PACKAGES}}
+      - task: test:unit:web
+
+  test:unit:web:
+    desc: Run the web UI unit and component tests (Vitest)
+    deps: [web:deps]
+    dir: web
+    cmds:
+      - npm run --silent test
 
   test:module:
     desc: Run module tests (build tag "module")

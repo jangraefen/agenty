@@ -62,6 +62,7 @@ Each decision lists what was chosen, why, and what was rejected. All decided 202
 | D24 | **Gin** as the HTTP framework for the public API (decided 2026-10-05). | Maintainer preference; mature and widely used; `oapi-codegen` generates Gin server code; supports streaming for server-sent events. | Standard library `net/http` routing; Echo; Chi. |
 | D22 | **Biome** for TypeScript linting and formatting (decided 2026-10-05). | One fast tool for lint and format; configuration already in the repository. | ESLint + Prettier. |
 | D25 | **pnpm, never npm,** as the package manager for `web/` and any Node tooling (decided 2026-10-05). | Maintainer decision; strict `node_modules` layout, content-addressable store, dependency build scripts blocked by default. | npm. |
+| D26 | **testify** for Go test assertions: `assert`, `require`, `mock`, and `suite` (decided 2026-10-05). | Readable assertions and informative failure diffs for AI-written tests; `require` for preconditions where a test cannot continue, `assert` for independent checks. | Standard library `testing` only (hand-written `if … { t.Fatalf }` checks). |
 
 ---
 
@@ -432,8 +433,8 @@ Most code is AI-written; tests are the primary correctness guarantee. Developmen
 
 | Tier | Scope | Tools |
 |---|---|---|
-| Unit | Functions and types | Go `testing`; Vitest |
-| Module | One package/component in isolation with fakes at boundaries; `server` against real Postgres with fake sandbox and fake model; `agenty-sandbox` via its protocol against real Docker + `runsc` | testcontainers-go |
+| Unit | Functions and types | Go `testing` with testify; Vitest |
+| Module | One package/component in isolation with hand-written fakes or `testify/mock` at boundaries; `server` against real Postgres with fake sandbox and fake model; `agenty-sandbox` via its protocol against real Docker + `runsc` | testcontainers-go, testify |
 | Integration | All components in Docker Compose: server, sandbox, Postgres, fake OpenAI-compatible model server, mock MCP servers (remote and local), Dex as test IdP | Go test harness |
 | E2E | Both reference scenarios (VISION §9) end to end via the public API | Same stack, scripted model |
 | UI | Components (Vitest + Testing Library); browser flows against the integration stack (build harness, chat, approve, inspect trace); accessibility | Playwright, axe-core |
@@ -501,6 +502,10 @@ Verified 2026-10-04 against each project's repository. **Before adding any depen
 | Project | License |
 |---|---|
 | testcontainers-go (incl. its `postgres` module), Vitest, Testing Library, Task, Lefthook, Colima, actionlint | MIT |
+| testify (`assert`, `require`, `mock`, `suite`; checked 2026-10-05), stretchr/objx (dependency of `testify/mock`) | MIT |
+| go-spew, vendored in testify's `internal/` (testify v1.12 no longer depends on the module) | ISC |
+| go-difflib, vendored in testify's `internal/` (likewise) | BSD-3-Clause |
+| go.yaml.in/yaml/v3 (testify dependency; files ported from libyaml MIT, the rest Apache-2.0) | MIT and Apache-2.0 |
 | Playwright, Gremlins, Stryker, Dex, Lima, go-licenses, Docker Engine and CLI | Apache-2.0 |
 | `golang` Docker image (build stage only; its contents are not shipped; checked 2026-10-05) | BSD-3-Clause (Go); Debian packages under their own licenses |
 | Biome (@biomejs/biome npm package) | MIT OR Apache-2.0 |

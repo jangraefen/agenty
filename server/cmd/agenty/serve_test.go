@@ -4,16 +4,16 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func writeConfig(t *testing.T, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "agenty.yaml")
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600), "write config")
 	return path
 }
 
@@ -23,12 +23,8 @@ func TestRunRejectsUnknownRole(t *testing.T) {
 
 	code := run([]string{"--config", path, "--roles", "api,cron"}, &stdout, &stderr)
 
-	if code != 2 {
-		t.Errorf("exit code = %d, want 2", code)
-	}
-	if !strings.Contains(stderr.String(), `"cron"`) {
-		t.Errorf("stderr = %q, want it to name the unknown role", stderr.String())
-	}
+	assert.Equal(t, 2, code, "exit code")
+	assert.Contains(t, stderr.String(), `"cron"`, "stderr must name the unknown role")
 }
 
 func TestRunRequiresConfigFile(t *testing.T) {
@@ -36,12 +32,8 @@ func TestRunRequiresConfigFile(t *testing.T) {
 
 	code := run([]string{"--roles", "api"}, &stdout, &stderr)
 
-	if code != 2 {
-		t.Errorf("exit code = %d, want 2", code)
-	}
-	if !strings.Contains(stderr.String(), "--config") {
-		t.Errorf("stderr = %q, want it to mention --config", stderr.String())
-	}
+	assert.Equal(t, 2, code, "exit code")
+	assert.Contains(t, stderr.String(), "--config", "stderr must mention --config")
 }
 
 func TestRunAbortsOnInvalidConfigurationNamingTheField(t *testing.T) {
@@ -50,12 +42,8 @@ func TestRunAbortsOnInvalidConfigurationNamingTheField(t *testing.T) {
 
 	code := run([]string{"--config", path}, &stdout, &stderr)
 
-	if code != 1 {
-		t.Errorf("exit code = %d, want 1", code)
-	}
-	if !strings.Contains(stderr.String(), "server.shutdownTimeout") {
-		t.Errorf("stderr = %q, want it to name server.shutdownTimeout", stderr.String())
-	}
+	assert.Equal(t, 1, code, "exit code")
+	assert.Contains(t, stderr.String(), "server.shutdownTimeout", "stderr must name server.shutdownTimeout")
 }
 
 func TestRunAbortsOnInvalidEnvironmentOverride(t *testing.T) {
@@ -65,10 +53,6 @@ func TestRunAbortsOnInvalidEnvironmentOverride(t *testing.T) {
 
 	code := run([]string{"--config", path}, &stdout, &stderr)
 
-	if code != 1 {
-		t.Errorf("exit code = %d, want 1", code)
-	}
-	if !strings.Contains(stderr.String(), "AGENTY_SERVER_ADDRESS") {
-		t.Errorf("stderr = %q, want it to name AGENTY_SERVER_ADDRESS", stderr.String())
-	}
+	assert.Equal(t, 1, code, "exit code")
+	assert.Contains(t, stderr.String(), "AGENTY_SERVER_ADDRESS", "stderr must name AGENTY_SERVER_ADDRESS")
 }

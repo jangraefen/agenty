@@ -27,7 +27,7 @@ These documents are the source of truth for product, scope, and architecture. Do
 
 ## Commands
 
-All entry points live in `Taskfile.yml` (to be created with the first code). Planned targets: `test:unit`, `test:module`, `test:integration`, `test:e2e`, `test:ui`, `test:mutation`, `test:gates`, `test:milestone:Mx`, `test:nightly` (not gating), `check:licenses`, and `check`. CI (GitHub Actions) runs the same targets on every pull request; run `task check` locally before opening one.
+All entry points live in `Taskfile.yml`; run `task --list` to see them. Prerequisites are Go, [Task](https://taskfile.dev) (not Taskwarrior: on macOS `brew install go-task`), Lefthook, and golangci-lint; `task setup` verifies their versions and installs the git hooks. Targets: `test:unit`, `test:module`, `test:integration`, `test:e2e`, `test:ui`, `test:mutation`, `test:gates`, `test:milestone:Mx`, `test:nightly` (not gating), `check:licenses`, and `check`. CI (GitHub Actions) runs the same targets on every pull request; run `task check` locally before opening one.
 
 ## Planning and tracking
 

@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 // Local stores objects in a directory on a local volume.
@@ -111,14 +112,28 @@ func (l *Local) mkShard(dir string) error {
 }
 
 // syncDir makes a change of an entry in dir (rename, create, remove) durable.
+// Like a failed file sync, a failed directory sync fails the operation, except
+// where the platform or file system cannot sync directories at all (see
+// dirSyncError).
 func syncDir(dir string) error {
 	d, err := os.Open(dir) //nolint:gosec // dir is derived from the root and a hash, never from the key
 	if err != nil {
 		return err
 	}
-	err = d.Sync()
+	err = dirSyncError(d.Sync())
 	if closeErr := d.Close(); err == nil {
 		err = closeErr
+	}
+	return err
+}
+
+// dirSyncError filters the error of syncing a directory. Some platforms and
+// file systems do not support syncing a directory and report EINVAL or an
+// unsupported operation; the entry is then as durable as that file system
+// makes it, and there is nothing more to do. Every other error is returned.
+func dirSyncError(err error) error {
+	if errors.Is(err, syscall.EINVAL) || errors.Is(err, errors.ErrUnsupported) {
+		return nil
 	}
 	return err
 }

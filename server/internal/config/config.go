@@ -5,12 +5,14 @@ package config
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"strconv"
 	"time"
 
 	"github.com/goccy/go-yaml"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Defaults for values the configuration file may omit.
@@ -21,7 +23,8 @@ const (
 
 // Config is the validated server configuration.
 type Config struct {
-	Server Server
+	Server   Server
+	Database Database
 }
 
 // Server configures the HTTP server of the api role.
@@ -32,6 +35,32 @@ type Server struct {
 	ShutdownTimeout time.Duration
 }
 
+// envDatabaseURL overrides database.url.
+const envDatabaseURL = "AGENTY_DATABASE_URL"
+
+// Database configures the PostgreSQL connection pool.
+type Database struct {
+	// URL is a PostgreSQL connection URL or keyword/value string as accepted
+	// by pgx, including pool settings such as pool_max_conns. It may contain
+	// the password, so it is never logged.
+	URL string
+}
+
+// LogValue logs the connection target without the password, so a Database
+// can be logged safely (ARCHITECTURE §3 invariant 6).
+func (d Database) LogValue() slog.Value {
+	c, err := pgconn.ParseConfig(d.URL)
+	if err != nil {
+		return slog.StringValue("[redacted]")
+	}
+	return slog.GroupValue(
+		slog.String("host", c.Host),
+		slog.Int("port", int(c.Port)),
+		slog.String("name", c.Database),
+		slog.String("user", c.User),
+	)
+}
+
 // file mirrors the YAML layout. Values stay strings until validation so that
 // every error can name the offending field.
 type file struct {
@@ -39,6 +68,9 @@ type file struct {
 		Address         *string `yaml:"address"`
 		ShutdownTimeout *string `yaml:"shutdownTimeout"`
 	} `yaml:"server"`
+	Database struct {
+		URL *string `yaml:"url"`
+	} `yaml:"database"`
 }
 
 // value is a raw setting together with where it came from.
@@ -69,11 +101,13 @@ func Load(path string, lookupEnv func(string) (string, bool)) (Config, error) {
 
 	address := setting(f.Server.Address, DefaultAddress, "AGENTY_SERVER_ADDRESS", lookupEnv)
 	shutdownTimeout := setting(f.Server.ShutdownTimeout, DefaultShutdownTimeout.String(), "AGENTY_SERVER_SHUTDOWN_TIMEOUT", lookupEnv)
+	databaseURL := setting(f.Database.URL, "", envDatabaseURL, lookupEnv)
 
 	var cfg Config
 	errs := []error{
 		parseAddress(address, "server.address", &cfg.Server.Address),
 		parsePositiveDuration(shutdownTimeout, "server.shutdownTimeout", &cfg.Server.ShutdownTimeout),
+		parseDatabaseURL(databaseURL, "database.url", &cfg.Database.URL),
 	}
 	if err := errors.Join(errs...); err != nil {
 		return Config{}, fmt.Errorf("invalid configuration: %w", err)
@@ -99,6 +133,20 @@ func parseAddress(v value, field string, dst *string) error {
 	}
 	if n, err := strconv.ParseUint(port, 10, 16); err != nil || n > 65535 {
 		return fmt.Errorf("%s: %q has an invalid port", v.source(field), v.raw)
+	}
+	*dst = v.raw
+	return nil
+}
+
+// parseDatabaseURL requires a PostgreSQL connection string that pgx accepts.
+// The error never repeats the value or pgx's parse error, which could contain
+// the password (ARCHITECTURE §3 invariant 6).
+func parseDatabaseURL(v value, field string, dst *string) error {
+	if v.raw == "" {
+		return fmt.Errorf("%s: required; set it in the file or in %s", v.source(field), envDatabaseURL)
+	}
+	if _, err := pgconn.ParseConfig(v.raw); err != nil {
+		return fmt.Errorf("%s: not a valid PostgreSQL connection URL or keyword/value string", v.source(field))
 	}
 	*dst = v.raw
 	return nil

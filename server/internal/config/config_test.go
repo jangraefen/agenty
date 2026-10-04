@@ -1,6 +1,8 @@
 package config_test
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,6 +13,9 @@ import (
 
 	"github.com/jangraefen/agenty/server/internal/config"
 )
+
+// dbSection is a valid database section; the database URL is required.
+const dbSection = "database:\n  url: postgres://agenty:agenty@localhost:5432/agenty?sslmode=disable\n" //nolint:gosec // Test credential.
 
 func writeFile(t *testing.T, content string) string {
 	t.Helper()
@@ -27,17 +32,18 @@ func env(vars map[string]string) func(string) (string, bool) {
 }
 
 func TestLoadReadsFile(t *testing.T) {
-	path := writeFile(t, "server:\n  address: 127.0.0.1:9000\n  shutdownTimeout: 5s\n")
+	path := writeFile(t, "server:\n  address: 127.0.0.1:9000\n  shutdownTimeout: 5s\n"+dbSection)
 
 	cfg, err := config.Load(path, env(nil))
 
 	require.NoError(t, err, "Load")
 	assert.Equal(t, "127.0.0.1:9000", cfg.Server.Address, "Server.Address")
 	assert.Equal(t, 5*time.Second, cfg.Server.ShutdownTimeout, "Server.ShutdownTimeout")
+	assert.Equal(t, "postgres://agenty:agenty@localhost:5432/agenty?sslmode=disable", cfg.Database.URL, "Database.URL")
 }
 
 func TestLoadAppliesDefaults(t *testing.T) {
-	path := writeFile(t, "")
+	path := writeFile(t, dbSection)
 
 	cfg, err := config.Load(path, env(nil))
 
@@ -47,16 +53,18 @@ func TestLoadAppliesDefaults(t *testing.T) {
 }
 
 func TestLoadEnvironmentOverridesFile(t *testing.T) {
-	path := writeFile(t, "server:\n  address: 127.0.0.1:9000\n  shutdownTimeout: 5s\n")
+	path := writeFile(t, "server:\n  address: 127.0.0.1:9000\n  shutdownTimeout: 5s\n"+dbSection)
 
 	cfg, err := config.Load(path, env(map[string]string{
 		"AGENTY_SERVER_ADDRESS":          "0.0.0.0:9100",
 		"AGENTY_SERVER_SHUTDOWN_TIMEOUT": "1m",
+		"AGENTY_DATABASE_URL":            "host=db user=agenty dbname=agenty",
 	}))
 
 	require.NoError(t, err, "Load")
 	assert.Equal(t, "0.0.0.0:9100", cfg.Server.Address, "Server.Address")
 	assert.Equal(t, time.Minute, cfg.Server.ShutdownTimeout, "Server.ShutdownTimeout")
+	assert.Equal(t, "host=db user=agenty dbname=agenty", cfg.Database.URL, "Database.URL")
 }
 
 func TestLoadRejectsInvalidConfiguration(t *testing.T) {
@@ -65,10 +73,11 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
 		file      string
 		env       map[string]string
 		wantInErr []string
+		notInErr  []string
 	}{
 		{
 			name:      "unknown field",
-			file:      "server:\n  adress: :8080\n",
+			file:      "server:\n  adress: :8080\n" + dbSection,
 			wantInErr: []string{"adress"},
 		},
 		{
@@ -78,43 +87,69 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
 		},
 		{
 			name:      "wrong type",
-			file:      "server:\n  address: [1, 2]\n",
+			file:      "server:\n  address: [1, 2]\n" + dbSection,
 			wantInErr: []string{"address"},
 		},
 		{
 			name:      "invalid duration in file",
-			file:      "server:\n  shutdownTimeout: soon\n",
+			file:      "server:\n  shutdownTimeout: soon\n" + dbSection,
 			wantInErr: []string{"server.shutdownTimeout", "soon"},
 		},
 		{
 			name:      "non-positive duration",
-			file:      "server:\n  shutdownTimeout: 0s\n",
+			file:      "server:\n  shutdownTimeout: 0s\n" + dbSection,
 			wantInErr: []string{"server.shutdownTimeout", "positive"},
 		},
 		{
 			name:      "address without port",
-			file:      "server:\n  address: localhost\n",
+			file:      "server:\n  address: localhost\n" + dbSection,
 			wantInErr: []string{"server.address"},
 		},
 		{
 			name:      "address with invalid port",
-			file:      "server:\n  address: localhost:http-ish\n",
+			file:      "server:\n  address: localhost:http-ish\n" + dbSection,
 			wantInErr: []string{"server.address"},
 		},
 		{
 			name:      "address with out-of-range port",
-			file:      "server:\n  address: localhost:70000\n",
+			file:      "server:\n  address: localhost:70000\n" + dbSection,
 			wantInErr: []string{"server.address"},
 		},
 		{
 			name:      "invalid duration from environment",
+			file:      dbSection,
 			env:       map[string]string{"AGENTY_SERVER_SHUTDOWN_TIMEOUT": "later"},
 			wantInErr: []string{"server.shutdownTimeout", "AGENTY_SERVER_SHUTDOWN_TIMEOUT", "later"},
 		},
 		{
 			name:      "empty address from environment",
+			file:      dbSection,
 			env:       map[string]string{"AGENTY_SERVER_ADDRESS": ""},
 			wantInErr: []string{"server.address", "AGENTY_SERVER_ADDRESS"},
+		},
+		{
+			name:      "missing database url",
+			file:      "",
+			wantInErr: []string{"database.url", "required", "AGENTY_DATABASE_URL"},
+		},
+		{
+			name:      "empty database url from environment",
+			file:      dbSection,
+			env:       map[string]string{"AGENTY_DATABASE_URL": ""},
+			wantInErr: []string{"database.url", "AGENTY_DATABASE_URL", "required"},
+		},
+		{
+			name:      "invalid database url keeps the password out of the error",
+			file:      "database:\n  url: postgres://agenty:hunter2-file@localhost:notaport/agenty\n",
+			wantInErr: []string{"database.url"},
+			notInErr:  []string{"hunter2-file"},
+		},
+		{
+			name:      "invalid database url from environment",
+			file:      dbSection,
+			env:       map[string]string{"AGENTY_DATABASE_URL": "postgres://agenty:hunter2-env@localhost:5432/agenty?sslmode=bogus"}, //nolint:gosec // Test credential.
+			wantInErr: []string{"database.url", "AGENTY_DATABASE_URL"},
+			notInErr:  []string{"hunter2-env"},
 		},
 	}
 	for _, tt := range tests {
@@ -127,6 +162,9 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
 			for _, want := range tt.wantInErr {
 				assert.ErrorContains(t, err, want)
 			}
+			for _, notWant := range tt.notInErr {
+				assert.NotContains(t, err.Error(), notWant, "error leaks a secret")
+			}
 		})
 	}
 }
@@ -137,4 +175,40 @@ func TestLoadReportsMissingFile(t *testing.T) {
 	_, err := config.Load(path, env(nil))
 
 	assert.ErrorContains(t, err, "missing.yaml", "error must name the file")
+}
+
+func TestDatabaseLogValueOmitsPassword(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{"url with password in user info", "postgres://agenty:hunter2@db.example:5433/agentydb?sslmode=disable"},
+		{"url with password in query", "postgres://agenty@db.example:5433/agentydb?password=hunter2"},
+		{"keyword/value string", "host=db.example port=5433 user=agenty password=hunter2 dbname=agentydb"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&buf, nil))
+
+			logger.Info("connect", "database", config.Database{URL: tt.url})
+
+			out := buf.String()
+			assert.NotContains(t, out, "hunter2", "log output leaks the password")
+			assert.Contains(t, out, "database.host=db.example", "host")
+			assert.Contains(t, out, "database.port=5433", "port")
+			assert.Contains(t, out, "database.name=agentydb", "database name")
+			assert.Contains(t, out, "database.user=agenty", "user")
+		})
+	}
+}
+
+func TestDatabaseLogValueOfInvalidURLIsRedacted(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+
+	logger.Info("connect", "database", config.Database{URL: "postgres://agenty:hunter2@localhost:notaport/x"})
+
+	assert.NotContains(t, buf.String(), "hunter2", "log output leaks the password")
+	assert.Contains(t, buf.String(), "database=[redacted]", "invalid URL")
 }

@@ -16,6 +16,7 @@ import (
 
 	"github.com/jangraefen/agenty/server/internal/buildinfo"
 	"github.com/jangraefen/agenty/server/internal/config"
+	"github.com/jangraefen/agenty/server/internal/database"
 	"github.com/jangraefen/agenty/server/internal/httpapi"
 	"github.com/jangraefen/agenty/server/internal/roles"
 )
@@ -93,6 +94,21 @@ func runContext(ctx context.Context, args []string, stdout, stderr io.Writer, on
 // serve starts the selected roles and blocks until ctx is canceled and all of
 // them have stopped. onStarted, if set, is called once all roles are set up.
 func serve(ctx context.Context, cfg config.Config, selected []roles.Role, onStarted func(net.Addr)) error {
+	pool, err := database.Open(ctx, cfg.Database.URL)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer pool.Close()
+	migrator, err := database.NewMigrator(pool)
+	if err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+	defer func() { _ = migrator.Close() }()
+	slog.InfoContext(ctx, "migrating database", "database", cfg.Database)
+	if err := migrator.Up(ctx); err != nil {
+		return fmt.Errorf("database: %w", err)
+	}
+
 	components := make(map[roles.Role]roles.Component, len(selected))
 	var listenAddr net.Addr
 	for _, r := range selected {
@@ -105,9 +121,12 @@ func serve(ctx context.Context, cfg config.Config, selected []roles.Role, onStar
 			slog.InfoContext(ctx, "api role listening", "address", ln.Addr().String())
 			listenAddr = ln.Addr()
 			components[r] = apiComponent{
-				ln:      ln,
-				handler: httpapi.NewRouter(httpapi.Options{Roles: roles.Strings(selected)}),
-				cfg:     cfg.Server,
+				ln: ln,
+				handler: httpapi.NewRouter(httpapi.Options{
+					Roles: roles.Strings(selected),
+					Ready: func(ctx context.Context) error { return database.Ready(ctx, pool, migrator) },
+				}),
+				cfg: cfg.Server,
 			}
 		case roles.Worker, roles.Scheduler:
 			// No behavior yet; the role is active and stops cleanly.
@@ -119,7 +138,7 @@ func serve(ctx context.Context, cfg config.Config, selected []roles.Role, onStar
 	if onStarted != nil {
 		onStarted(listenAddr)
 	}
-	err := roles.Run(ctx, components)
+	err = roles.Run(ctx, components)
 	slog.InfoContext(context.WithoutCancel(ctx), "agenty stopped")
 	return err
 }

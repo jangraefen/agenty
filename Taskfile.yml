@@ -17,6 +17,8 @@ vars:
   PNPM_MIN_VERSION: 12.8.1 # matches web/package.json packageManager
   # Exact: detected licenses depend on the version.
   GO_LICENSES_VERSION: 2.0.1
+  # Exact: generated code depends on the version.
+  SQLC_VERSION: 1.31.1
   VERSION:
     sh: git describe --tags --always --dirty 2>/dev/null || echo dev
 
@@ -70,7 +72,21 @@ tasks:
         have=$(go version -m "$(command -v go-licenses)" 2>/dev/null | awk '$1 == "mod" { sub(/^v/, "", $3); print $3 }')
         [ "$have" = {{.GO_LICENSES_VERSION}} ]; report go-licenses "$have" $? "exactly {{.GO_LICENSES_VERSION}}" "go install github.com/google/go-licenses/v2@v{{.GO_LICENSES_VERSION}}"
 
+        have=$(sqlc version 2>/dev/null | sed 's/^v//')
+        [ "$have" = {{.SQLC_VERSION}} ]; report sqlc "$have" $? "exactly {{.SQLC_VERSION}}" "brew install sqlc"
+
         exit $failed
+
+  # Code generation: one generate:<kind> sub-task per generator. Generated code is committed and never edited by hand.
+  generate:
+    desc: Regenerate all generated code
+    cmds:
+      - task: generate:sql
+
+  generate:sql:
+    desc: Generate the Go database queries with sqlc (server/internal/database/dbgen)
+    cmds:
+      - sqlc generate -f server/internal/database/sqlc.yaml
 
   build:
     desc: Build the web UI and the agenty and agenty-sandbox binaries into ./dist

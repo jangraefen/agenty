@@ -9,15 +9,20 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jangraefen/agenty/server/internal/testinfra/pgtest"
 )
 
 type started struct {
@@ -25,14 +30,42 @@ type started struct {
 	cancel context.CancelFunc
 	code   <-chan int
 	stderr *bytes.Buffer
+
+	startedAt <-chan net.Addr
 }
 
-// start runs the server in-process with the given roles and returns once all
-// roles are set up; addr is set only when the api role listens.
+// pg is the PostgreSQL server shared by all tests in this package.
+var pg *pgtest.Server
+
+func TestMain(m *testing.M) {
+	os.Exit(pgtest.Run(m, &pg))
+}
+
+// databaseConfig is the configuration section for the database at dsn.
+func databaseConfig(dsn string) string {
+	return "database:\n  url: " + strconv.Quote(dsn) + "\n"
+}
+
+// start runs the server in-process with the given roles against a new
+// database and returns once all roles are set up; addr is set only when the
+// api role listens.
 func start(t *testing.T, roleList string) started {
 	t.Helper()
-	path := writeConfig(t, "server:\n  address: 127.0.0.1:0\n  shutdownTimeout: 5s\n")
+	return startOn(t, roleList, pg.NewDatabase(t))
+}
+
+// startOn is start against the database at dsn.
+func startOn(t *testing.T, roleList, dsn string) started {
+	t.Helper()
+	return launch(t, roleList, dsn).await(t)
+}
+
+// launch runs the server in-process without waiting for it to start.
+func launch(t *testing.T, roleList, dsn string) started {
+	t.Helper()
+	path := writeConfig(t, "server:\n  address: 127.0.0.1:0\n  shutdownTimeout: 5s\n"+databaseConfig(dsn))
 	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	startedAt := make(chan net.Addr, 1)
 	code := make(chan int, 1)
 	var stdout, stderr bytes.Buffer
@@ -40,19 +73,23 @@ func start(t *testing.T, roleList string) started {
 		code <- runContext(ctx, []string{"--config", path, "--roles", roleList}, &stdout, &stderr,
 			func(a net.Addr) { startedAt <- a })
 	}()
-	s := started{cancel: cancel, code: code, stderr: &stderr}
+	return started{cancel: cancel, code: code, stderr: &stderr, startedAt: startedAt}
+}
+
+// await waits until the launched server has set up all roles.
+func (s started) await(t *testing.T) started {
+	t.Helper()
 	select {
-	case a := <-startedAt:
+	case a := <-s.startedAt:
 		if a != nil {
 			s.addr = a.String()
 		}
-	case c := <-code:
-		require.Fail(t, "server exited early", "code %d: %s", c, stderr.String())
-	case <-time.After(10 * time.Second):
-		cancel()
+	case c := <-s.code:
+		require.Fail(t, "server exited early", "code %d: %s", c, s.stderr.String())
+	case <-time.After(30 * time.Second):
+		s.cancel()
 		require.Fail(t, "server did not start")
 	}
-	t.Cleanup(cancel)
 	return s
 }
 
@@ -104,6 +141,84 @@ func TestServeReportsSelectedRoles(t *testing.T) {
 	}
 }
 
+func readyStatus(t *testing.T, addr string) int {
+	t.Helper()
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+addr+"/readyz", http.NoBody)
+	require.NoError(t, err, "request")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err, "GET /readyz")
+	_ = resp.Body.Close()
+	return resp.StatusCode
+}
+
+func execSQL(t *testing.T, dsn, sql string) {
+	t.Helper()
+	// Not t.Context(): execSQL also runs in cleanups, after it is canceled.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	conn, err := pgx.Connect(ctx, dsn)
+	require.NoError(t, err, "connect")
+	defer func() { _ = conn.Close(ctx) }()
+	_, err = conn.Exec(ctx, sql)
+	require.NoError(t, err, "exec %s", sql)
+}
+
+func TestReadyzRequiresAppliedMigrations(t *testing.T) {
+	dsn := pg.NewDatabase(t)
+	s := startOn(t, "api", dsn)
+	require.NotEmpty(t, s.addr, "api role did not listen")
+
+	assert.Equal(t, http.StatusOK, readyStatus(t, s.addr), "/readyz after startup migrations")
+	// Forget the latest migration: it counts as pending again.
+	execSQL(t, dsn, "DELETE FROM goose_db_version WHERE version_id = (SELECT max(version_id) FROM goose_db_version)")
+	assert.Equal(t, http.StatusServiceUnavailable, readyStatus(t, s.addr), "/readyz with a pending migration")
+	s.stop(t)
+}
+
+func TestReadyzRequiresReachableDatabase(t *testing.T) {
+	dsn := pg.NewDatabase(t)
+	s := startOn(t, "api", dsn)
+	require.NotEmpty(t, s.addr, "api role did not listen")
+	require.Equal(t, http.StatusOK, readyStatus(t, s.addr), "/readyz while the database is reachable")
+
+	// Revoke the server's access: new connections to the database fail.
+	db := dsn[strings.LastIndex(dsn, "/")+1 : strings.Index(dsn, "?")]
+	execSQL(t, pg.DSN(), "ALTER DATABASE "+pgx.Identifier{db}.Sanitize()+" ALLOW_CONNECTIONS false")
+	execSQL(t, pg.DSN(), "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '"+db+"'")
+	t.Cleanup(func() {
+		execSQL(t, pg.DSN(), "ALTER DATABASE "+pgx.Identifier{db}.Sanitize()+" ALLOW_CONNECTIONS true")
+	})
+
+	assert.Equal(t, http.StatusServiceUnavailable, readyStatus(t, s.addr), "/readyz with the database unreachable")
+	s.stop(t)
+}
+
+func TestConcurrentStartsApplyEachMigrationOnce(t *testing.T) {
+	dsn := pg.NewDatabase(t)
+	const instances = 3
+	launched := make([]started, 0, instances)
+	for range instances {
+		launched = append(launched, launch(t, "api", dsn))
+	}
+	servers := make([]started, 0, instances)
+	for _, s := range launched {
+		servers = append(servers, s.await(t))
+	}
+
+	conn, err := pgx.Connect(t.Context(), dsn)
+	require.NoError(t, err, "connect")
+	defer func() { _ = conn.Close(context.Background()) }()
+	var total, distinct int
+	require.NoError(t, conn.QueryRow(t.Context(),
+		"SELECT count(*), count(DISTINCT version_id) FROM goose_db_version WHERE version_id > 0").Scan(&total, &distinct))
+	assert.Positive(t, distinct, "no migration recorded")
+	assert.Equal(t, distinct, total, "a migration was recorded more than once")
+	for _, s := range servers {
+		assert.Equal(t, http.StatusOK, readyStatus(t, s.addr), "/readyz")
+		s.stop(t)
+	}
+}
+
 func TestServeWithoutAPIRoleDoesNotListen(t *testing.T) {
 	for _, roleList := range []string{"worker", "scheduler", "worker,scheduler"} {
 		t.Run(roleList, func(t *testing.T) {
@@ -126,7 +241,7 @@ func startBinary(t *testing.T, serverConfig string) (cmd *exec.Cmd, addr string,
 	require.NoError(t, err, "pick port")
 	addr = ln.Addr().String()
 	_ = ln.Close()
-	path := writeConfig(t, "server:\n  address: "+addr+"\n"+serverConfig)
+	path := writeConfig(t, "server:\n  address: "+addr+"\n"+serverConfig+databaseConfig(pg.NewDatabase(t)))
 	cmd = exec.Command(bin, "--config", path)
 	stderr, err := cmd.StderrPipe()
 	require.NoError(t, err, "stderr pipe")

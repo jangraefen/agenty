@@ -1,0 +1,12 @@
+# sqlc configuration (ARCHITECTURE §11.1); run `task generate`, never edit dbgen/ by hand.
+# The schema is the goose migrations; sqlc ignores their Down sections.
+version: "2"
+sql:
+  - engine: postgresql
+    schema: migrations
+    queries: queries
+    gen:
+      go:
+        package: dbgen
+        out: dbgen
+        sql_package: pgx/v5

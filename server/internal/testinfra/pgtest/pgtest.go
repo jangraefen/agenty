@@ -46,8 +46,13 @@ const (
 
 // Server is a running PostgreSQL container.
 type Server struct {
-	container *postgres.PostgresContainer
+	container container
 	dsn       string
+}
+
+// container is the part of the PostgreSQL container a Server uses after start.
+type container interface {
+	Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error
 }
 
 // Start starts a PostgreSQL container with pgvector and waits until it accepts
@@ -80,8 +85,13 @@ func Start(ctx context.Context) (*Server, error) {
 // Run is the body of a TestMain: it starts a server, stores it in *srv, runs
 // the tests, and terminates the server. It returns the exit code for os.Exit.
 func Run(m *testing.M, srv **Server) int {
+	return run(m, srv, Start)
+}
+
+// run is Run with the test runner and the server start replaceable in tests.
+func run(m interface{ Run() int }, srv **Server, start func(context.Context) (*Server, error)) int {
 	ctx := context.Background()
-	s, err := Start(ctx)
+	s, err := start(ctx)
 	if err != nil {
 		slog.Error("pgtest: start server", "error", err)
 		return 1
@@ -118,16 +128,15 @@ func (s *Server) NewDatabase(t testing.TB) string {
 	t.Helper()
 	name := "test_" + strings.ToLower(rand.Text()[:16])
 	ident := pgx.Identifier{name}.Sanitize()
+	dsn, err := withDatabase(s.dsn, name)
+	if err != nil {
+		t.Fatalf("pgtest: %v", err)
+	}
 
 	s.exec(t, "CREATE DATABASE "+ident)
 	t.Cleanup(func() {
 		s.exec(t, "DROP DATABASE "+ident+" WITH (FORCE)")
 	})
-
-	dsn, err := withDatabase(s.dsn, name)
-	if err != nil {
-		t.Fatalf("pgtest: %v", err)
-	}
 	execOn(t, dsn, "CREATE EXTENSION vector")
 	return dsn
 }

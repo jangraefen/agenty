@@ -1,0 +1,145 @@
+package blob
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+)
+
+// S3API is the subset of the S3 client that S3 uses; *s3.Client implements it.
+type S3API interface {
+	PutObject(ctx context.Context, in *s3.PutObjectInput, opts ...func(*s3.Options)) (*s3.PutObjectOutput, error)
+	GetObject(ctx context.Context, in *s3.GetObjectInput, opts ...func(*s3.Options)) (*s3.GetObjectOutput, error)
+	HeadObject(ctx context.Context, in *s3.HeadObjectInput, opts ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
+	DeleteObject(
+		ctx context.Context, in *s3.DeleteObjectInput, opts ...func(*s3.Options),
+	) (*s3.DeleteObjectOutput, error)
+}
+
+// S3 stores objects in a bucket of an S3-compatible object store, under an
+// optional key prefix. S3 replaces objects atomically on its own: an upload
+// that fails or is aborted never becomes visible.
+type S3 struct {
+	client S3API
+	bucket string
+	prefix string
+}
+
+var _ Blob = (*S3)(nil)
+
+// NewS3 returns a store for bucket. A non-empty prefix (e.g. "agenty/") is put
+// in front of every key; it must end with "/" and otherwise be a valid key.
+func NewS3(client S3API, bucket, prefix string) (*S3, error) {
+	if client == nil {
+		return nil, errors.New("blob: S3 client is nil")
+	}
+	if bucket == "" {
+		return nil, errors.New("blob: S3 bucket is empty")
+	}
+	if prefix != "" {
+		trimmed, ok := strings.CutSuffix(prefix, "/")
+		if !ok {
+			return nil, fmt.Errorf("blob: S3 prefix %q does not end with /", prefix)
+		}
+		if err := ValidateKey(trimmed); err != nil {
+			return nil, fmt.Errorf("blob: S3 prefix: %w", err)
+		}
+	}
+	return &S3{client: client, bucket: bucket, prefix: prefix}, nil
+}
+
+func (s *S3) object(ctx context.Context, key string) (*string, error) {
+	if err := ValidateKey(key); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return aws.String(s.prefix + key), nil
+}
+
+// Put implements Blob.
+func (s *S3) Put(ctx context.Context, key string, r io.Reader, size int64) error {
+	if err := ValidateKey(key); err != nil {
+		return err
+	}
+	if err := checkSize(size); err != nil {
+		return err
+	}
+	object, err := s.object(ctx, key)
+	if err != nil {
+		return err
+	}
+	body := newSizedReader(ctx, r, size)
+	_, err = s.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(s.bucket),
+		Key:           object,
+		Body:          body,
+		ContentLength: aws.Int64(size),
+	})
+	if err != nil {
+		// The SDK does not reliably wrap errors from the body; report the
+		// reader's own error so callers can match ErrSizeMismatch or a
+		// failure of r.
+		if body.err != nil {
+			err = body.err
+		}
+		return fmt.Errorf("blob: put %q: %w", key, err)
+	}
+	return nil
+}
+
+// Get implements Blob.
+func (s *S3) Get(ctx context.Context, key string) (io.ReadCloser, error) {
+	object, err := s.object(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.bucket), Key: object})
+	if err != nil {
+		return nil, s3Error("get", key, err)
+	}
+	return out.Body, nil
+}
+
+// Stat implements Blob.
+func (s *S3) Stat(ctx context.Context, key string) (Info, error) {
+	object, err := s.object(ctx, key)
+	if err != nil {
+		return Info{}, err
+	}
+	out, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: object})
+	if err != nil {
+		return Info{}, s3Error("stat", key, err)
+	}
+	return Info{Size: aws.ToInt64(out.ContentLength)}, nil
+}
+
+// Delete implements Blob.
+func (s *S3) Delete(ctx context.Context, key string) error {
+	object, err := s.object(ctx, key)
+	if err != nil {
+		return err
+	}
+	if _, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(s.bucket), Key: object}); err != nil {
+		return fmt.Errorf("blob: delete %q: %w", key, err)
+	}
+	return nil
+}
+
+// s3Error maps a missing object to ErrNotFound. GetObject reports NoSuchKey;
+// HeadObject has no response body and reports NotFound.
+func s3Error(op, key string, err error) error {
+	var noSuchKey *types.NoSuchKey
+	var notFound *types.NotFound
+	if errors.As(err, &noSuchKey) || errors.As(err, &notFound) {
+		return fmt.Errorf("%w: %q", ErrNotFound, key)
+	}
+	return fmt.Errorf("blob: %s %q: %w", op, key, err)
+}

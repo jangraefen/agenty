@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
@@ -58,17 +59,23 @@ func (s *S3) object(ctx context.Context, key string) (*string, error) {
 	if err := ValidateKey(key); err != nil {
 		return nil, err
 	}
+	// S3 limits the stored key, prefix included.
+	if len(s.prefix)+len(key) > MaxKeyLength {
+		return nil, fmt.Errorf("%w: longer than %d bytes with prefix %q", ErrInvalidKey, MaxKeyLength, s.prefix)
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	return aws.String(s.prefix + key), nil
 }
 
-// Put implements Blob.
+// Put implements Blob. The body is streamed and never buffered, so it is not
+// seekable: the SDK neither hashes it for the signature (UNSIGNED-PAYLOAD) nor
+// adds a checksum, which lets Put work over plain HTTP as well as HTTPS, and
+// it cannot retry the upload. A transient S3 error therefore fails the Put;
+// callers retry the whole Put. Over plain HTTP the content has no integrity
+// protection beyond the size check; use HTTPS outside trusted networks.
 func (s *S3) Put(ctx context.Context, key string, r io.Reader, size int64) error {
-	if err := ValidateKey(key); err != nil {
-		return err
-	}
 	if err := checkSize(size); err != nil {
 		return err
 	}
@@ -82,7 +89,7 @@ func (s *S3) Put(ctx context.Context, key string, r io.Reader, size int64) error
 		Key:           object,
 		Body:          body,
 		ContentLength: aws.Int64(size),
-	})
+	}, streamingUpload)
 	if err != nil {
 		// The SDK does not reliably wrap errors from the body; report the
 		// reader's own error so callers can match ErrSizeMismatch or a
@@ -93,6 +100,13 @@ func (s *S3) Put(ctx context.Context, key string, r io.Reader, size int64) error
 		return fmt.Errorf("blob: put %q: %w", key, err)
 	}
 	return nil
+}
+
+// streamingUpload configures one PutObject call for a body that cannot be
+// seeked: without TLS, payload hashing and checksums would need to rewind it.
+func streamingUpload(o *s3.Options) {
+	o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+	o.APIOptions = append(o.APIOptions, v4.SwapComputePayloadSHA256ForUnsignedPayloadMiddleware)
 }
 
 // Get implements Blob.

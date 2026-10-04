@@ -75,7 +75,8 @@ func (l *Local) Put(ctx context.Context, key string, r io.Reader, size int64) er
 	return nil
 }
 
-// write copies r into tmp, makes it durable, and renames it to file.
+// write copies r into tmp, makes it durable, and renames it to file, syncing
+// every directory whose entries change.
 func (l *Local) write(tmp *os.File, r io.Reader, dir, file string) error {
 	_, err := io.Copy(tmp, r)
 	if err == nil {
@@ -87,7 +88,7 @@ func (l *Local) write(tmp *os.File, r io.Reader, dir, file string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := l.mkShard(dir); err != nil {
 		return err
 	}
 	if err := os.Rename(tmp.Name(), file); err != nil {
@@ -96,7 +97,20 @@ func (l *Local) write(tmp *os.File, r io.Reader, dir, file string) error {
 	return syncDir(dir)
 }
 
-// syncDir makes a rename in dir durable.
+// mkShard creates the shard directory dir if needed; a new directory entry is
+// made durable by syncing the objects directory.
+func (l *Local) mkShard(dir string) error {
+	err := os.Mkdir(dir, 0o700)
+	if errors.Is(err, fs.ErrExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return syncDir(l.objects)
+}
+
+// syncDir makes a change of an entry in dir (rename, create, remove) durable.
 func syncDir(dir string) error {
 	d, err := os.Open(dir) //nolint:gosec // dir is derived from the root and a hash, never from the key
 	if err != nil {
@@ -143,14 +157,20 @@ func (l *Local) Stat(ctx context.Context, key string) (Info, error) {
 
 // Delete implements Blob.
 func (l *Local) Delete(ctx context.Context, key string) error {
-	_, file, err := l.path(key)
+	dir, file, err := l.path(key)
 	if err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := os.Remove(file); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err := os.Remove(file); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return localError("delete", key, err)
+	}
+	if err := syncDir(dir); err != nil {
 		return localError("delete", key, err)
 	}
 	return nil

@@ -78,3 +78,22 @@ func TestNewS3ValidatesArguments(t *testing.T) {
 		assert.NoError(t, err, "prefix %q", prefix)
 	}
 }
+
+func TestS3RejectsKeysTooLongWithPrefix(t *testing.T) {
+	errCalled := errors.New("client called")
+	const prefix = "tenant/"
+	s, err := blob.NewS3(failingS3{errCalled}, "bucket", prefix)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	longest := strings.Repeat("k", blob.MaxKeyLength-len(prefix))
+	assert.ErrorIs(t, s.Delete(ctx, longest), errCalled, "longest key reaches the client")
+
+	tooLong := longest + "k"
+	assert.ErrorIs(t, s.Put(ctx, tooLong, strings.NewReader("x"), 1), blob.ErrInvalidKey, "Put")
+	_, err = s.Get(ctx, tooLong)
+	assert.ErrorIs(t, err, blob.ErrInvalidKey, "Get")
+	_, err = s.Stat(ctx, tooLong)
+	assert.ErrorIs(t, err, blob.ErrInvalidKey, "Stat")
+	assert.ErrorIs(t, s.Delete(ctx, tooLong), blob.ErrInvalidKey, "Delete")
+}

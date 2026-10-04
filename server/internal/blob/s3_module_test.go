@@ -24,7 +24,18 @@ import (
 // protocol over HTTP.
 func fakeS3(t *testing.T) *s3.Client {
 	t.Helper()
-	srv := httptest.NewTLSServer(gofakes3.New(s3mem.New()).Server())
+	return fakeS3Server(t, httptest.NewTLSServer(gofakes3.New(s3mem.New()).Server()))
+}
+
+// fakeS3PlainHTTP is fakeS3 without TLS, as self-hosted in-cluster stores are
+// often run: the SDK cannot rely on TLS for payload integrity there.
+func fakeS3PlainHTTP(t *testing.T) *s3.Client {
+	t.Helper()
+	return fakeS3Server(t, httptest.NewServer(gofakes3.New(s3mem.New()).Server()))
+}
+
+func fakeS3Server(t *testing.T, srv *httptest.Server) *s3.Client {
+	t.Helper()
 	t.Cleanup(srv.Close)
 	return s3.NewFromConfig(aws.Config{
 		Region:      "us-east-1",
@@ -38,7 +49,11 @@ func fakeS3(t *testing.T) *s3.Client {
 
 func newS3(t *testing.T, prefix string) (blob.Blob, *s3.Client, string) {
 	t.Helper()
-	client := fakeS3(t)
+	return newS3With(t, fakeS3(t), prefix)
+}
+
+func newS3With(t *testing.T, client *s3.Client, prefix string) (blob.Blob, *s3.Client, string) {
+	t.Helper()
 	const bucket = "agenty-test"
 	_, err := client.CreateBucket(context.Background(), &s3.CreateBucketInput{Bucket: aws.String(bucket)})
 	require.NoError(t, err)
@@ -59,6 +74,33 @@ func TestS3ContractWithPrefix(t *testing.T) {
 		s, _, _ := newS3(t, "agenty/blobs/")
 		return s
 	})
+}
+
+func TestS3ContractPlainHTTP(t *testing.T) {
+	runContract(t, func(t *testing.T) blob.Blob {
+		s, _, _ := newS3With(t, fakeS3PlainHTTP(t), "")
+		return s
+	})
+}
+
+// The prefix counts towards the S3 key length limit; a key that fits only
+// without the prefix is rejected as invalid instead of failing at the server.
+func TestS3PrefixCountsTowardsMaxKeyLength(t *testing.T) {
+	const prefix = "tenant/"
+	s, _, _ := newS3(t, prefix)
+	ctx := context.Background()
+
+	longest := strings.Repeat("k", blob.MaxKeyLength-len(prefix))
+	put(t, s, longest, "fits")
+	assert.Equal(t, "fits", get(t, s, longest))
+
+	tooLong := longest + "k"
+	assert.ErrorIs(t, s.Put(ctx, tooLong, strings.NewReader("x"), 1), blob.ErrInvalidKey, "Put")
+	_, err := s.Get(ctx, tooLong)
+	assert.ErrorIs(t, err, blob.ErrInvalidKey, "Get")
+	_, err = s.Stat(ctx, tooLong)
+	assert.ErrorIs(t, err, blob.ErrInvalidKey, "Stat")
+	assert.ErrorIs(t, s.Delete(ctx, tooLong), blob.ErrInvalidKey, "Delete")
 }
 
 func TestS3StoresObjectsUnderPrefix(t *testing.T) {

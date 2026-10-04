@@ -134,7 +134,9 @@ tasks:
         vars: { MODULE: "{{.ITEM}}" }
 
   # Checks one Go module directory: packages linked into its binaries (./cmd/...) against the "shipped"
-  # licenses, and all its packages including test-only imports against "shipped" plus "dev".
+  # licenses, and all its packages including test-only imports against "shipped" plus "dev". go-licenses
+  # resolves build-constrained files for one platform, so each scope runs for linux (the image platform)
+  # and, if different, the host.
   check:licenses:go:module:
     internal: true
     silent: true
@@ -149,20 +151,28 @@ tasks:
           index(scopes, $1) { printf "%s%s", sep, $2; sep = "," }' "{{.ALLOWLIST}}"; }
         shipped=$(list shipped) || exit 1
         all=$(list "shipped dev") || exit 1
-        check() { # scope, allowed licenses, go-licenses arguments
-          scope=$1; allowed=$2; shift 2
-          # Our own packages are not licensed yet (VISION §13); their dependencies are still checked.
-          if out=$(go-licenses check --ignore github.com/jangraefen/agenty --allowed_licenses="$allowed" "$@" 2>&1); then
-            echo "ok      licenses go {{.MODULE}} $scope"
+        # An empty --allowed_licenses would make go-licenses ignore the allowlist.
+        [ -n "$shipped" ] || { echo "invalid allowlist {{.ALLOWLIST}}: no shipped licenses" >&2; exit 1; }
+        host=$(go env GOOS)
+        platforms=linux; [ "$host" = linux ] || platforms="linux $host"
+        check() { # platform, scope, allowed licenses, go-licenses arguments
+          goos=$1; scope=$2; allowed=$3; shift 3
+          # Our own modules are not licensed yet (VISION §13); their dependencies are still checked.
+          # --ignore matches by path prefix, so each module is named in full.
+          if out=$(GOOS=$goos go-licenses check --ignore github.com/jangraefen/agenty/server \
+              --ignore github.com/jangraefen/agenty/sandbox --allowed_licenses="$allowed" "$@" 2>&1); then
+            echo "ok      licenses go {{.MODULE}} $scope $goos"
           else
-            echo "FAILED  licenses go {{.MODULE}} $scope: not in the allowlist ($allowed)" >&2
+            echo "FAILED  licenses go {{.MODULE}} $scope $goos: not in the allowlist ($allowed)" >&2
             # Drop go-licenses' warnings about assembly files, which it cannot inspect.
             printf '%s\n' "$out" | grep -v -e '^W[0-9]' -e '^/' >&2
             return 1
           fi
         }
-        check "shipped" "$shipped" ./cmd/... || failed=1
-        check "all" "$all" --include_tests ./... || failed=1
+        for goos in $platforms; do
+          check $goos shipped "$shipped" ./cmd/... || failed=1
+          check $goos all "$all" --include_tests ./... || failed=1
+        done
         exit ${failed:-0}
 
   check:licenses:web:

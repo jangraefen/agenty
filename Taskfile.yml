@@ -19,6 +19,7 @@ vars:
   GO_LICENSES_VERSION: 2.0.1
   # Exact: generated code (and its version header) depends on the version.
   OAPI_CODEGEN_VERSION: 2.8.0
+  SQLC_VERSION: 1.31.1
   VERSION:
     sh: git describe --tags --always --dirty 2>/dev/null || echo dev
 
@@ -74,6 +75,9 @@ tasks:
 
         have=$(oapi-codegen --version 2>/dev/null | sed -n 's/^v//p')
         [ "$have" = {{.OAPI_CODEGEN_VERSION}} ]; report oapi-codegen "$have" $? "exactly {{.OAPI_CODEGEN_VERSION}}" "go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v{{.OAPI_CODEGEN_VERSION}}"
+
+        have=$(sqlc version 2>/dev/null | sed 's/^v//')
+        [ "$have" = {{.SQLC_VERSION}} ]; report sqlc "$have" $? "exactly {{.SQLC_VERSION}}" "brew install sqlc"
 
         exit $failed
 
@@ -142,10 +146,12 @@ tasks:
   # Code generation (ARCHITECTURE §4). Every generate:* sub-task reads its inputs below SRC_ROOT and writes
   # each output below GEN_ROOT at its repository-relative path; both default to the repository root and must
   # be absolute. check:generated relies on this to regenerate into a temporary directory and compare.
+  # Generated code is committed and never edited by hand; one generate:<kind> sub-task per generator.
   generate:
     desc: Regenerate all generated code from its sources
     cmds:
       - task: generate:api
+      - task: generate:sql
 
   generate:api:
     desc: Generate the Gin server interfaces (oapi-codegen) and the TypeScript API types (openapi-typescript) from api/openapi.yaml
@@ -158,6 +164,23 @@ tasks:
       - oapi-codegen -config "{{.SRC}}/api/oapi-codegen.yaml" -o "{{.OUT}}/server/internal/httpapi/openapi.gen.go" "{{.SRC}}/api/openapi.yaml"
       # openapi-typescript runs from web/codegen, which has the TypeScript 5 it needs (ARCHITECTURE §15.4).
       - cd web/codegen && pnpm exec openapi-typescript "{{.SRC}}/api/openapi.yaml" -o "{{.OUT}}/web/src/api/schema.gen.ts" --silent
+
+  generate:sql:
+    desc: Generate the Go database queries (sqlc) from server/internal/database/{migrations,queries} into server/internal/database/dbgen
+    silent: true
+    vars:
+      SRC: "{{.SRC_ROOT | default .ROOT_DIR}}"
+      OUT: "{{.GEN_ROOT | default .ROOT_DIR}}"
+    cmds:
+      # sqlc writes next to its configuration, so it runs on a copy of the inputs; only the generated
+      # *.gen.go files are copied out (dbgen/ also holds hand-written tests).
+      - |
+        work=$(mktemp -d) && trap 'rm -rf "$work"' EXIT || exit 1
+        db=server/internal/database
+        mkdir -p "$work/$db" "{{.OUT}}/$db/dbgen" || exit 1
+        cp -R "{{.SRC}}/$db/sqlc.yaml" "{{.SRC}}/$db/migrations" "{{.SRC}}/$db/queries" "$work/$db/" || exit 1
+        sqlc generate -f "$work/$db/sqlc.yaml" || exit 1
+        cp "$work/$db/dbgen/"*.gen.go "{{.OUT}}/$db/dbgen/"
 
   check:generated:
     desc: Fail if generated code differs from what task generate produces now (the tree is not modified)
@@ -363,7 +386,9 @@ tasks:
     cmds:
       - |
         tmp=$(mktemp -d) && trap 'rm -rf "$tmp"' EXIT || exit 1
-        files="api/openapi.yaml api/oapi-codegen.yaml server/internal/httpapi/openapi.gen.go web/src/api/schema.gen.ts"
+        db=server/internal/database
+        files="api/openapi.yaml api/oapi-codegen.yaml server/internal/httpapi/openapi.gen.go web/src/api/schema.gen.ts
+          $db/sqlc.yaml $db/migrations/*.sql $db/queries/*.sql $db/dbgen/*.gen.go"
         reset() {
           rm -rf "$tmp/tree"
           for file in $files; do mkdir -p "$tmp/tree/$(dirname "$file")" && cp "$file" "$tmp/tree/$file" || exit 1; done
@@ -386,6 +411,10 @@ tasks:
         reset; sed 's/operationId: getReadyz/operationId: getReadiness/' api/openapi.yaml >"$tmp/tree/api/openapi.yaml"
         cmp -s api/openapi.yaml "$tmp/tree/api/openapi.yaml" && { echo "FAILED  gate generated code: contract edit had no effect"; exit 1; }
         expect fail "contract changed without regenerating fails"
+        reset; printf '// edited\n' >>"$tmp/tree/$db/dbgen/db.gen.go"; expect fail "edited sqlc code fails"
+        reset; rm "$tmp/tree/$db/dbgen/models.gen.go"; expect fail "missing sqlc file fails"
+        reset; printf '%s\n' '-- name: PingAgain :one' 'SELECT 1::int AS ok;' >>"$tmp/tree/$db/queries/health.sql"
+        expect fail "SQL query changed without regenerating fails"
         exit $failed
 
   test:milestones:

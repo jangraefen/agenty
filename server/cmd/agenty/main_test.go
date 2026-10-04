@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"log/slog"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -35,6 +36,22 @@ func TestRunWithoutArgumentsPrintsUsage(t *testing.T) {
 
 	assert.Equal(t, 2, code, "exit code")
 	assert.Contains(t, stderr.String(), "Usage", "stderr must contain usage text")
+}
+
+func TestRunAbortsWhenTheDatabaseIsUnreachableWithoutLeakingThePassword(t *testing.T) {
+	var stdout, stderr, logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	path := writeConfig(t, "server:\n  address: 127.0.0.1:0\ndatabase:\n"+
+		"  url: postgres://agenty:hunter2@127.0.0.1:1/agenty?sslmode=disable&connect_timeout=2\n")
+
+	code := runContext(t.Context(), []string{"--config", path}, &stdout, &stderr, options{})
+
+	assert.Equal(t, 1, code, "exit code")
+	assert.Contains(t, stderr.String(), "database", "stderr must name the database")
+	assert.NotContains(t, stderr.String(), "hunter2", "stderr leaks the password")
+	assert.NotContains(t, logs.String(), "hunter2", "logs leak the password")
 }
 
 func TestVersionIsInjectedAtBuildTime(t *testing.T) {

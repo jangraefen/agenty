@@ -1,0 +1,103 @@
+# Public REST API of Agenty: the source of truth for the Go server interfaces and the TypeScript client
+# (ARCHITECTURE §4, §13.1). Change this file, then run `task generate`; never edit generated code.
+openapi: 3.1.0
+info:
+  title: Agenty API
+  version: 0.0.0
+  description: |
+    Public REST API of Agenty. Every error response, including those for unknown paths (404), unsupported
+    methods (405), and unexpected server errors (500), is an RFC 9457 problem details object with the media
+    type `application/problem+json`.
+tags:
+  - name: health
+    description: Liveness and readiness of the `api` role.
+paths:
+  /healthz:
+    get:
+      operationId: getHealthz
+      tags: [health]
+      summary: Report liveness and the active roles
+      description: Answers as long as the process serves HTTP; it does not check dependencies.
+      responses:
+        "200":
+          description: The process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        default:
+          $ref: "#/components/responses/Problem"
+  /readyz:
+    get:
+      operationId: getReadyz
+      tags: [health]
+      summary: Report whether the server can serve traffic
+      responses:
+        "200":
+          description: The server is ready to serve traffic.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+        "503":
+          description: >-
+            The server is not ready to serve traffic. The detail is generic and never reveals why; the
+            cause is logged.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        default:
+          $ref: "#/components/responses/Problem"
+components:
+  responses:
+    Problem:
+      description: An error, described as RFC 9457 problem details.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    Health:
+      type: object
+      additionalProperties: false
+      required: [status, roles]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        roles:
+          description: The roles this process runs (`api`, `worker`, `scheduler`), in canonical order.
+          type: array
+          items:
+            type: string
+    Readiness:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ready]
+    Problem:
+      description: >-
+        RFC 9457 problem details. Agenty always sets every property; the type is `about:blank`, so the
+        title is the standard text of the status code.
+      type: object
+      required: [type, title, status, detail, instance]
+      properties:
+        type:
+          description: URI reference identifying the problem type.
+          type: string
+        title:
+          description: Short, human-readable summary of the problem type.
+          type: string
+        status:
+          description: HTTP status code of this occurrence.
+          type: integer
+        detail:
+          description: Human-readable explanation of this occurrence; never reveals internals.
+          type: string
+        instance:
+          description: Path of the request that caused the problem.
+          type: string

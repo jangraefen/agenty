@@ -1,4 +1,5 @@
-// Package httpapi serves the public HTTP API of the api role with Gin:
+// Package httpapi serves the public HTTP API of the api role with Gin through
+// the server interfaces generated from api/openapi.yaml (openapi.gen.go):
 // health and readiness endpoints, RFC 9457 problem details for every error,
 // and graceful shutdown.
 package httpapi
@@ -54,22 +55,42 @@ func NewRouter(opts Options) http.Handler {
 		WriteProblem(c, http.StatusMethodNotAllowed, "The resource does not support this method.")
 	})
 
-	activeRoles := append([]string{}, opts.Roles...)
-	r.GET("/healthz", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok", "roles": activeRoles})
-	})
-	r.GET("/readyz", func(c *gin.Context) {
-		if opts.Ready != nil {
-			if err := opts.Ready(c.Request.Context()); err != nil {
-				logger.WarnContext(c.Request.Context(), "readiness check failed", "error", err)
-				WriteProblem(c, http.StatusServiceUnavailable, "The server is not ready to serve traffic.")
-				return
-			}
-		}
-		c.JSON(http.StatusOK, gin.H{"status": "ready"})
-	})
+	RegisterHandlersWithOptions(r, &server{roles: append([]string{}, opts.Roles...), ready: opts.Ready, logger: logger},
+		GinServerOptions{ErrorHandler: parameterProblem})
 	if opts.Routes != nil {
 		opts.Routes(r)
 	}
 	return r
+}
+
+// parameterProblem answers requests whose parameters the generated code cannot
+// bind. The binding error is not returned, because it may echo request data.
+func parameterProblem(c *gin.Context, _ error, status int) {
+	WriteProblem(c, status, "The request parameters are invalid.")
+}
+
+// server implements the operations of the contract in api/openapi.yaml.
+type server struct {
+	roles  []string
+	ready  func(ctx context.Context) error
+	logger *slog.Logger
+}
+
+var _ ServerInterface = (*server)(nil)
+
+// GetHealthz reports liveness and the active roles.
+func (s *server) GetHealthz(c *gin.Context) {
+	c.JSON(http.StatusOK, Health{Status: HealthStatusOk, Roles: s.roles})
+}
+
+// GetReadyz reports whether the server can serve traffic.
+func (s *server) GetReadyz(c *gin.Context) {
+	if s.ready != nil {
+		if err := s.ready(c.Request.Context()); err != nil {
+			s.logger.WarnContext(c.Request.Context(), "readiness check failed", "error", err)
+			WriteProblem(c, http.StatusServiceUnavailable, "The server is not ready to serve traffic.")
+			return
+		}
+	}
+	c.JSON(http.StatusOK, Readiness{Status: ReadinessStatusReady})
 }

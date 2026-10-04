@@ -17,6 +17,8 @@ vars:
   PNPM_MIN_VERSION: 12.8.1 # matches web/package.json packageManager
   # Exact: detected licenses depend on the version.
   GO_LICENSES_VERSION: 2.0.1
+  # Exact: generated code (and its version header) depends on the version.
+  OAPI_CODEGEN_VERSION: 2.8.0
   VERSION:
     sh: git describe --tags --always --dirty 2>/dev/null || echo dev
 
@@ -70,6 +72,9 @@ tasks:
         have=$(go version -m "$(command -v go-licenses)" 2>/dev/null | awk '$1 == "mod" { sub(/^v/, "", $3); print $3 }')
         [ "$have" = {{.GO_LICENSES_VERSION}} ]; report go-licenses "$have" $? "exactly {{.GO_LICENSES_VERSION}}" "go install github.com/google/go-licenses/v2@v{{.GO_LICENSES_VERSION}}"
 
+        have=$(oapi-codegen --version 2>/dev/null | sed -n 's/^v//p')
+        [ "$have" = {{.OAPI_CODEGEN_VERSION}} ]; report oapi-codegen "$have" $? "exactly {{.OAPI_CODEGEN_VERSION}}" "go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v{{.OAPI_CODEGEN_VERSION}}"
+
         exit $failed
 
   build:
@@ -114,7 +119,7 @@ tasks:
   web:deps:
     internal: true
     dir: web
-    sources: [package.json, pnpm-lock.yaml, pnpm-workspace.yaml]
+    sources: [package.json, codegen/package.json, pnpm-lock.yaml, pnpm-workspace.yaml]
     generates: [node_modules/.modules.yaml]
     cmds:
       - pnpm install --frozen-lockfile
@@ -134,10 +139,56 @@ tasks:
     cmds:
       - pnpm run --silent build
 
+  # Code generation (ARCHITECTURE §4). Every generate:* sub-task reads its inputs below SRC_ROOT and writes
+  # each output below GEN_ROOT at its repository-relative path; both default to the repository root and must
+  # be absolute. check:generated relies on this to regenerate into a temporary directory and compare.
+  generate:
+    desc: Regenerate all generated code from its sources
+    cmds:
+      - task: generate:api
+
+  generate:api:
+    desc: Generate the Gin server interfaces (oapi-codegen) and the TypeScript API types (openapi-typescript) from api/openapi.yaml
+    deps: [web:deps]
+    vars:
+      SRC: "{{.SRC_ROOT | default .ROOT_DIR}}"
+      OUT: "{{.GEN_ROOT | default .ROOT_DIR}}"
+    cmds:
+      - mkdir -p "{{.OUT}}/server/internal/httpapi" "{{.OUT}}/web/src/api"
+      - oapi-codegen -config "{{.SRC}}/api/oapi-codegen.yaml" -o "{{.OUT}}/server/internal/httpapi/openapi.gen.go" "{{.SRC}}/api/openapi.yaml"
+      # openapi-typescript runs from web/codegen, which has the TypeScript 5 it needs (ARCHITECTURE §15.4).
+      - cd web/codegen && pnpm exec openapi-typescript "{{.SRC}}/api/openapi.yaml" -o "{{.OUT}}/web/src/api/schema.gen.ts" --silent
+
+  check:generated:
+    desc: Fail if generated code differs from what task generate produces now (the tree is not modified)
+    silent: true
+    vars:
+      # The tree to check; test:gates:generated points it at a modified copy.
+      TREE: "{{.TREE | default .ROOT_DIR}}"
+    cmds:
+      - |
+        out=$(mktemp -d) && trap 'rm -rf "$out"' EXIT || exit 1
+        task -d "{{.ROOT_DIR}}" --silent generate SRC_ROOT="{{.TREE}}" GEN_ROOT="$out" >/dev/null || { echo "FAILED  generated code: task generate failed"; exit 1; }
+        failed=""
+        for file in $(cd "$out" && find . -type f | sed 's|^\./||' | sort); do
+          diff -u "{{.TREE}}/$file" "$out/$file" >&2 || failed="$failed $file"
+        done
+        # Generated files are named *.gen.* (ARCHITECTURE §4). Any such file in the tree that the generators
+        # no longer write (renamed output, removed generator) is an orphan; git-ignored tool and build
+        # directories are skipped.
+        orphans=$(cd "{{.TREE}}" && find . \( -name .git -o -name .claude -o -name node_modules -o -name dist \
+            -o -name coverage -o -name .task \) -prune -o -type f -name '*.gen.*' -print | sed 's|^\./||' | sort \
+          | while read -r file; do [ -f "$out/$file" ] || printf ' %s' "$file"; done)
+        [ -z "$failed" ] || echo "FAILED  generated code is out of date:$failed - run task generate and commit the result" >&2
+        [ -z "$orphans" ] || echo "FAILED  generated files not produced by task generate:$orphans - delete them or restore their generator" >&2
+        [ -z "$failed$orphans" ] || exit 1
+        echo "ok      generated code is up to date"
+
   check:
     desc: Run all gating targets in order; stops at the first failure
     cmds:
       - task: lint
+      - task: check:generated
       - task: build:web
       - task: check:licenses
       - task: test:gates
@@ -302,7 +353,40 @@ tasks:
   test:gates:
     desc: Prove that every quality gate fails when its rule is violated
     cmds:
-      - echo "test:gates - no tests yet"
+      - task: test:gates:generated
+
+  # Runs check:generated against a temporary copy of the contract and the generated files: the unchanged
+  # copy must pass, and every kind of drift must fail.
+  test:gates:generated:
+    internal: true
+    silent: true
+    cmds:
+      - |
+        tmp=$(mktemp -d) && trap 'rm -rf "$tmp"' EXIT || exit 1
+        files="api/openapi.yaml api/oapi-codegen.yaml server/internal/httpapi/openapi.gen.go web/src/api/schema.gen.ts"
+        reset() {
+          rm -rf "$tmp/tree"
+          for file in $files; do mkdir -p "$tmp/tree/$(dirname "$file")" && cp "$file" "$tmp/tree/$file" || exit 1; done
+        }
+        failed=0
+        expect() { # pass|fail, description
+          if task -d "{{.ROOT_DIR}}" --silent check:generated TREE="$tmp/tree" >"$tmp/log" 2>&1; then got=pass; else got=fail; fi
+          if [ "$got" = "$1" ]; then
+            echo "ok      gate generated code: $2"
+          else
+            echo "FAILED  gate generated code: $2 (check:generated: $got, want $1)"; cat "$tmp/log"; failed=1
+          fi
+        }
+        reset; expect pass "up-to-date code passes"
+        reset; printf '// edited\n' >>"$tmp/tree/server/internal/httpapi/openapi.gen.go"; expect fail "edited Go code fails"
+        reset; printf '// edited\n' >>"$tmp/tree/web/src/api/schema.gen.ts"; expect fail "edited TypeScript code fails"
+        reset; rm "$tmp/tree/web/src/api/schema.gen.ts"; expect fail "missing generated file fails"
+        reset; cp "$tmp/tree/web/src/api/schema.gen.ts" "$tmp/tree/web/src/api/old-schema.gen.ts"; expect fail "orphaned generated file (renamed output) fails"
+        reset; mkdir -p "$tmp/tree/server/internal/removed" && printf "package removed\n" >"$tmp/tree/server/internal/removed/removed.gen.go"; expect fail "orphaned generated file (removed generator) fails"
+        reset; sed 's/operationId: getReadyz/operationId: getReadiness/' api/openapi.yaml >"$tmp/tree/api/openapi.yaml"
+        cmp -s api/openapi.yaml "$tmp/tree/api/openapi.yaml" && { echo "FAILED  gate generated code: contract edit had no effect"; exit 1; }
+        expect fail "contract changed without regenerating fails"
+        exit $failed
 
   test:milestones:
     desc: Run all automated milestone demos (build tag "milestone")

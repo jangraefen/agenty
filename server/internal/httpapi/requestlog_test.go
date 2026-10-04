@@ -57,7 +57,7 @@ func requestRecords(records []map[string]any) []map[string]any {
 
 func TestRequestLoggingRecordsEachRequest(t *testing.T) {
 	logger, records := jsonLogger(t)
-	h := httpapi.NewRouter(httpapi.Options{Roles: []string{"api"}, Logger: logger})
+	h := httpapi.NewRouter(httpapi.Options{Roles: []string{roleAPI}, Logger: logger})
 
 	rec := do(t, h, http.MethodGet, "/healthz?token=query-secret")
 
@@ -79,7 +79,7 @@ func TestRequestLoggingRecordsEachRequest(t *testing.T) {
 
 func TestRequestLoggingRecordsUnknownRoutes(t *testing.T) {
 	logger, records := jsonLogger(t)
-	h := httpapi.NewRouter(httpapi.Options{Roles: []string{"api"}, Logger: logger})
+	h := httpapi.NewRouter(httpapi.Options{Roles: []string{roleAPI}, Logger: logger})
 
 	do(t, h, http.MethodGet, "/no/such/path")
 
@@ -93,7 +93,7 @@ func TestRequestLoggingRecordsUnknownRoutes(t *testing.T) {
 
 func TestRequestLoggingRedactsSecretsInPath(t *testing.T) {
 	logger, records := jsonLogger(t)
-	h := httpapi.NewRouter(httpapi.Options{Roles: []string{"api"}, Logger: logger})
+	h := httpapi.NewRouter(httpapi.Options{Roles: []string{roleAPI}, Logger: logger})
 
 	do(t, h, http.MethodGet, "/x/"+testSecret)
 
@@ -105,7 +105,7 @@ func TestRequestLoggingRedactsSecretsInPath(t *testing.T) {
 func TestPanicIsLoggedAsErrorWithRedaction(t *testing.T) {
 	logger, records := jsonLogger(t)
 	h := httpapi.NewRouter(httpapi.Options{
-		Roles:  []string{"api"},
+		Roles:  []string{roleAPI},
 		Logger: logger,
 		Routes: func(r gin.IRouter) {
 			r.GET("/boom", func(*gin.Context) { panic(errors.New("cannot connect with " + testSecret)) })
@@ -135,7 +135,7 @@ func TestPanicIsLoggedAsErrorWithRedaction(t *testing.T) {
 func TestReadinessFailureIsLoggedWithRedaction(t *testing.T) {
 	logger, records := jsonLogger(t)
 	h := httpapi.NewRouter(httpapi.Options{
-		Roles:  []string{"api"},
+		Roles:  []string{roleAPI},
 		Logger: logger,
 		Ready: func(context.Context) error {
 			return errors.New("dial postgres://agenty:" + testSecret + "@db:5432")

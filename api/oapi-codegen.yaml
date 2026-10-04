@@ -1,0 +1,10 @@
+# oapi-codegen configuration for the Gin server code of the public API (ARCHITECTURE §4, §13.1).
+# Run through `task generate:api`, which passes the output path; never run it by hand.
+# yaml-language-server: $schema=https://raw.githubusercontent.com/oapi-codegen/oapi-codegen/HEAD/configuration-schema.json
+package: httpapi
+generate:
+  gin-server: true
+  models: true
+compatibility:
+  # HealthStatusOk instead of Ok: enum constants stay unique as the contract grows.
+  always-prefix-enum-values: true

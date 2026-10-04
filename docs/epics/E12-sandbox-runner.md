@@ -45,6 +45,7 @@ The [common acceptance criteria](README.md#common-acceptance-criteria) apply in 
 - **AC-E12-8** — Sandboxed code cannot reach the container runtime socket, the host filesystem, or cloud metadata endpoints. *Verified by:* Invariant 14 suite.
 - **AC-E12-9** — The maintained runtime image builds with Bash, Python, Node.js, and the curated packages, versioned by digest. *Verified by:* `task build:images`.
 - **AC-E12-10** — The module tests pass inside a Colima or Lima VM on macOS. *Verified by:* Running `task test:module` in the VM.
+- **AC-E12-11** — CI runs the sandbox module tests with real `runsc` on Linux runners, not `insecure_dev_mode`. *Verified by:* CI job log showing the `runsc` runtime.
 
 ## Stories
 

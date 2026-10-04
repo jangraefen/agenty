@@ -21,7 +21,8 @@ A fresh installation is useful on day one and can be operated with confidence.
 - No-phone-home test via network capture in the integration stack.
 - Production Compose example.
 - Operator documentation: installation, `runsc` setup, configuration, backup and restore, upgrades, key management, the crypto-shredding limitation, hardening.
-- Release process: versioning, images, changelog.
+- Release workflow on GitHub Actions: a version tag builds and publishes images to GitHub Container Registry and generates a changelog.
+- License decision and `LICENSE` file before the first release (VISION §13).
 
 ## Out of scope
 
@@ -40,7 +41,8 @@ The [common acceptance criteria](README.md#common-acceptance-criteria) apply in 
 - **AC-E21-3** — A network capture during a full end-to-end run shows outbound traffic only to configured endpoints. *Verified by:* Invariant 12 suite.
 - **AC-E21-4** — Following the operator documentation on a clean VM installs a working production Compose deployment, including `runsc`, backup and restore, and an upgrade. *Verified by:* Manual verification checklist, recorded.
 - **AC-E21-5** — Documentation covers installation, configuration, key management, backup and restore, upgrades, hardening, and the crypto-shredding limitation. *Verified by:* Documentation review.
-- **AC-E21-6** — A tagged release publishes images and a changelog; `agenty --version` matches the tag. *Verified by:* Release checklist.
+- **AC-E21-6** — Pushing a version tag runs the release workflow, which publishes images to GitHub Container Registry and a changelog; `agenty --version` matches the tag. *Verified by:* The first release run.
+- **AC-E21-7** — A license is chosen, a `LICENSE` file is present, and VISION §13 is updated before the first release. *Verified by:* Repository review.
 
 ## Notes
 

@@ -70,7 +70,8 @@ E21 depends on all other epics.
 An epic is accepted only when all of its own acceptance criteria and all of the following hold:
 
 - All in-scope items are implemented with tests written first.
-- `task check` passes locally, including coverage, mutation, architecture, and license gates (ARCHITECTURE §15.3).
+- `task check` passes locally and all required CI checks pass, including coverage, mutation, architecture, and license gates (ARCHITECTURE §15.3, §15.4).
+- All changes reached `main` through squash-merged pull requests that reference their stories.
 - Acceptance criteria are checked off on the epic's GitHub issue only when their verification has been run and passed.
 - Invariants in ARCHITECTURE §3 that the epic touches have dedicated tests.
 - API changes are made in `api/` first; generated code is not hand-edited.

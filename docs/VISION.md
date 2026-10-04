@@ -151,4 +151,4 @@ Agenty is fully open source and free to self-host. Long-term development is fund
 
 ## 13. Open Questions
 
-None at the moment. New questions are recorded here as they arise.
+- **License.** The repository is public but not yet licensed. A license is chosen after the proof-of-concept stage and before the first release (see the release epic). Until then, external contributions cannot be accepted.

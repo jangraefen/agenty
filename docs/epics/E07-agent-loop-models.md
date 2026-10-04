@@ -46,7 +46,7 @@ The [common acceptance criteria](README.md#common-acceptance-criteria) apply in 
 - **AC-E07-5** — Exceeding the step or token limit fails the run with `step_limit`. *Verified by:* Module tests.
 - **AC-E07-6** — Tool calls reach the `ToolGateway` interface; with the deny-all stub, the model receives a tool error and the run continues. *Verified by:* Module tests.
 - **AC-E07-7** — Model configurations can be managed by administrators and referenced by harnesses; provider API keys are never logged or returned by the API. *Verified by:* Module tests and redaction tests.
-- **AC-E07-8** — `task test:nightly` runs a scenario against a configured real model and is not part of `task check`. *Verified by:* Manual run.
+- **AC-E07-8** — `task test:nightly` runs a scenario against a configured real model; it is not part of `task check` and runs in CI only on schedule, using a repository secret that pull-request workflows cannot access. *Verified by:* Manual run and the first scheduled CI run.
 
 ## Stories
 

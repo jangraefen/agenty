@@ -28,7 +28,7 @@ These documents are the source of truth for product, scope, and architecture. Do
 
 ## Commands
 
-All entry points live in `Taskfile.yml`; run `task --list` to see them. Prerequisites are Go, [Task](https://taskfile.dev) (not Taskwarrior: on macOS `brew install go-task`), Lefthook, golangci-lint, Node.js, and pnpm (web tools come from `web/pnpm-lock.yaml`); `task setup` verifies their versions and installs the git hooks. Targets: `test:unit`, `test:module`, `test:integration`, `test:e2e`, `test:ui`, `test:mutation`, `test:gates`, `test:milestone:Mx`, `test:nightly` (not gating), `test:images` (container smoke test, not in `check`), `check:licenses`, and `check`. CI (GitHub Actions) runs the same targets on every pull request; run `task check` locally before opening one.
+All entry points live in `Taskfile.yml`; run `task --list` to see them. Prerequisites are Go, [Task](https://taskfile.dev) (not Taskwarrior: on macOS `brew install go-task`), Lefthook, golangci-lint, go-licenses (`go install github.com/google/go-licenses/v2@v2.0.1`), Gremlins (`brew tap go-gremlins/tap && brew install gremlins`), Node.js, and pnpm (web tools come from `web/pnpm-lock.yaml`); `task setup` verifies their versions and installs the git hooks. Targets: `test:unit`, `test:module`, `test:integration`, `test:e2e`, `test:ui`, `test:mutation`, `test:gates`, `test:milestone:Mx`, `test:nightly` (not gating), `test:images` (container smoke test, not in `check`), `check:licenses`, `check:coverage`, and `check`. CI (GitHub Actions) runs the same targets on every pull request; run `task check` locally before opening one.
 
 ## Planning and tracking
 

@@ -8,9 +8,9 @@ Agenty is a fully open-source, self-hostable enterprise platform for building go
 
 ## Read before working
 
-1. [VISION.md](VISION.md) — why Agenty exists, principles (ranked), core concepts, trust model, non-goals.
-2. [CAPABILITIES.md](CAPABILITIES.md) — what ships in v1 versus Later / Explore.
-3. [ARCHITECTURE.md](ARCHITECTURE.md) — how it is built: decision record (§2), invariants (§3), layout, components, testing, dependencies, conventions (§17).
+1. [docs/VISION.md](docs/VISION.md) — why Agenty exists, principles (ranked), core concepts, trust model, non-goals.
+2. [docs/CAPABILITIES.md](docs/CAPABILITIES.md) — what ships in v1 versus Later / Explore.
+3. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — how it is built: decision record (§2), invariants (§3), layout, components, testing, dependencies, conventions (§17).
 
 These documents are the source of truth. Do not reopen decisions recorded in ARCHITECTURE.md §2 without recording a new decision there.
 

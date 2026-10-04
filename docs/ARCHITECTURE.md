@@ -61,6 +61,7 @@ Each decision lists what was chosen, why, and what was rejected. All decided 202
 | D23 | **CI on GitHub Actions with a pull-request workflow; squash merge only** (decided 2026-10-05). | Repository is public, so standard runners are free; required checks keep `main` green; squash merge gives one conventional commit per PR. | Local-only gates; rebase or merge commits. |
 | D24 | **Gin** as the HTTP framework for the public API (decided 2026-10-05). | Maintainer preference; mature and widely used; `oapi-codegen` generates Gin server code; supports streaming for server-sent events. | Standard library `net/http` routing; Echo; Chi. |
 | D22 | **Biome** for TypeScript linting and formatting (decided 2026-10-05). | One fast tool for lint and format; configuration already in the repository. | ESLint + Prettier. |
+| D25 | **pnpm, never npm,** as the package manager for `web/` and any Node tooling (decided 2026-10-05). | Maintainer decision; strict `node_modules` layout, content-addressable store, dependency build scripts blocked by default. | npm. |
 
 ---
 
@@ -458,6 +459,7 @@ A **scripted model** returns predefined responses (including tool calls) step by
 - **Go test tiers** are selected by build tag: untagged tests are unit tests; `module`, `integration`, `e2e`, and `milestone` tag the other tiers. A milestone demo is the test `TestMilestone<Mx>`.
 - **PostgreSQL in tests**: `server/internal/testinfra/pgtest` starts one PostgreSQL-with-pgvector container per test package (testcontainers-go, from `TestMain`) and gives each test its own database. `deploy/compose.yaml` runs the same pinned image for local development; a unit test keeps the two in sync. On macOS, the Task test targets point testcontainers-go at the active Docker context.
 - **Tools** (Go, Task, Lefthook, golangci-lint, Docker) are installed by the developer on the `PATH`. `task setup` verifies their versions (golangci-lint exactly, because lint results depend on it; the others as minimums) and installs the Lefthook hooks.
+- **Web tools**: Node.js and pnpm are `PATH` tools verified by `task setup` (minimums, matching `engines` and `packageManager` in `web/package.json`). The repository uses pnpm, never npm. Biome (the single source of its version; `biome.json` references the same schema version), TypeScript, Vite, and Vitest are dev dependencies pinned by `web/pnpm-lock.yaml`; the Task targets install them with `pnpm install --frozen-lockfile` when the lockfile changes. pnpm blocks dependency build scripts by default and none is allowed: no installed package needs one (Vite uses prebuilt native binaries). `task lint` runs Biome and the type check (`tsc --noEmit`), `task build:web` builds `web/dist` with Vite (also part of `task check`), and `task test:unit` runs Vitest.
 - **Lefthook**: pre-commit → lint, architecture rules, unit tests; pre-push → module tests.
 - **macOS**: gVisor requires Linux; `runsc`-based sandbox tests run in a Colima or Lima VM. Without it, sandbox tests fall back to `insecure_dev_mode` and report that clearly.
 
@@ -495,13 +497,16 @@ Verified 2026-10-04 against each project's repository. **Before adding any depen
 | Project | License |
 |---|---|
 | testcontainers-go (incl. its `postgres` module), Vitest, Testing Library, Task, Lefthook, Colima, actionlint | MIT |
-| Playwright, Gremlins, Stryker, Dex, Lima, go-licenses, Biome, Docker Engine and CLI | Apache-2.0 |
+| Playwright, Gremlins, Stryker, Dex, Lima, go-licenses, Docker Engine and CLI | Apache-2.0 |
+| Biome (@biomejs/biome npm package) | MIT OR Apache-2.0 |
 | axe-core | MPL-2.0 |
 | golangci-lint | GPL-3.0 (standalone tool, not linked) |
+| Node.js, pnpm, @vitejs/plugin-react, jsdom, @types/react, @types/react-dom | MIT |
+| TypeScript | Apache-2.0 |
 
 **Services used for development** (not dependencies of Agenty): GitHub Actions, CodeQL, Dependabot, GitHub Container Registry.
 
-**Transitive dependencies**: `task check:licenses` runs `go-licenses` over all Go modules and fails outside an allowlist; an npm equivalent is chosen and verified when `web/` is scaffolded.
+**Transitive dependencies**: `task check:licenses` runs `go-licenses` over all Go modules and fails outside an allowlist. For `web/`, `task check:licenses:web` runs `web/scripts/check-licenses.mjs` (plain Node, no dependency), which reads pnpm's built-in `pnpm licenses list --json` (every installed package in the lockfile, including transitive, private, and platform-specific optional ones; only the root package is not listed), evaluates SPDX expressions (`OR`: one side allowed; `AND`: both), and fails naming each package and license outside the allowlists defined in the script. It checks twice: production dependencies, which are shipped in the built assets, must be permissive (MIT, ISC, Apache-2.0, BSD-2-Clause, BSD-3-Clause, 0BSD); all dependencies, including build and test tools, may additionally be MIT-0, BlueOak-1.0.0, CC0-1.0, or MPL-2.0 (e.g., lightningcss inside Vite). A dedicated npm license checker (license-checker-rseidelsohn) was dropped on 2026-10-05 because it missed the optional platform binaries in pnpm's `node_modules` layout.
 
 ---
 

@@ -34,8 +34,8 @@ func openPool(t *testing.T, dsn string) *pgxpool.Pool {
 
 func newTestMigrator(t *testing.T, pool *pgxpool.Pool, fsys fstest.MapFS) *Migrator {
 	t.Helper()
-	m, err := newMigrator(pool, fsys)
-	require.NoError(t, err, "newMigrator")
+	m, err := NewMigrator(pool, WithMigrations(fsys))
+	require.NoError(t, err, "NewMigrator")
 	t.Cleanup(func() { _ = m.Close() })
 	return m
 }
@@ -55,7 +55,7 @@ var racingMigrations = fstest.MapFS{
 	"00001_create.sql": {Data: []byte(`-- +goose Up
 CREATE TABLE applied (version int NOT NULL);
 INSERT INTO applied VALUES (1);
-SELECT pg_sleep(1);
+SELECT pg_sleep(2);
 -- +goose Down
 DROP TABLE applied;
 `)},

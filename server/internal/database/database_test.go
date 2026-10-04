@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"net"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -46,10 +47,10 @@ func TestNewMigratorRejectsInvalidMigrations(t *testing.T) {
 	require.NoError(t, err, "Open")
 	t.Cleanup(pool.Close)
 
-	_, err = newMigrator(pool, fstest.MapFS{
+	_, err = NewMigrator(pool, WithMigrations(fstest.MapFS{
 		"00001_a.sql": {Data: []byte("-- +goose Up\nSELECT 1;\n")},
 		"00001_b.sql": {Data: []byte("-- +goose Up\nSELECT 1;\n")},
-	})
+	}))
 
 	assert.Error(t, err, "duplicate versions")
 }
@@ -76,4 +77,51 @@ func TestEmbeddedMigrationsAreValid(t *testing.T) {
 
 	require.NoError(t, err, "NewMigrator")
 	assert.NoError(t, m.Close(), "Close")
+}
+
+// silentHost accepts TCP connections and never answers, like a database host
+// that silently drops traffic. It returns a DSN without a connect timeout.
+func silentHost(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err, "listen")
+	var conns []net.Conn
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			conns = append(conns, c)
+		}
+	}()
+	t.Cleanup(func() {
+		_ = ln.Close()
+		<-done
+		for _, c := range conns {
+			_ = c.Close()
+		}
+	})
+	return "postgres://agenty:hunter2@" + ln.Addr().String() + "/agenty?sslmode=disable" //nolint:gosec // Test credential.
+}
+
+func TestReadyGivesUpOnASilentDatabaseHost(t *testing.T) {
+	pool, err := Open(t.Context(), silentHost(t))
+	require.NoError(t, err, "Open")
+	t.Cleanup(pool.Close)
+	m, err := NewMigrator(pool)
+	require.NoError(t, err, "NewMigrator")
+	t.Cleanup(func() { _ = m.Close() })
+
+	begin := time.Now()
+	// The context never expires: only Ready's own timeout ends the check.
+	err = Ready(context.WithoutCancel(t.Context()), pool, m)
+	elapsed := time.Since(begin)
+
+	require.Error(t, err, "Ready")
+	assert.NotContains(t, err.Error(), "hunter2", "Ready error leaks the password")
+	assert.GreaterOrEqual(t, elapsed, readyTimeout-100*time.Millisecond, "Ready returned before its timeout")
+	assert.Less(t, elapsed, readyTimeout+2*time.Second, "Ready outlasted its timeout")
 }

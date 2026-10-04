@@ -3,10 +3,13 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"time"
@@ -42,8 +45,52 @@ const envDatabaseURL = "AGENTY_DATABASE_URL"
 type Database struct {
 	// URL is a PostgreSQL connection URL or keyword/value string as accepted
 	// by pgx, including pool settings such as pool_max_conns. It may contain
-	// the password, so it is never logged.
+	// the password, so every printed form of a Database redacts it.
 	URL string
+}
+
+// redacted replaces a connection string that cannot be parsed, and so cannot
+// be printed without risking its password.
+const redacted = "[redacted]"
+
+// String returns the connection target as a URL without the password or any
+// other parameter, so that printing a Database, or a Config containing it,
+// never reveals the password (ARCHITECTURE §3 invariant 6).
+func (d Database) String() string {
+	c, err := pgconn.ParseConfig(d.URL)
+	if err != nil {
+		return redacted
+	}
+	u := url.URL{
+		Scheme: "postgres",
+		User:   url.User(c.User),
+		Host:   net.JoinHostPort(c.Host, strconv.Itoa(int(c.Port))),
+		Path:   "/" + c.Database,
+	}
+	return u.String()
+}
+
+// GoString is the %#v form, with the URL redacted as in String.
+func (d Database) GoString() string {
+	return fmt.Sprintf("config.Database{URL:%q}", d.String())
+}
+
+// Format prints d with every fmt verb in its redacted form: %#v as GoString,
+// %q quoted, and every other verb as String.
+func (d Database) Format(f fmt.State, verb rune) {
+	switch {
+	case verb == 'v' && f.Flag('#'):
+		_, _ = io.WriteString(f, d.GoString())
+	case verb == 'q':
+		_, _ = io.WriteString(f, strconv.Quote(d.String()))
+	default:
+		_, _ = io.WriteString(f, d.String())
+	}
+}
+
+// MarshalJSON encodes d with the URL redacted as in String.
+func (d Database) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct{ URL string }{URL: d.String()})
 }
 
 // LogValue logs the connection target without the password, so a Database
@@ -51,7 +98,7 @@ type Database struct {
 func (d Database) LogValue() slog.Value {
 	c, err := pgconn.ParseConfig(d.URL)
 	if err != nil {
-		return slog.StringValue("[redacted]")
+		return slog.StringValue(redacted)
 	}
 	return slog.GroupValue(
 		slog.String("host", c.Host),

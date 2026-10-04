@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -44,14 +45,28 @@ type Migrator struct {
 	provider *goose.Provider
 }
 
-// NewMigrator returns a Migrator for the migrations embedded in the binary.
-// Close releases it; the pool stays open.
-func NewMigrator(pool *pgxpool.Pool) (*Migrator, error) {
-	return newMigrator(pool, migrations.FS)
+// MigratorOption configures a Migrator.
+type MigratorOption func(*migratorOptions)
+
+type migratorOptions struct {
+	fsys fs.FS
 }
 
-// newMigrator returns a Migrator for the migrations at the root of fsys.
-func newMigrator(pool *pgxpool.Pool, fsys fs.FS) (*Migrator, error) {
+// WithMigrations makes the Migrator apply the migrations at the root of fsys
+// instead of those embedded in the binary. Tests use it to run migration sets
+// of their own.
+func WithMigrations(fsys fs.FS) MigratorOption {
+	return func(o *migratorOptions) { o.fsys = fsys }
+}
+
+// NewMigrator returns a Migrator, by default for the migrations embedded in
+// the binary. Close releases it; the pool stays open.
+func NewMigrator(pool *pgxpool.Pool, opts ...MigratorOption) (*Migrator, error) {
+	o := migratorOptions{fsys: migrations.FS}
+	for _, opt := range opts {
+		opt(&o)
+	}
+	fsys := o.fsys
 	locker, err := lock.NewPostgresSessionLocker(lockTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("create migration lock: %w", err)
@@ -88,10 +103,17 @@ func (m *Migrator) Close() error {
 	return m.provider.Close()
 }
 
+// readyTimeout bounds a readiness check, so that a database host that silently
+// drops traffic makes /readyz fail promptly instead of hanging.
+const readyTimeout = 2 * time.Second
+
 // Ready reports nil only when the database is reachable and every migration
 // known to m has been applied. Migrations applied by a newer instance that m
 // does not know do not make it unready.
+// The check gives up after readyTimeout, however long ctx lasts.
 func Ready(ctx context.Context, pool *pgxpool.Pool, m *Migrator) error {
+	ctx, cancel := context.WithTimeout(ctx, readyTimeout)
+	defer cancel()
 	if _, err := dbgen.New(pool).Ping(ctx); err != nil {
 		return fmt.Errorf("database unreachable: %w", err)
 	}

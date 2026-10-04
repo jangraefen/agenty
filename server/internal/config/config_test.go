@@ -2,6 +2,8 @@ package config_test
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -211,4 +213,56 @@ func TestDatabaseLogValueOfInvalidURLIsRedacted(t *testing.T) {
 
 	assert.NotContains(t, buf.String(), "hunter2", "log output leaks the password")
 	assert.Contains(t, buf.String(), "database=[redacted]", "invalid URL")
+}
+
+// TestPrintedConfigurationOmitsPassword covers every way a Config or Database
+// may end up in logs or errors: fmt verbs, slog handlers, and JSON
+// (ARCHITECTURE §3 invariant 6).
+func TestPrintedConfigurationOmitsPassword(t *testing.T) {
+	urls := map[string]string{ //nolint:gosec // Test credentials.
+		"url with password in user info": "postgres://agenty:hunter2@db.example:5433/agentydb?sslmode=disable",
+		"url with password in query":     "postgres://agenty@db.example:5433/agentydb?password=hunter2",
+		"keyword/value string":           "host=db.example port=5433 user=agenty password=hunter2 dbname=agentydb",
+		"invalid url":                    "postgres://agenty:hunter2@db.example:notaport/agentydb",
+	}
+	for name, url := range urls {
+		db := config.Database{URL: url}
+		cfg := config.Config{Server: config.Server{Address: ":8080"}, Database: db}
+		values := map[string]any{"Database": db, "*Database": &db, "Config": cfg, "*Config": &cfg}
+		for kind, v := range values {
+			t.Run(name+"/"+kind, func(t *testing.T) {
+				outputs := map[string]string{}
+				for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q"} {
+					outputs[verb] = fmt.Sprintf(verb, v)
+				}
+				var text, js bytes.Buffer
+				slog.New(slog.NewTextHandler(&text, nil)).Info("start", "value", v)
+				slog.New(slog.NewJSONHandler(&js, nil)).Info("start", "value", v)
+				outputs["slog text"] = text.String()
+				outputs["slog json"] = js.String()
+				encoded, err := json.Marshal(v)
+				require.NoError(t, err, "json.Marshal")
+				outputs["json"] = string(encoded)
+
+				for form, out := range outputs {
+					assert.NotContains(t, out, "hunter2", "%s leaks the password: %s", form, out)
+					if name != "invalid url" {
+						assert.Contains(t, out, "db.example", "%s omits the host: %s", form, out)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestDatabasePrintsTheTargetWithoutPassword(t *testing.T) {
+	db := config.Database{URL: "postgres://agenty:hunter2@db.example:5433/agentydb?sslmode=disable"} //nolint:gosec // Test credential.
+
+	assert.Equal(t, "postgres://agenty@db.example:5433/agentydb", db.String(), "String")
+	assert.Equal(t, "postgres://agenty@db.example:5433/agentydb", fmt.Sprintf("%v", db), "%v")
+	assert.Equal(t, `"postgres://agenty@db.example:5433/agentydb"`, fmt.Sprintf("%q", db), "%q")
+	assert.Equal(t, `config.Database{URL:"postgres://agenty@db.example:5433/agentydb"}`, fmt.Sprintf("%#v", db), "%#v")
+	assert.Equal(t, "{Server:{Address: ShutdownTimeout:0s} Database:postgres://agenty@db.example:5433/agentydb}",
+		fmt.Sprintf("%+v", config.Config{Database: db}), "%+v of Config")
+	assert.Equal(t, "[redacted]", config.Database{URL: "postgres://agenty:hunter2@db.example:notaport/x"}.String(), "invalid URL")
 }

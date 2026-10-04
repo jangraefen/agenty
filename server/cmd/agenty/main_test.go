@@ -46,7 +46,7 @@ func TestRunAbortsWhenTheDatabaseIsUnreachableWithoutLeakingThePassword(t *testi
 	path := writeConfig(t, "server:\n  address: 127.0.0.1:0\ndatabase:\n"+
 		"  url: postgres://agenty:hunter2@127.0.0.1:1/agenty?sslmode=disable&connect_timeout=2\n")
 
-	code := runContext(t.Context(), []string{"--config", path}, &stdout, &stderr, nil)
+	code := runContext(t.Context(), []string{"--config", path}, &stdout, &stderr, options{})
 
 	assert.Equal(t, 1, code, "exit code")
 	assert.Contains(t, stderr.String(), "database", "stderr must name the database")

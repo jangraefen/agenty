@@ -1,7 +1,7 @@
 # Agenty — Capabilities
 
 > **Status**: Draft
-> **Companion**: [VISION.md](VISION.md) defines why Agenty exists, its principles, and its non-goals. Every capability here must be consistent with it.
+> **Companions**: [VISION.md](VISION.md) defines why Agenty exists, its principles, and its non-goals. [ARCHITECTURE.md](ARCHITECTURE.md) defines how it is built. Every capability here must be consistent with both.
 
 Phases:
 
@@ -152,7 +152,7 @@ Phases:
 
 ## 10. Inputs for Architecture
 
-> The system architecture is specified in [docs/superpowers/specs/2026-10-04-agenty-system-architecture-design.md](docs/superpowers/specs/2026-10-04-agenty-system-architecture-design.md).
+> The system architecture, including how these constraints are met, is specified in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ### Constraints derived from the vision
 

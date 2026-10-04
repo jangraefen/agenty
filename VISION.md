@@ -1,7 +1,7 @@
 # Agenty — Product Vision
 
 > **Status**: Draft
-> **Companion**: [CAPABILITIES.md](CAPABILITIES.md) lists concrete capabilities and their phasing.
+> **Companions**: [CAPABILITIES.md](CAPABILITIES.md) lists concrete capabilities and their phasing. [ARCHITECTURE.md](ARCHITECTURE.md) defines how Agenty is built.
 
 ---
 

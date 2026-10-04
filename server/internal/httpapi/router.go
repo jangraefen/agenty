@@ -23,6 +23,9 @@ type Options struct {
 	Ready func(ctx context.Context) error
 	// Routes registers additional routes.
 	Routes func(r gin.IRouter)
+	// Logger receives request logs, readiness failures, and panics; it
+	// should redact secrets (logging.New). Nil means slog.Default().
+	Logger *slog.Logger
 }
 
 var releaseMode = sync.OnceFunc(func() { gin.SetMode(gin.ReleaseMode) })
@@ -32,8 +35,15 @@ func NewRouter(opts Options) http.Handler {
 	releaseMode()
 	r := gin.New()
 	r.HandleMethodNotAllowed = true
+	logger := opts.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	// The request logger runs outside recovery, so it records the 500 that
+	// recovery writes after a panic.
+	r.Use(RequestLogger(logger, "/healthz", "/readyz"))
 	r.Use(gin.CustomRecoveryWithWriter(io.Discard, func(c *gin.Context, err any) {
-		slog.ErrorContext(c.Request.Context(), "panic while handling request",
+		logger.ErrorContext(c.Request.Context(), "panic while handling request",
 			"method", c.Request.Method, "path", c.Request.URL.Path, "panic", err)
 		WriteProblem(c, http.StatusInternalServerError, "The server encountered an unexpected error.")
 	}))
@@ -51,7 +61,7 @@ func NewRouter(opts Options) http.Handler {
 	r.GET("/readyz", func(c *gin.Context) {
 		if opts.Ready != nil {
 			if err := opts.Ready(c.Request.Context()); err != nil {
-				slog.WarnContext(c.Request.Context(), "readiness check failed", "error", err)
+				logger.WarnContext(c.Request.Context(), "readiness check failed", "error", err)
 				WriteProblem(c, http.StatusServiceUnavailable, "The server is not ready to serve traffic.")
 				return
 			}

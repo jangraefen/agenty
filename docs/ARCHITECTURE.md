@@ -337,7 +337,7 @@ On deny or rejection, the model receives a tool error with the reason.
 
 ### 12.2 Observability
 
-- **Logging**: `log/slog` API, `charmbracelet/log` handler (text in development, JSON or logfmt in production), redacting wrapper handler.
+- **Logging**: `log/slog` API, `charmbracelet/log` handler (text in development, JSON or logfmt in production), redacting wrapper handler. Package `logging` builds the logger; configuration `log.format` (`text` default, `json`, `logfmt`) and `log.level` (`debug`, `info` default, `warn`, `error`; no slog offsets such as `info+2`), overridable with `AGENTY_LOG_FORMAT` and `AGENTY_LOG_LEVEL`. Components register secret values (passwords, tokens) with the logger's secret registry when they load them; the redacting handler removes them from the message, attribute keys and values, and nested groups of every record before formatting, also for attributes bound earlier with `With`. It renders values of kind `Any` (errors, structs, maps, `LogValuer`/`Stringer` results) to strings first, so the text it checks is the text written in every format, at the cost of structured JSON for such values; a nil pointer among them is written as `<nil>`. Durations, times, and floats, which the JSON format encodes differently from the text formats, are checked in both forms. The server sets the result as the `slog` default so libraries log through it, too. Gin request logging (`httpapi.RequestLogger`) records method, path, matched route, status, size, and duration (5xx at error level; the `/healthz` and `/readyz` probes always at debug level, a readiness failure is reported by its own warn record) and never the query string.
 - **Tracing**: OpenTelemetry spans for runs, model calls, tool calls, policy decisions, sandbox executions (OTel GenAI semantic conventions); OTLP export only when configured.
 - **Trace view** in the UI is rendered from the step log; no external stack required.
 
@@ -493,6 +493,8 @@ Verified 2026-10-04 against each project's repository. **Before adding any depen
 | MCP Go SDK | Apache-2.0 (new contributions) / MIT (not-yet-relicensed parts) |
 | openai-go, go-genai, aws-sdk-go-v2 (incl. smithy-go; their vendored copies of `singleflight` are BSD-3-Clause; checked 2026-10-05), go-oidc, opentelemetry-go | Apache-2.0 |
 | anthropic-sdk-go, charmbracelet/log, Gin, goccy/go-yaml (configuration file; already required by Gin) | MIT |
+| Dependencies of charmbracelet/log v1.0.0 (checked 2026-10-05): charmbracelet/lipgloss, colorprofile, x/ansi, x/cellbuf, x/term, go-logfmt/logfmt, muesli/termenv, lucasb-eyer/go-colorful, mattn/go-runewidth, rivo/uniseg, aymanbagabas/go-osc52, xo/terminfo | MIT |
+| golang.org/x/exp (dependency of charmbracelet/log) | BSD-3-Clause |
 | crewjam/saml | BSD-2-Clause |
 | distroless `static-debian13` (runtime base image; checked 2026-10-05) | Apache-2.0 (project); bundled Debian data packages (no executables) under their own licenses: ca-certificates MPL-2.0 (certificates) and GPL-2.0+ (packaging), tzdata public domain, media-types ad-hoc permissive, base-files GPL-2.0+, netbase GPL-2.0 (data and configuration files only; aggregated in the image, nothing linked into Agenty) |
 | openapi-typescript, openapi-fetch, React, Vite, TanStack Router/Query, shadcn/ui, Radix, Tailwind | MIT |

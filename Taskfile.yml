@@ -104,10 +104,10 @@ tasks:
           echo "ok      $image: $got, label $label, user $user"
 
   lint:
-    desc: Lint all Go modules, including architecture rules (depguard), and web/ with Biome
+    desc: Lint all Go modules (go mod tidy, golangci-lint with architecture rules via depguard) and web/ with Biome
     cmds:
       - for: { var: GO_MODULES }
-        cmd: cd {{.ITEM}} && golangci-lint run ./...
+        cmd: cd {{.ITEM}} && go mod tidy -diff && golangci-lint run ./...
       - task: lint:web
 
   # Web (web/): packages pinned by pnpm-lock.yaml and installed with pnpm (never npm); tools run from node_modules.

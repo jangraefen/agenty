@@ -17,6 +17,7 @@ import (
 	"github.com/jangraefen/agenty/server/internal/buildinfo"
 	"github.com/jangraefen/agenty/server/internal/config"
 	"github.com/jangraefen/agenty/server/internal/httpapi"
+	"github.com/jangraefen/agenty/server/internal/logging"
 	"github.com/jangraefen/agenty/server/internal/roles"
 )
 
@@ -83,8 +84,19 @@ func runContext(ctx context.Context, args []string, stdout, stderr io.Writer, on
 		_, _ = fmt.Fprintln(stderr, err)
 		return 1
 	}
-	if err := serve(ctx, cfg, selected, onStarted); err != nil {
+	// Components register secret values here as they load them (e.g.,
+	// database passwords) so that the logger redacts them.
+	secrets := logging.NewSecrets()
+	logger, err := logging.New(stderr, logging.Options{Format: cfg.Log.Format, Level: cfg.Log.Level}, secrets)
+	if err != nil {
 		_, _ = fmt.Fprintln(stderr, err)
+		return 1
+	}
+	// Libraries and the standard log package log through the redacting
+	// logger, too.
+	slog.SetDefault(logger)
+	if err := serve(ctx, cfg, logger, selected, onStarted); err != nil {
+		logger.ErrorContext(context.WithoutCancel(ctx), "agenty failed", "error", err)
 		return 1
 	}
 	return 0
@@ -92,7 +104,7 @@ func runContext(ctx context.Context, args []string, stdout, stderr io.Writer, on
 
 // serve starts the selected roles and blocks until ctx is canceled and all of
 // them have stopped. onStarted, if set, is called once all roles are set up.
-func serve(ctx context.Context, cfg config.Config, selected []roles.Role, onStarted func(net.Addr)) error {
+func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, selected []roles.Role, onStarted func(net.Addr)) error {
 	components := make(map[roles.Role]roles.Component, len(selected))
 	var listenAddr net.Addr
 	for _, r := range selected {
@@ -102,11 +114,11 @@ func serve(ctx context.Context, cfg config.Config, selected []roles.Role, onStar
 			if err != nil {
 				return fmt.Errorf("listen on %s: %w", cfg.Server.Address, err)
 			}
-			slog.InfoContext(ctx, "api role listening", "address", ln.Addr().String())
+			logger.InfoContext(ctx, "api role listening", "address", ln.Addr().String())
 			listenAddr = ln.Addr()
 			components[r] = apiComponent{
 				ln:      ln,
-				handler: httpapi.NewRouter(httpapi.Options{Roles: roles.Strings(selected)}),
+				handler: httpapi.NewRouter(httpapi.Options{Roles: roles.Strings(selected), Logger: logger}),
 				cfg:     cfg.Server,
 			}
 		case roles.Worker, roles.Scheduler:
@@ -115,12 +127,12 @@ func serve(ctx context.Context, cfg config.Config, selected []roles.Role, onStar
 		}
 	}
 
-	slog.InfoContext(ctx, "starting agenty", "version", buildinfo.Version, "roles", roles.Strings(selected))
+	logger.InfoContext(ctx, "starting agenty", "version", buildinfo.Version, "roles", roles.Strings(selected))
 	if onStarted != nil {
 		onStarted(listenAddr)
 	}
 	err := roles.Run(ctx, components)
-	slog.InfoContext(context.WithoutCancel(ctx), "agenty stopped")
+	logger.InfoContext(context.WithoutCancel(ctx), "agenty stopped")
 	return err
 }
 

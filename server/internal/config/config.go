@@ -5,23 +5,37 @@ package config
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"strconv"
 	"time"
 
 	"github.com/goccy/go-yaml"
+
+	"github.com/jangraefen/agenty/server/internal/logging"
 )
 
 // Defaults for values the configuration file may omit.
 const (
 	DefaultAddress         = ":8080"
 	DefaultShutdownTimeout = 30 * time.Second
+	DefaultLogFormat       = logging.FormatText
+	DefaultLogLevel        = slog.LevelInfo
 )
 
 // Config is the validated server configuration.
 type Config struct {
 	Server Server
+	Log    Log
+}
+
+// Log configures log output.
+type Log struct {
+	// Format is text (development) or json or logfmt (production).
+	Format logging.Format
+	// Level is the minimum level written: debug, info, warn, or error.
+	Level slog.Level
 }
 
 // Server configures the HTTP server of the api role.
@@ -39,6 +53,10 @@ type file struct {
 		Address         *string `yaml:"address"`
 		ShutdownTimeout *string `yaml:"shutdownTimeout"`
 	} `yaml:"server"`
+	Log struct {
+		Format *string `yaml:"format"`
+		Level  *string `yaml:"level"`
+	} `yaml:"log"`
 }
 
 // value is a raw setting together with where it came from.
@@ -74,6 +92,8 @@ func Load(path string, lookupEnv func(string) (string, bool)) (Config, error) {
 	errs := []error{
 		parseAddress(address, "server.address", &cfg.Server.Address),
 		parsePositiveDuration(shutdownTimeout, "server.shutdownTimeout", &cfg.Server.ShutdownTimeout),
+		parseLogFormat(setting(f.Log.Format, string(DefaultLogFormat), "AGENTY_LOG_FORMAT", lookupEnv), "log.format", &cfg.Log.Format),
+		parseLogLevel(setting(f.Log.Level, DefaultLogLevel.String(), "AGENTY_LOG_LEVEL", lookupEnv), "log.level", &cfg.Log.Level),
 	}
 	if err := errors.Join(errs...); err != nil {
 		return Config{}, fmt.Errorf("invalid configuration: %w", err)
@@ -101,6 +121,22 @@ func parseAddress(v value, field string, dst *string) error {
 		return fmt.Errorf("%s: %q has an invalid port", v.source(field), v.raw)
 	}
 	*dst = v.raw
+	return nil
+}
+
+func parseLogFormat(v value, field string, dst *logging.Format) error {
+	f, err := logging.ParseFormat(v.raw)
+	if err != nil {
+		return fmt.Errorf("%s: %q is not a log format: use text, json, or logfmt", v.source(field), v.raw)
+	}
+	*dst = f
+	return nil
+}
+
+func parseLogLevel(v value, field string, dst *slog.Level) error {
+	if err := dst.UnmarshalText([]byte(v.raw)); err != nil {
+		return fmt.Errorf("%s: %q is not a log level: use debug, info, warn, or error", v.source(field), v.raw)
+	}
 	return nil
 }
 

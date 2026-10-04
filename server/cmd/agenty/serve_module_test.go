@@ -31,7 +31,13 @@ type started struct {
 // roles are set up; addr is set only when the api role listens.
 func start(t *testing.T, roleList string) started {
 	t.Helper()
-	path := writeConfig(t, "server:\n  address: 127.0.0.1:0\n  shutdownTimeout: 5s\n")
+	return startWithConfig(t, roleList, "")
+}
+
+// startWithConfig is start with extra top-level configuration appended.
+func startWithConfig(t *testing.T, roleList, extraConfig string) started {
+	t.Helper()
+	path := writeConfig(t, "server:\n  address: 127.0.0.1:0\n  shutdownTimeout: 5s\n"+extraConfig)
 	ctx, cancel := context.WithCancel(context.Background())
 	startedAt := make(chan net.Addr, 1)
 	code := make(chan int, 1)
@@ -100,6 +106,44 @@ func TestServeReportsSelectedRoles(t *testing.T) {
 
 			assert.Equal(t, tt.want, got, "roles")
 			s.stop(t)
+		})
+	}
+}
+
+func TestServeLogsInConfiguredFormat(t *testing.T) {
+	tests := []struct {
+		format string
+		check  func(t *testing.T, line string)
+	}{
+		{"json", func(t *testing.T, line string) {
+			var rec map[string]any
+			require.NoError(t, json.Unmarshal([]byte(line), &rec), "line %q", line)
+			assert.Equal(t, "info", rec["level"])
+		}},
+		{"logfmt", func(t *testing.T, line string) {
+			assert.True(t, strings.HasPrefix(line, "time="), "line %q", line)
+			assert.Contains(t, line, "level=info")
+		}},
+		{"text", func(t *testing.T, line string) {
+			assert.Contains(t, line, "INFO")
+			assert.False(t, json.Valid([]byte(line)), "line %q", line)
+			assert.NotContains(t, line, "level=")
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.format, func(t *testing.T) {
+			s := startWithConfig(t, "api", "log:\n  format: "+tt.format+"\n")
+			healthRoles(t, s.addr)
+			s.stop(t)
+
+			lines := strings.Split(strings.TrimSpace(s.stderr.String()), "\n")
+			var requestLogged bool
+			for _, line := range lines {
+				tt.check(t, line)
+				requestLogged = requestLogged || strings.Contains(line, "/healthz")
+			}
+			assert.True(t, requestLogged, "no request log for /healthz in %q", s.stderr.String())
+			assert.Contains(t, s.stderr.String(), "api role listening")
 		})
 	}
 }

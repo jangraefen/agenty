@@ -29,6 +29,7 @@ tasks:
     silent: true
     cmds:
       - |
+        set +e # report every tool, then fail once
         failed=0
         report() { # name, installed version, ok (0/1), requirement, install hint
           if [ "$3" = 0 ]; then echo "ok      $1 $2"; else echo "FAILED  $1 ${2:-missing}: need $4 - $5"; failed=1; fi

@@ -93,7 +93,7 @@ agenty/
 ├── AGENTS.md        # Guidance for AI coding agents
 ├── .editorconfig, .golangci.yaml, biome.json   # Editor, Go lint, TS lint/format
 ├── .covergate.yaml  # Per-package coverage thresholds (§15.3)
-├── docs/            # VISION.md, CAPABILITIES.md, ARCHITECTURE.md, epics/
+├── docs/            # VISION.md, CAPABILITIES.md, ARCHITECTURE.md, ROADMAP.md, epics/, guides/, spikes/ (planned)
 ├── go.work          # Go workspace across the Go modules
 ├── api/             # Contracts: OpenAPI 3.1 (public API), protobuf/Connect (sandbox protocol),
 │                    # generated Go and TypeScript code
@@ -102,7 +102,6 @@ agenty/
 ├── sandbox/         # Go module → binary `agenty-sandbox`
 ├── web/             # React + Vite SPA → static assets
 ├── deploy/          # Dockerfiles, Docker Compose; Helm later
-├── docs/
 ├── go-licenses-allowlist.txt   # Licenses allowed for Go dependencies (§16)
 └── Taskfile.yml     # All build, test, and check entry points
 ```
@@ -464,7 +463,7 @@ A **scripted model** returns predefined responses (including tool calls) step by
 - **Tools** (Go, Task, Lefthook, golangci-lint, go-licenses, Gremlins, Docker) are installed by the developer on the `PATH`. `task setup` verifies their versions (golangci-lint, go-licenses, and Gremlins exactly, because lint results, detected licenses, and mutation results depend on them; the others as minimums) and installs the Lefthook hooks.
 - **Web tools**: Node.js and pnpm are `PATH` tools verified by `task setup` (minimums, matching `engines` and `packageManager` in `web/package.json`). The repository uses pnpm, never npm. Biome (the single source of its version; `biome.json` references the same schema version), TypeScript, Vite, and Vitest are dev dependencies pinned by `web/pnpm-lock.yaml`; the Task targets install them with `pnpm install --frozen-lockfile` when the lockfile changes. pnpm blocks dependency build scripts by default and none is allowed: no installed package needs one (Vite uses prebuilt native binaries). `task lint` runs Biome and the type check (`tsc --noEmit`), `task build:web` builds `web/dist` with Vite (also part of `task check`), and `task test:unit` runs Vitest.
 - **Lefthook**: pre-commit → lint, architecture rules, unit tests; pre-push → module tests.
-- **macOS**: gVisor requires Linux; `runsc`-based sandbox tests run in a Colima or Lima VM. Without it, sandbox tests fall back to `insecure_dev_mode` and report that clearly.
+- **macOS**: gVisor requires Linux; `runsc`-based sandbox tests run in a Colima or Lima VM, set up as described in the [macOS sandbox guide](guides/macos-sandbox.md). Without it, sandbox tests fall back to `insecure_dev_mode` and report that clearly.
 
 **CI (GitHub Actions)**
 

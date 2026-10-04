@@ -92,6 +92,7 @@ These must hold for every change. Each has a dedicated test suite (§15.3).
 agenty/
 ├── AGENTS.md        # Guidance for AI coding agents
 ├── .editorconfig, .golangci.yaml, biome.json   # Editor, Go lint, TS lint/format
+├── .covergate.yaml  # Per-package coverage thresholds (§15.3)
 ├── docs/            # VISION.md, CAPABILITIES.md, ARCHITECTURE.md, epics/
 ├── go.work          # Go workspace across the Go modules
 ├── api/             # Contracts: OpenAPI 3.1 (public API), protobuf/Connect (sandbox protocol),
@@ -442,7 +443,7 @@ A **scripted model** returns predefined responses (including tool calls) step by
 
 ### 15.3 Quality gates
 
-- **Coverage**: ≥ 90 % statement coverage per package; 100 % statement coverage for `toolgateway`, `policy`, `credentials`, `identity`, `runs`. (Go tooling measures statements, not branches; mutation testing covers branch logic.)
+- **Coverage**: ≥ 90 % statement coverage per package; 100 % statement coverage for `toolgateway`, `policy`, `credentials`, `identity`, `runs` (including their subpackages). (Go tooling measures statements, not branches; mutation testing covers branch logic.) `task test:unit` and `task test:module` write coverage profiles for all Go modules to `coverage/`; `task check:coverage` (part of `task check`) merges them (a statement counts as covered if either tier covers it) and fails naming each package and its coverage below its threshold. The check is a small in-repository Go program, `server/internal/testinfra/covergate` (standard library plus the existing `goccy/go-yaml`; no new tool). Thresholds live in `.covergate.yaml`: a default plus import-path patterns (`/...` includes subpackages; the longest match wins), so the 100 % thresholds apply as soon as those packages exist. Packages with statements but no tests count as 0 %. There are no exclusions: `func main()` stays measured and command packages reach the threshold by testing `run()`. Never lower a threshold to make the gate pass.
 - **Mutation testing** on those packages: Gremlins (Go), Stryker (TypeScript); initial efficacy threshold 80 %.
 - **Gate self-tests**: `task test:gates` proves every gate fails when its rule is violated.
 - **Architecture rules** (golangci-lint `depguard`, in `.golangci.yaml`): only `toolgateway` imports `server/internal/executor/...` (executor packages may import each other); `server` and `sandbox` do not import each other. Access to another package's `internal/` is already rejected by the Go compiler. That `web/` only uses the generated client is enforced separately for the web app (E03).
@@ -456,7 +457,7 @@ A **scripted model** returns predefined responses (including tool calls) step by
 
 **Local**
 
-- **Task** targets: `test:unit`, `test:module`, `test:integration`, `test:e2e`, `test:ui`, `test:mutation`, `test:gates`, `test:milestone:Mx` (automated milestone demos), `test:nightly` (real model, not gating), `check:licenses`, and `check` (all gating tiers plus gates). `task check` must pass before merging to `main`. Tiers without tests report "no tests yet" and succeed.
+- **Task** targets: `test:unit`, `test:module`, `test:integration`, `test:e2e`, `test:ui`, `test:mutation`, `test:gates`, `test:milestone:Mx` (automated milestone demos), `test:nightly` (real model, not gating), `check:licenses`, `check:coverage`, and `check` (all gating tiers plus gates). `task check` must pass before merging to `main`. Tiers without tests report "no tests yet" and succeed.
 - **Go test tiers** are selected by build tag: untagged tests are unit tests; `module`, `integration`, `e2e`, and `milestone` tag the other tiers. A milestone demo is the test `TestMilestone<Mx>`.
 - **PostgreSQL in tests**: `server/internal/testinfra/pgtest` starts one PostgreSQL-with-pgvector container per test package (testcontainers-go, from `TestMain`) and gives each test its own database. `deploy/compose.yaml` runs the same pinned image for local development; a unit test keeps the two in sync. On macOS, the Task test targets point testcontainers-go at the active Docker context.
 - **Tools** (Go, Task, Lefthook, golangci-lint, Docker) are installed by the developer on the `PATH`. `task setup` verifies their versions (golangci-lint exactly, because lint results depend on it; the others as minimums) and installs the Lefthook hooks.

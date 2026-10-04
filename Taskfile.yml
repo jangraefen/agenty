@@ -109,6 +109,7 @@ tasks:
       - task: test:gates
       - task: test:unit
       - task: test:module
+      - task: check:coverage
       - task: test:integration
       - task: test:e2e
       - task: test:ui
@@ -130,7 +131,8 @@ tasks:
   test:unit:
     desc: Run unit tests
     cmds:
-      - go test -count=1 {{.GO_PACKAGES}}
+      - mkdir -p coverage
+      - go test -count=1 -coverprofile=coverage/unit.out {{.GO_PACKAGES}}
       - task: test:unit:web
 
   test:unit:web:
@@ -144,7 +146,13 @@ tasks:
     desc: Run module tests (build tag "module")
     cmds:
       - task: go-tier
-        vars: { TIER: module }
+        vars: { TIER: module, COVER: "true" }
+
+  check:coverage:
+    desc: Check per-package statement coverage of the unit and module tiers against .covergate.yaml (ARCHITECTURE §15.3)
+    cmds:
+      # The module profile is absent while the tier has no tests (go-tier removes stale profiles).
+      - go run ./server/internal/testinfra/covergate -config .covergate.yaml coverage/unit.out $(ls coverage/module.out 2>/dev/null)
 
   test:integration:
     desc: Run integration tests against the Docker Compose stack (build tag "integration")
@@ -199,6 +207,7 @@ tasks:
       PATTERN: '{{if .RUN}}^func {{.RUN}}\b{{else}}^//go:build .*\b{{.TIER}}\b{{end}}'
     cmds:
       - |
+        {{if .COVER}}mkdir -p coverage && rm -f coverage/{{.TIER}}.out{{end}}
         if grep -rqE --include='*_test.go' '{{.PATTERN}}' {{.GO_MODULES}}; then
           # testcontainers-go ignores Docker contexts; on macOS (Colima, Lima, Docker Desktop) point it at the
           # active context's socket and tell it the socket path inside the VM.
@@ -206,7 +215,7 @@ tasks:
             export DOCKER_HOST="${DOCKER_HOST:-$(docker context inspect --format '{{"{{"}}.Endpoints.docker.Host{{"}}"}}' 2>/dev/null)}"
             export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE="${TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE:-/var/run/docker.sock}"
           fi
-          go test -count=1 -tags {{.TIER}} {{if .RUN}}-run '^{{.RUN}}$'{{end}} {{.GO_PACKAGES}}
+          go test -count=1 -tags {{.TIER}} {{if .COVER}}-coverprofile=coverage/{{.TIER}}.out {{end}}{{if .RUN}}-run '^{{.RUN}}$'{{end}} {{.GO_PACKAGES}}
         else
           echo "{{if .RUN}}test:milestone:{{.MILESTONE}}{{else}}test:{{.TIER}}{{end}} - no tests yet"
         fi

@@ -12,9 +12,7 @@ Agenty is a fully open-source, self-hostable enterprise platform for building go
 2. [docs/CAPABILITIES.md](docs/CAPABILITIES.md) — what ships in v1 versus Later / Explore.
 3. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — how it is built: decision record (§2), invariants (§3), layout, components, testing, dependencies, conventions (§17).
 
-Planned work is organized as epics in [docs/epics/](docs/epics/README.md), sequenced into milestones in [docs/ROADMAP.md](docs/ROADMAP.md).
-
-These documents are the source of truth. Do not reopen decisions recorded in ARCHITECTURE.md §2 without recording a new decision there.
+These documents are the source of truth for product, scope, and architecture. Do not reopen decisions recorded in ARCHITECTURE.md §2 without recording a new decision there.
 
 ## Non-negotiables
 
@@ -29,7 +27,27 @@ These documents are the source of truth. Do not reopen decisions recorded in ARC
 
 ## Commands
 
-All entry points live in `Taskfile.yml` (to be created with the first code). Planned targets: `test:unit`, `test:module`, `test:integration`, `test:e2e`, `test:ui`, `test:mutation`, `check:licenses`, and `check`. `task check` must pass before merging to `main`. There is no CI; everything runs locally.
+All entry points live in `Taskfile.yml` (to be created with the first code). Planned targets: `test:unit`, `test:module`, `test:integration`, `test:e2e`, `test:ui`, `test:mutation`, `test:gates`, `test:milestone:Mx`, `test:nightly` (not gating), `check:licenses`, and `check`. `task check` must pass before merging to `main`. There is no CI; everything runs locally.
+
+## Planning and tracking
+
+Planning is split between the repository and GitHub (`jangraefen/agenty`). Each kind of information has exactly one home:
+
+| What | Where | How to find or change it |
+|---|---|---|
+| Epic scope and acceptance-criteria definitions | `docs/epics/Exx-*.md` | Edit the file; mirror the change to the epic issue body in the same change |
+| Milestone order, contents, and acceptance-criteria definitions | `docs/ROADMAP.md` | Edit the file; mirror the change to the GitHub milestone description in the same change |
+| Epic status and acceptance-criteria progress | GitHub issue labeled `epic` (E01 = #1 … E21 = #21) | `gh issue view <n>`; check off criteria in the issue body only after their verification has passed |
+| Stories | GitHub sub-issues of the epic issue, labeled `story`, same milestone as the epic | See below |
+| Milestone status | GitHub milestones M1–M6 | `gh api repos/jangraefen/agenty/milestones` |
+
+Never record status, progress, or stories in the repository files.
+
+**Working with stories**
+- Find work: `gh issue list --label story --milestone "M1 — Foundations"`; epics: `gh issue list --label epic`.
+- Create a story: `gh issue create --label story --milestone "<milestone title>" --title "<Exx>: <story title>" --body "<description, references to AC-Exx-n it satisfies, test approach>"`, then attach it to its epic: `gh api repos/jangraefen/agenty/issues/<epic number>/sub_issues -F sub_issue_id=$(gh api repos/jangraefen/agenty/issues/<story number> --jq .id)`.
+- Every story references the acceptance criteria it contributes to. Close a story only when its tests pass under `task check`.
+- Reference the story in commits and pull requests (e.g., `Closes #42`).
 
 ## Git
 

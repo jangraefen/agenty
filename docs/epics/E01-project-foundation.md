@@ -1,6 +1,6 @@
 # E01 — Project foundation
 
-> **Status**: Proposed
+> **GitHub issue**: [#1](https://github.com/jangraefen/agenty/issues/1) — status, progress, and stories are tracked there
 > **Milestone**: [M1](../ROADMAP.md#m1--foundations)
 > **Depends on**: None
 
@@ -36,18 +36,18 @@ A repository in which every later epic can add code with tests, quality gates, a
 
 The [common acceptance criteria](README.md#common-acceptance-criteria) apply in addition to:
 
-- [ ] **AC-E01-1** — On a clean checkout, `task setup` installs all tooling prerequisites and the Lefthook git hooks on macOS and Linux. *Verified by:* Following the setup procedure on a clean checkout.
-- [ ] **AC-E01-2** — `task check` runs every tier target from ARCHITECTURE §15.4 and passes on the skeleton; tiers without tests report that explicitly instead of failing. *Verified by:* `task check`.
-- [ ] **AC-E01-3** — golangci-lint runs on all Go modules with the configured linters plus `errcheck`, `govet`, `ineffassign`, and `unused`; Biome runs on `web/`. *Verified by:* `task test:gates`.
-- [ ] **AC-E01-4** — `depguard` architecture rules are configured; an import that violates them (e.g., an executor package imported outside `toolgateway`) fails the lint step. *Verified by:* `task test:gates`.
-- [ ] **AC-E01-5** — Coverage gates are configured per package (≥ 90 % statements by default, 100 % statements for `toolgateway`, `policy`, `credentials`, `identity`, `runs`); a package below its threshold fails `task check`. *Verified by:* `task test:gates`.
-- [ ] **AC-E01-6** — Gremlins mutation testing runs on the critical packages with an efficacy threshold (initially 80 %); falling below it fails `task test:mutation`. *Verified by:* `task test:gates`.
-- [ ] **AC-E01-7** — `task check:licenses` runs `go-licenses` against an allowlist; a module with a disallowed license fails the check. *Verified by:* `task test:gates`.
-- [ ] **AC-E01-8** — `task test:gates` exists and proves each gate above fails when violated, using temporary fixtures that do not touch the real tree. *Verified by:* `task test:gates`.
-- [ ] **AC-E01-9** — A testcontainers-go helper starts an isolated PostgreSQL with pgvector per test package; a Compose file starts the same for local use. *Verified by:* Module test of the helper.
-- [ ] **AC-E01-10** — `task build:images` builds the `agenty` and `agenty-sandbox` images; both binaries respond to `--version`. *Verified by:* `task build:images` and a smoke test.
-- [ ] **AC-E01-11** — The macOS guide for Colima or Lima exists, and following it runs a container with `runsc`. *Verified by:* Manual verification, recorded in the guide.
+- **AC-E01-1** — On a clean checkout, `task setup` installs all tooling prerequisites and the Lefthook git hooks on macOS and Linux. *Verified by:* Following the setup procedure on a clean checkout.
+- **AC-E01-2** — `task check` runs every tier target from ARCHITECTURE §15.4 and passes on the skeleton; tiers without tests report that explicitly instead of failing. *Verified by:* `task check`.
+- **AC-E01-3** — golangci-lint runs on all Go modules with the configured linters plus `errcheck`, `govet`, `ineffassign`, and `unused`; Biome runs on `web/`. *Verified by:* `task test:gates`.
+- **AC-E01-4** — `depguard` architecture rules are configured; an import that violates them (e.g., an executor package imported outside `toolgateway`) fails the lint step. *Verified by:* `task test:gates`.
+- **AC-E01-5** — Coverage gates are configured per package (≥ 90 % statements by default, 100 % statements for `toolgateway`, `policy`, `credentials`, `identity`, `runs`); a package below its threshold fails `task check`. *Verified by:* `task test:gates`.
+- **AC-E01-6** — Gremlins mutation testing runs on the critical packages with an efficacy threshold (initially 80 %); falling below it fails `task test:mutation`. *Verified by:* `task test:gates`.
+- **AC-E01-7** — `task check:licenses` runs `go-licenses` against an allowlist; a module with a disallowed license fails the check. *Verified by:* `task test:gates`.
+- **AC-E01-8** — `task test:gates` exists and proves each gate above fails when violated, using temporary fixtures that do not touch the real tree. *Verified by:* `task test:gates`.
+- **AC-E01-9** — A testcontainers-go helper starts an isolated PostgreSQL with pgvector per test package; a Compose file starts the same for local use. *Verified by:* Module test of the helper.
+- **AC-E01-10** — `task build:images` builds the `agenty` and `agenty-sandbox` images; both binaries respond to `--version`. *Verified by:* `task build:images` and a smoke test.
+- **AC-E01-11** — The macOS guide for Colima or Lima exists, and following it runs a container with `runsc`. *Verified by:* Manual verification, recorded in the guide.
 
 ## Stories
 
-_To be defined._
+Stories are tracked as sub-issues of [#1](https://github.com/jangraefen/agenty/issues/1).

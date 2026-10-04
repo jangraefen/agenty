@@ -1,6 +1,6 @@
 # E03 — Web foundation
 
-> **Status**: Proposed
+> **GitHub issue**: [#3](https://github.com/jangraefen/agenty/issues/3) — status, progress, and stories are tracked there
 > **Milestone**: [M1](../ROADMAP.md#m1--foundations)
 > **Depends on**: [E01](E01-project-foundation.md), [E02](E02-server-core.md)
 
@@ -33,14 +33,14 @@ The single-page application shell that all UI work builds on, hostable embedded 
 
 The [common acceptance criteria](README.md#common-acceptance-criteria) apply in addition to:
 
-- [ ] **AC-E03-1** — `web/` builds static assets with Vite; `task check` runs Biome, the TypeScript type check, and Vitest. *Verified by:* `task check`.
-- [ ] **AC-E03-2** — The same build works against different API base URLs by changing only `config.json`. *Verified by:* Playwright test with two configurations.
-- [ ] **AC-E03-3** — `agenty` serves the embedded UI with client-side routing fallback; serving can be disabled by configuration. *Verified by:* Module test and Playwright.
-- [ ] **AC-E03-4** — The build served by a separate static server on another origin talks to the API when that origin is configured. *Verified by:* Playwright.
-- [ ] **AC-E03-5** — The shell provides layout, navigation, error boundary, loading states, and a not-found page; axe-core reports no violations on shell pages. *Verified by:* Playwright with axe-core.
-- [ ] **AC-E03-6** — UI code accesses the API only through the generated client. *Verified by:* Biome or lint rule, covered by `task test:gates`.
-- [ ] **AC-E03-7** — Stryker runs with a configured threshold; an npm license checker is selected, recorded in ARCHITECTURE §16, and fails on disallowed licenses. *Verified by:* `task test:gates`.
+- **AC-E03-1** — `web/` builds static assets with Vite; `task check` runs Biome, the TypeScript type check, and Vitest. *Verified by:* `task check`.
+- **AC-E03-2** — The same build works against different API base URLs by changing only `config.json`. *Verified by:* Playwright test with two configurations.
+- **AC-E03-3** — `agenty` serves the embedded UI with client-side routing fallback; serving can be disabled by configuration. *Verified by:* Module test and Playwright.
+- **AC-E03-4** — The build served by a separate static server on another origin talks to the API when that origin is configured. *Verified by:* Playwright.
+- **AC-E03-5** — The shell provides layout, navigation, error boundary, loading states, and a not-found page; axe-core reports no violations on shell pages. *Verified by:* Playwright with axe-core.
+- **AC-E03-6** — UI code accesses the API only through the generated client. *Verified by:* Biome or lint rule, covered by `task test:gates`.
+- **AC-E03-7** — Stryker runs with a configured threshold; an npm license checker is selected, recorded in ARCHITECTURE §16, and fails on disallowed licenses. *Verified by:* `task test:gates`.
 
 ## Stories
 
-_To be defined._
+Stories are tracked as sub-issues of [#3](https://github.com/jangraefen/agenty/issues/3).

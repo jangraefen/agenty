@@ -1,6 +1,8 @@
 # Epics
 
-Epics are cut by capability: each delivers a usable capability end to end (backend, API, UI, tests). E01–E03 are horizontal foundations. Every v1 row in [CAPABILITIES.md](../CAPABILITIES.md) belongs to exactly one epic. Stories are added to each epic file in the next planning step. Sequencing into milestones is defined in the [roadmap](../ROADMAP.md).
+Epics are cut by capability: each delivers a usable capability end to end (backend, API, UI, tests). E01–E03 are horizontal foundations. Every v1 row in [CAPABILITIES.md](../CAPABILITIES.md) belongs to exactly one epic. Sequencing into milestones is defined in the [roadmap](../ROADMAP.md).
+
+**Where things live**: these files define each epic's scope and acceptance criteria. Status, acceptance-criteria progress, and stories are tracked only on GitHub: each epic is an issue labeled `epic` (E01 = #1 … E21 = #21), and stories are sub-issues labeled `story`.
 
 | Epic | Name | Goal | Depends on |
 |---|---|---|---|
@@ -69,7 +71,7 @@ An epic is accepted only when all of its own acceptance criteria and all of the 
 
 - All in-scope items are implemented with tests written first.
 - `task check` passes locally, including coverage, mutation, architecture, and license gates (ARCHITECTURE §15.3).
-- Acceptance criteria are checked off in the epic file only when their verification has been run and passed.
+- Acceptance criteria are checked off on the epic's GitHub issue only when their verification has been run and passed.
 - Invariants in ARCHITECTURE §3 that the epic touches have dedicated tests.
 - API changes are made in `api/` first; generated code is not hand-edited.
 - New dependencies are license-checked and recorded in ARCHITECTURE §16.
@@ -78,4 +80,4 @@ An epic is accepted only when all of its own acceptance criteria and all of the 
 
 ## Epic file template
 
-Each epic file contains: status, dependencies, goal, capabilities covered, in scope, out of scope, references, acceptance criteria (numbered `AC-Exx-n`, each with how it is verified), optional notes, and stories. Stories reference the acceptance criteria they satisfy.
+Each epic file contains: GitHub issue link, milestone, dependencies, goal, capabilities covered, in scope, out of scope, references, acceptance criteria (numbered `AC-Exx-n`, each with how it is verified), optional notes, and a pointer to its stories on GitHub. Stories reference the acceptance criteria they satisfy.

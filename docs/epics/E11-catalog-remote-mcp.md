@@ -1,6 +1,6 @@
 # E11 — Catalog & remote MCP
 
-> **Status**: Proposed
+> **GitHub issue**: [#11](https://github.com/jangraefen/agenty/issues/11) — status, progress, and stories are tracked there
 > **Milestone**: [M3](../ROADMAP.md#m3--connected-agents)
 > **Depends on**: [E08](E08-toolgateway-policy.md), [E10](E10-connections-credentials.md)
 
@@ -38,15 +38,15 @@ The enablement team publishes governed building blocks, and agents use remote MC
 
 The [common acceptance criteria](README.md#common-acceptance-criteria) apply in addition to:
 
-- [ ] **AC-E11-1** — Catalog items have versions and a scope (workspace or enterprise); visibility follows the scope. *Verified by:* Module tests.
-- [ ] **AC-E11-2** — Publishing from workspace to enterprise scope requires review by the enablement team; reviews can approve or reject. *Verified by:* Module tests.
-- [ ] **AC-E11-3** — Tools listed by an MCP server can be referenced by harnesses only after their metadata (effect, trust, idempotency) is set. *Verified by:* Module tests.
-- [ ] **AC-E11-4** — Remote MCP calls use per-user OAuth tokens for on-behalf-of execution and static tokens for service accounts; servers with static credentials cannot be used on behalf of users. *Verified by:* Integration tests with mock MCP servers.
-- [ ] **AC-E11-5** — Imported OpenAPI operations become typed tools; arguments are validated and calls use broker credentials. *Verified by:* Integration tests.
-- [ ] **AC-E11-6** — Model configurations are catalog items referenced by harnesses; configurations created in E07 are migrated. *Verified by:* Module tests.
-- [ ] **AC-E11-7** — A harness calls a mock remote MCP tool through the gateway with policy applied. *Verified by:* Integration test.
-- [ ] **AC-E11-8** — The catalog UI supports browsing, publishing, and reviewing. *Verified by:* Playwright with axe-core.
+- **AC-E11-1** — Catalog items have versions and a scope (workspace or enterprise); visibility follows the scope. *Verified by:* Module tests.
+- **AC-E11-2** — Publishing from workspace to enterprise scope requires review by the enablement team; reviews can approve or reject. *Verified by:* Module tests.
+- **AC-E11-3** — Tools listed by an MCP server can be referenced by harnesses only after their metadata (effect, trust, idempotency) is set. *Verified by:* Module tests.
+- **AC-E11-4** — Remote MCP calls use per-user OAuth tokens for on-behalf-of execution and static tokens for service accounts; servers with static credentials cannot be used on behalf of users. *Verified by:* Integration tests with mock MCP servers.
+- **AC-E11-5** — Imported OpenAPI operations become typed tools; arguments are validated and calls use broker credentials. *Verified by:* Integration tests.
+- **AC-E11-6** — Model configurations are catalog items referenced by harnesses; configurations created in E07 are migrated. *Verified by:* Module tests.
+- **AC-E11-7** — A harness calls a mock remote MCP tool through the gateway with policy applied. *Verified by:* Integration test.
+- **AC-E11-8** — The catalog UI supports browsing, publishing, and reviewing. *Verified by:* Playwright with axe-core.
 
 ## Stories
 
-_To be defined._
+Stories are tracked as sub-issues of [#11](https://github.com/jangraefen/agenty/issues/11).

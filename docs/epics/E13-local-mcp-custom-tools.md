@@ -1,6 +1,6 @@
 # E13 — Local MCP & custom tools
 
-> **Status**: Proposed
+> **GitHub issue**: [#13](https://github.com/jangraefen/agenty/issues/13) — status, progress, and stories are tracked there
 > **Milestone**: [M4](../ROADMAP.md#m4--sandbox-skills--schedules)
 > **Depends on**: [E11](E11-catalog-remote-mcp.md), [E12](E12-sandbox-runner.md)
 
@@ -33,13 +33,13 @@ Local MCP servers and image-based custom tools run governed inside the sandbox.
 
 The [common acceptance criteria](README.md#common-acceptance-criteria) apply in addition to:
 
-- [ ] **AC-E13-1** — Local MCP catalog entries require an image digest, a credential-to-environment mapping, and an egress allowlist. *Verified by:* Module tests.
-- [ ] **AC-E13-2** — Each run and identity gets its own session; different users never share an instance; sessions end with their run. *Verified by:* Integration tests.
-- [ ] **AC-E13-3** — Sessions receive the acting user's delegated credential in personal contexts and the service account's credential in workspace contexts. *Verified by:* Integration tests.
-- [ ] **AC-E13-4** — Custom tools run as images with typed schemas and return validated results. *Verified by:* Integration tests.
-- [ ] **AC-E13-5** — Publishing local MCP entries or custom tools to enterprise scope requires review. *Verified by:* Module tests.
-- [ ] **AC-E13-6** — A sample local MCP server and a sample custom tool work end to end through the gateway. *Verified by:* E2E test and invariant 14 suite.
+- **AC-E13-1** — Local MCP catalog entries require an image digest, a credential-to-environment mapping, and an egress allowlist. *Verified by:* Module tests.
+- **AC-E13-2** — Each run and identity gets its own session; different users never share an instance; sessions end with their run. *Verified by:* Integration tests.
+- **AC-E13-3** — Sessions receive the acting user's delegated credential in personal contexts and the service account's credential in workspace contexts. *Verified by:* Integration tests.
+- **AC-E13-4** — Custom tools run as images with typed schemas and return validated results. *Verified by:* Integration tests.
+- **AC-E13-5** — Publishing local MCP entries or custom tools to enterprise scope requires review. *Verified by:* Module tests.
+- **AC-E13-6** — A sample local MCP server and a sample custom tool work end to end through the gateway. *Verified by:* E2E test and invariant 14 suite.
 
 ## Stories
 
-_To be defined._
+Stories are tracked as sub-issues of [#13](https://github.com/jangraefen/agenty/issues/13).

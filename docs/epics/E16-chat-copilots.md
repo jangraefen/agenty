@@ -1,6 +1,6 @@
 # E16 — Chat copilots
 
-> **Status**: Proposed
+> **GitHub issue**: [#16](https://github.com/jangraefen/agenty/issues/16) — status, progress, and stories are tracked there
 > **Milestone**: [M5](../ROADMAP.md#m5--copilots--knowledge)
 > **Depends on**: [E09](E09-approvals.md)
 
@@ -34,14 +34,14 @@ Users talk to purpose-built copilots in the web portal.
 
 The [common acceptance criteria](README.md#common-acceptance-criteria) apply in addition to:
 
-- [ ] **AC-E16-1** — A chat conversation is one run that alternates between `running` and `waiting_input`; each message resumes it. *Verified by:* Module tests.
-- [ ] **AC-E16-2** — Responses stream to the UI via server-sent events. *Verified by:* Playwright.
-- [ ] **AC-E16-3** — In interactive mode, write effects require an inline confirmation by the user, recorded as an approval. *Verified by:* Integration tests and Playwright.
-- [ ] **AC-E16-4** — History is kept within a conversation and never shared across conversations. *Verified by:* Module tests.
-- [ ] **AC-E16-5** — A conversation continues after a server restart. *Verified by:* Crash test.
-- [ ] **AC-E16-6** — Only the harness audience can start conversations. *Verified by:* Module tests.
-- [ ] **AC-E16-7** — A full conversation including a confirmation works in the UI and passes accessibility checks. *Verified by:* Playwright with axe-core.
+- **AC-E16-1** — A chat conversation is one run that alternates between `running` and `waiting_input`; each message resumes it. *Verified by:* Module tests.
+- **AC-E16-2** — Responses stream to the UI via server-sent events. *Verified by:* Playwright.
+- **AC-E16-3** — In interactive mode, write effects require an inline confirmation by the user, recorded as an approval. *Verified by:* Integration tests and Playwright.
+- **AC-E16-4** — History is kept within a conversation and never shared across conversations. *Verified by:* Module tests.
+- **AC-E16-5** — A conversation continues after a server restart. *Verified by:* Crash test.
+- **AC-E16-6** — Only the harness audience can start conversations. *Verified by:* Module tests.
+- **AC-E16-7** — A full conversation including a confirmation works in the UI and passes accessibility checks. *Verified by:* Playwright with axe-core.
 
 ## Stories
 
-_To be defined._
+Stories are tracked as sub-issues of [#16](https://github.com/jangraefen/agenty/issues/16).

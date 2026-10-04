@@ -1,6 +1,6 @@
 # E20 — Oversight & quality
 
-> **Status**: Proposed
+> **GitHub issue**: [#20](https://github.com/jangraefen/agenty/issues/20) — status, progress, and stories are tracked there
 > **Milestone**: [M6](../ROADMAP.md#m6--governance--release)
 > **Depends on**: [E06](E06-run-engine.md), [E16](E16-chat-copilots.md), [E19](E19-observability-cost.md)
 
@@ -34,11 +34,11 @@ Central teams keep oversight, and builders gain confidence in changes.
 
 The [common acceptance criteria](README.md#common-acceptance-criteria) apply in addition to:
 
-- [ ] **AC-E20-1** — The inventory lists every harness across workspaces with owner, tools, data access, cost, last run, and schedules (including disabled ones); only central roles can see it. *Verified by:* Module tests and Playwright.
-- [ ] **AC-E20-2** — Workspace administrators can reassign a harness owner; the change is audited. *Verified by:* Module tests.
-- [ ] **AC-E20-3** — The playground runs a draft version without activating it. *Verified by:* Integration tests.
-- [ ] **AC-E20-4** — Example runs can be saved, replayed against a chosen version, and compared side by side. *Verified by:* Integration tests and Playwright.
-- [ ] **AC-E20-5** — The replay side-effect strategy is decided, recorded in ARCHITECTURE §2, and enforced: replay never repeats real side effects. *Verified by:* Integration tests.
+- **AC-E20-1** — The inventory lists every harness across workspaces with owner, tools, data access, cost, last run, and schedules (including disabled ones); only central roles can see it. *Verified by:* Module tests and Playwright.
+- **AC-E20-2** — Workspace administrators can reassign a harness owner; the change is audited. *Verified by:* Module tests.
+- **AC-E20-3** — The playground runs a draft version without activating it. *Verified by:* Integration tests.
+- **AC-E20-4** — Example runs can be saved, replayed against a chosen version, and compared side by side. *Verified by:* Integration tests and Playwright.
+- **AC-E20-5** — The replay side-effect strategy is decided, recorded in ARCHITECTURE §2, and enforced: replay never repeats real side effects. *Verified by:* Integration tests.
 
 ## Notes
 
@@ -46,4 +46,4 @@ The [common acceptance criteria](README.md#common-acceptance-criteria) apply in 
 
 ## Stories
 
-_To be defined._
+Stories are tracked as sub-issues of [#20](https://github.com/jangraefen/agenty/issues/20).

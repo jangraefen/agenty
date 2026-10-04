@@ -1,6 +1,6 @@
 # E15 — Knowledge
 
-> **Status**: Proposed
+> **GitHub issue**: [#15](https://github.com/jangraefen/agenty/issues/15) — status, progress, and stories are tracked there
 > **Milestone**: [M5](../ROADMAP.md#m5--copilots--knowledge)
 > **Depends on**: [E10](E10-connections-credentials.md), [E11](E11-catalog-remote-mcp.md), [E12](E12-sandbox-runner.md)
 
@@ -36,14 +36,14 @@ Agents retrieve from uploaded documents and S3 with citations.
 
 The [common acceptance criteria](README.md#common-acceptance-criteria) apply in addition to:
 
-- [ ] **AC-E15-1** — Upload and S3 sources can be added (S3 credentials via the broker); ingestion jobs are durable and retried on failure. *Verified by:* Module tests.
-- [ ] **AC-E15-2** — PDF, DOCX, HTML, and Markdown are parsed in one-shot sandboxes; parser failures are reported per document. *Verified by:* Integration tests.
-- [ ] **AC-E15-3** — Hybrid search fuses vector and full-text results; on a fixed labeled corpus, recall@5 is at least 0.8. *Verified by:* Retrieval quality test.
-- [ ] **AC-E15-4** — Search returns only documents from sources whose audience includes the acting identity. *Verified by:* Module tests.
-- [ ] **AC-E15-5** — `search_knowledge` results taint the run with the knowledge source. *Verified by:* Module tests.
-- [ ] **AC-E15-6** — Results include source and location for citations, and the UI displays them. *Verified by:* Integration tests and Playwright.
-- [ ] **AC-E15-7** — Knowledge sources can be managed in the UI. *Verified by:* Playwright with axe-core.
+- **AC-E15-1** — Upload and S3 sources can be added (S3 credentials via the broker); ingestion jobs are durable and retried on failure. *Verified by:* Module tests.
+- **AC-E15-2** — PDF, DOCX, HTML, and Markdown are parsed in one-shot sandboxes; parser failures are reported per document. *Verified by:* Integration tests.
+- **AC-E15-3** — Hybrid search fuses vector and full-text results; on a fixed labeled corpus, recall@5 is at least 0.8. *Verified by:* Retrieval quality test.
+- **AC-E15-4** — Search returns only documents from sources whose audience includes the acting identity. *Verified by:* Module tests.
+- **AC-E15-5** — `search_knowledge` results taint the run with the knowledge source. *Verified by:* Module tests.
+- **AC-E15-6** — Results include source and location for citations, and the UI displays them. *Verified by:* Integration tests and Playwright.
+- **AC-E15-7** — Knowledge sources can be managed in the UI. *Verified by:* Playwright with axe-core.
 
 ## Stories
 
-_To be defined._
+Stories are tracked as sub-issues of [#15](https://github.com/jangraefen/agenty/issues/15).

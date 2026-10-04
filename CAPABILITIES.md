@@ -54,17 +54,19 @@ Phases:
 
 | Capability | Phase | Notes |
 |---|---|---|
-| Starter kit of maintained connectors | v1 | Common enterprise systems, so a fresh install is usable on day one. Initial set to be decided, e.g., GitLab, GitHub, Jira, Confluence, ServiceNow, Microsoft 365. Likely delivered as MCP servers. |
+| Starter kit of curated connectors | v1 | Tested catalog entries and reference deployments for selected open-source MCP servers of common enterprise systems, so a fresh install is usable on day one. Initial set to be decided, e.g., GitLab, GitHub, Jira, Confluence, ServiceNow, Microsoft 365. Connector code lives outside the Agenty repository; servers must meet the dependency constraints in §10. |
 | Catalog with visibility scopes | v1 | Workspace and enterprise. Department scope comes with hierarchical workspaces. |
 | Review and publishing flow | v1 | Enablement team approves components before wider publication. |
-| MCP client | v1 | |
+| MCP client: remote servers | v1 | Streamable HTTP. Per-user OAuth (MCP authorization) enables on-behalf-of calls; servers with a static credential are bound to service accounts only. |
+| MCP client: local servers | v1 | stdio MCP servers run as sandbox sessions from digest-pinned images, one instance per run and identity, with an egress allowlist. |
 | MCP server | Later | Expose Agenty agents and tools to other MCP clients. |
 | OpenAPI 3.x import | v1 | Turns internal REST APIs into typed tools. |
 | Credential brokering | v1 | OAuth2 (incl. PKCE), on-behalf-of delegation, service account credentials. Write-only secrets, never exposed to models, scripts, or builders. mTLS later. |
 | Service account credentials | v1 | Agenty-issued API tokens or OAuth client credentials for calling entry points. Per-connector downstream credentials: username/password (rotation reminders, can be disallowed by policy), OAuth client credentials (preferred), OAuth authorization-code grants (records who consented). Token exchange and external secret stores (e.g., Vault) later. |
 | Sandboxed custom tools (Python, Node.js) | v1 | Ephemeral, resource-limited, egress allowlist. Published by the enablement team or by technical builders. |
 | Scoped tool publishing | v1 | Technical builders publish to their team scope; wider scopes require review. Business builders use tools but do not create them. The same review applies to skills that contain scripts. |
-| Knowledge connectors | v1 | Start with file upload, S3-compatible storage, Confluence, SharePoint. Jira, ServiceNow, SQL later. |
+| Knowledge connectors | v1 | Confluence and SharePoint searched live through their own search APIs with the caller's delegated credential (no copies, exact permissions). File upload and S3-compatible storage indexed in pgvector with hybrid search. Jira, ServiceNow, SQL later. |
+| Indexed connectors with ACL sync | Later | Semantic indexing of Confluence, SharePoint, and others where live search quality is insufficient. |
 | Permission-aware retrieval | v1 | Enforce source-system ACLs for the acting identity. |
 | Citations | v1 | Link answers back to source documents and passages. |
 
@@ -82,7 +84,9 @@ Phases:
 
 | Capability | Phase | Notes |
 |---|---|---|
-| Policy evaluation (OPA) before every tool call | v1 | |
+| Policy evaluation (OPA) before every tool call | v1 | Strictest result wins (deny > require approval > allow); ungranted tools are denied. |
+| Central policy bundles | v1 | Compliance-authored Rego, uploaded or loaded as OPA bundles (HTTP, OCI, directory); signed bundles supported; every decision records the policy version. |
+| Custom harness Rego | v1 | Technical builders add Rego to a harness; restrict-only (deny / require approval), restricted built-ins, validated on save, optional `opa test` suites. |
 | Untrusted-content tracking | v1 | Policies can restrict actions influenced by untrusted input. |
 | Centrally mandated approval gates | v1 | Builders can add gates, not remove mandated ones. |
 | Approvals inbox (web) | v1 | Personal context: the run's user approves. Workspace context: any workspace member approves. |
@@ -102,6 +106,7 @@ Phases:
 | Workspaces | v1 | Team collaboration under common ownership; isolation of harnesses, schedules, service accounts, data, and budgets. No credentials of their own. |
 | Workspace service accounts | v1 | Non-human identities for API calls and workspace schedules; usable by every member of the workspace; every run records the configuring person. |
 | RBAC | v1 | |
+| Harness audience | v1 | Who may call a harness: workspace members only, specific IdP groups, or all authenticated users. Groups come from OIDC/SAML claims until SCIM is available. |
 | Attribute-based access via policy | Later | |
 | Agent identities and on-behalf-of execution | v1 | Intersection of agent and caller permissions. |
 | Hierarchical workspaces (department → team) | Later | |
@@ -146,6 +151,8 @@ Phases:
 ---
 
 ## 10. Inputs for Architecture
+
+> The system architecture is specified in [docs/superpowers/specs/2026-10-04-agenty-system-architecture-design.md](docs/superpowers/specs/2026-10-04-agenty-system-architecture-design.md).
 
 ### Constraints derived from the vision
 

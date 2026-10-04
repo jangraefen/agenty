@@ -25,7 +25,7 @@ No enterprise edition. No feature paywall. Everything an enterprise needs to run
 
 1. **No enterprise tax.** SSO, RBAC, workspaces, audit trails, policy enforcement, and cost attribution are core features, not upsells.
 2. **Harnesses, not flowcharts.** Agents are model-driven: builders describe the situation, the available tools, and the limits, and the agent decides the steps. Builders define the whole harness around a model — entry points, instructions, tools, skills, knowledge, rules, approvals, and expected output. What a developer achieves with an agent framework in code, a business builder achieves by composing catalog tools and writing skills in plain language.
-3. **Central enablement, decentralized building.** Central teams publish the building blocks — connectors, tools, skills, templates, model configurations, policies — and set standards once. Teams compose agents from what is approved instead of waiting for IT to build them. Agenty ships with a maintained starter kit of connectors for common enterprise systems, so builders can be productive from day one rather than waiting for a catalog to be filled.
+3. **Central enablement, decentralized building.** Central teams publish the building blocks — connectors, tools, skills, templates, model configurations, policies — and set standards once. Teams compose agents from what is approved instead of waiting for IT to build them. Agenty ships with a curated starter kit of tested catalog entries for open-source MCP servers of common enterprise systems, so builders can be productive from day one rather than waiting for a catalog to be filled.
 4. **Governed by default.** Every agent action passes through identity, policy, and audit, whether or not the builder knows these mechanisms exist.
 
 ## 4. Principles
@@ -69,6 +69,7 @@ Shared vocabulary for all future specifications.
   - **Approvals** — which actions require human sign-off, and by whom.
   - **Output contract** — the structure the agent's result must have.
   - **Identity and grants** — what the agent itself is allowed to access.
+  - **Audience** — who may call the harness: workspace members only, specific groups, or everyone in the enterprise (e.g., an HR copilot for all employees).
 - **Tool** — A typed, permission-scoped capability (e.g., "ServiceNow: close request"), backed by an MCP server, an imported OpenAPI operation, or sandboxed custom code. Tools are published by the enablement team or by technical builders; business builders use them but do not create them.
 - **Skill** — A package of domain expertise: plain-language instructions, optionally bundled with scripts (Bash, Python, Node.js) and resources (templates, reference data) the agent can use. Skills follow the open Agent Skills format where possible. They are the primary way builders give agents expertise: business builders write the instructions, and scripts let technical builders — or business builders who are comfortable with a little code — encode logic that is better expressed deterministically.
 - **Workflow** — A composition of harnesses with control flow and approval gates, for processes that require mandated determinism (fixed step order, fan-out, hand-offs between teams). Most agents need no workflow. Workflows are graphs, not DAGs: loops and retries are allowed.

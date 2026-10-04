@@ -149,7 +149,7 @@ Phases:
 
 ### Constraints derived from the vision
 
-- **Open, self-hostable dependencies.** Every v1 capability must work with dependencies that are open source and free to self-host, without requiring a commercial or enterprise tier of any dependency (VISION principle 3).
+- **Open, self-hostable dependencies.** Every v1 capability must work with required dependencies that are open source and free to self-host, without needing a commercial tier of any of them (VISION principle 3). Commercial products may be supported as optional integrations. Dependency licenses must also permit offering Agenty as a hosted service (VISION, Sustainability).
 - **Operability.** A regular enterprise IT team must be able to run Agenty (principle 6); minimize the number of distinct stateful components.
 - **Framework-agnostic definition.** The harness definition must not leak the agent framework or runtime chosen internally (principle 5). The runtime may use an existing framework.
 - **Deterministic enforcement outside the model.** Identity, policy (OPA), approvals, and untrusted-content tracking sit in the execution path of every tool call and script execution, not in prompts (VISION trust model).

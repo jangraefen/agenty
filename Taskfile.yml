@@ -193,7 +193,9 @@ tasks:
           # --ignore matches by string prefix, so the trailing slash keeps it from also matching other
           # modules such as github.com/jangraefen/agenty-sdk or github.com/jangraefen/agenty/server-x. A package
           # at a module root (none exists) would not be ignored and would fail the check.
-          if out=$(GOOS=${platform%/*} GOARCH=${platform#*/} go-licenses check \
+          # The test-tier build tags (those of go-tier) make --include_tests also see imports of tagged test
+          # files; they are added to any GOFLAGS already set.
+          if out=$(GOOS=${platform%/*} GOARCH=${platform#*/} GOFLAGS="${GOFLAGS:+$GOFLAGS }-tags=module,integration,e2e,milestone" go-licenses check \
               --ignore github.com/jangraefen/agenty/server/ --ignore github.com/jangraefen/agenty/sandbox/ \
               --allowed_licenses="$allowed" "$@" 2>&1); then
             echo "ok      licenses go {{.MODULE}} $scope $platform"

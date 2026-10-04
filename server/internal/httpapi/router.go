@@ -24,6 +24,9 @@ type Options struct {
 	Ready func(ctx context.Context) error
 	// Routes registers additional routes.
 	Routes func(r gin.IRouter)
+	// Logger receives request logs, readiness failures, and panics; it
+	// should redact secrets (logging.New). Nil means slog.Default().
+	Logger *slog.Logger
 }
 
 var releaseMode = sync.OnceFunc(func() { gin.SetMode(gin.ReleaseMode) })
@@ -33,8 +36,15 @@ func NewRouter(opts Options) http.Handler {
 	releaseMode()
 	r := gin.New()
 	r.HandleMethodNotAllowed = true
+	logger := opts.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	// The request logger runs outside recovery, so it records the 500 that
+	// recovery writes after a panic.
+	r.Use(RequestLogger(logger, "/healthz", "/readyz"))
 	r.Use(gin.CustomRecoveryWithWriter(io.Discard, func(c *gin.Context, err any) {
-		slog.ErrorContext(c.Request.Context(), "panic while handling request",
+		logger.ErrorContext(c.Request.Context(), "panic while handling request",
 			"method", c.Request.Method, "path", c.Request.URL.Path, "panic", err)
 		WriteProblem(c, http.StatusInternalServerError, "The server encountered an unexpected error.")
 	}))
@@ -45,7 +55,7 @@ func NewRouter(opts Options) http.Handler {
 		WriteProblem(c, http.StatusMethodNotAllowed, "The resource does not support this method.")
 	})
 
-	RegisterHandlersWithOptions(r, &server{roles: append([]string{}, opts.Roles...), ready: opts.Ready},
+	RegisterHandlersWithOptions(r, &server{roles: append([]string{}, opts.Roles...), ready: opts.Ready, logger: logger},
 		GinServerOptions{ErrorHandler: parameterProblem})
 	if opts.Routes != nil {
 		opts.Routes(r)
@@ -61,8 +71,9 @@ func parameterProblem(c *gin.Context, _ error, status int) {
 
 // server implements the operations of the contract in api/openapi.yaml.
 type server struct {
-	roles []string
-	ready func(ctx context.Context) error
+	roles  []string
+	ready  func(ctx context.Context) error
+	logger *slog.Logger
 }
 
 var _ ServerInterface = (*server)(nil)
@@ -76,7 +87,7 @@ func (s *server) GetHealthz(c *gin.Context) {
 func (s *server) GetReadyz(c *gin.Context) {
 	if s.ready != nil {
 		if err := s.ready(c.Request.Context()); err != nil {
-			slog.WarnContext(c.Request.Context(), "readiness check failed", "error", err)
+			s.logger.WarnContext(c.Request.Context(), "readiness check failed", "error", err)
 			WriteProblem(c, http.StatusServiceUnavailable, "The server is not ready to serve traffic.")
 			return
 		}

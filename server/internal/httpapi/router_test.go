@@ -15,6 +15,9 @@ import (
 	"github.com/jangraefen/agenty/server/internal/httpapi"
 )
 
+// roleAPI is the api role name used by the router tests.
+const roleAPI = "api"
+
 func do(t *testing.T, h http.Handler, method, target string) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
@@ -41,7 +44,7 @@ func assertProblem(t *testing.T, rec *httptest.ResponseRecorder, status int, ins
 }
 
 func TestHealthzReportsActiveRoles(t *testing.T) {
-	h := httpapi.NewRouter(httpapi.Options{Roles: []string{"api", "scheduler"}})
+	h := httpapi.NewRouter(httpapi.Options{Roles: []string{roleAPI, "scheduler"}})
 
 	rec := do(t, h, http.MethodGet, "/healthz")
 
@@ -49,7 +52,7 @@ func TestHealthzReportsActiveRoles(t *testing.T) {
 	assert.Equal(t, "application/json; charset=utf-8", rec.Header().Get("Content-Type"), "Content-Type")
 	body := decode[httpapi.Health](t, rec)
 	assert.Equal(t, httpapi.HealthStatusOk, body.Status, "status")
-	assert.Equal(t, []string{"api", "scheduler"}, body.Roles, "roles")
+	assert.Equal(t, []string{roleAPI, "scheduler"}, body.Roles, "roles")
 }
 
 func TestHealthzReportsEmptyRolesAsArray(t *testing.T) {
@@ -62,17 +65,17 @@ func TestHealthzReportsEmptyRolesAsArray(t *testing.T) {
 }
 
 func TestHealthzDoesNotShareRolesWithCaller(t *testing.T) {
-	roles := []string{"api"}
+	roles := []string{roleAPI}
 	h := httpapi.NewRouter(httpapi.Options{Roles: roles})
 	roles[0] = "worker"
 
 	rec := do(t, h, http.MethodGet, "/healthz")
 
-	assert.Equal(t, []string{"api"}, decode[httpapi.Health](t, rec).Roles, "roles")
+	assert.Equal(t, []string{roleAPI}, decode[httpapi.Health](t, rec).Roles, "roles")
 }
 
 func TestReadyzReportsReadyWithoutChecks(t *testing.T) {
-	h := httpapi.NewRouter(httpapi.Options{Roles: []string{"api"}})
+	h := httpapi.NewRouter(httpapi.Options{Roles: []string{roleAPI}})
 
 	rec := do(t, h, http.MethodGet, "/readyz")
 
@@ -82,7 +85,7 @@ func TestReadyzReportsReadyWithoutChecks(t *testing.T) {
 
 func TestReadyzReportsReadyWhenCheckPasses(t *testing.T) {
 	h := httpapi.NewRouter(httpapi.Options{
-		Roles: []string{"api"},
+		Roles: []string{roleAPI},
 		Ready: func(context.Context) error { return nil },
 	})
 
@@ -94,7 +97,7 @@ func TestReadyzReportsReadyWhenCheckPasses(t *testing.T) {
 
 func TestReadyzReportsNotReadyAsProblem(t *testing.T) {
 	h := httpapi.NewRouter(httpapi.Options{
-		Roles: []string{"api"},
+		Roles: []string{roleAPI},
 		Ready: func(context.Context) error { return errors.New("database unreachable") },
 	})
 
@@ -106,7 +109,7 @@ func TestReadyzReportsNotReadyAsProblem(t *testing.T) {
 func TestReadyzDoesNotLeakCheckError(t *testing.T) {
 	const checkErr = "dial tcp db.internal:5432: user=agenty database=agenty"
 	h := httpapi.NewRouter(httpapi.Options{
-		Roles: []string{"api"},
+		Roles: []string{roleAPI},
 		Ready: func(context.Context) error { return errors.New(checkErr) },
 	})
 
@@ -119,7 +122,7 @@ func TestReadyzDoesNotLeakCheckError(t *testing.T) {
 }
 
 func TestUnknownRouteIsProblem(t *testing.T) {
-	h := httpapi.NewRouter(httpapi.Options{Roles: []string{"api"}})
+	h := httpapi.NewRouter(httpapi.Options{Roles: []string{roleAPI}})
 
 	rec := do(t, h, http.MethodGet, "/no/such/path")
 
@@ -127,7 +130,7 @@ func TestUnknownRouteIsProblem(t *testing.T) {
 }
 
 func TestWrongMethodIsProblem(t *testing.T) {
-	h := httpapi.NewRouter(httpapi.Options{Roles: []string{"api"}})
+	h := httpapi.NewRouter(httpapi.Options{Roles: []string{roleAPI}})
 
 	rec := do(t, h, http.MethodPost, "/healthz")
 
@@ -137,7 +140,7 @@ func TestWrongMethodIsProblem(t *testing.T) {
 
 func TestPanicIsProblemWithoutInternals(t *testing.T) {
 	h := httpapi.NewRouter(httpapi.Options{
-		Roles: []string{"api"},
+		Roles: []string{roleAPI},
 		Routes: func(r gin.IRouter) {
 			r.GET("/boom", func(*gin.Context) { panic("secret internal detail") })
 		},
@@ -151,7 +154,7 @@ func TestPanicIsProblemWithoutInternals(t *testing.T) {
 
 func TestWriteProblemUsesGivenStatusAndDetail(t *testing.T) {
 	h := httpapi.NewRouter(httpapi.Options{
-		Roles: []string{"api"},
+		Roles: []string{roleAPI},
 		Routes: func(r gin.IRouter) {
 			r.GET("/teapot", func(c *gin.Context) { httpapi.WriteProblem(c, http.StatusTeapot, "short and stout") })
 		},

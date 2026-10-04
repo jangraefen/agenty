@@ -112,8 +112,8 @@ func TestContractIsOpenAPI31(t *testing.T) {
 func TestServerServesContractOperations(t *testing.T) {
 	c := loadContract(t)
 	routers := map[string]http.Handler{
-		"ready":     httpapi.NewRouter(httpapi.Options{Roles: []string{"api"}}),
-		"not ready": httpapi.NewRouter(httpapi.Options{Roles: []string{"api"}, Ready: func(context.Context) error { return errors.New("down") }}),
+		"ready":     httpapi.NewRouter(httpapi.Options{Roles: []string{roleAPI}}),
+		"not ready": httpapi.NewRouter(httpapi.Options{Roles: []string{roleAPI}, Ready: func(context.Context) error { return errors.New("down") }}),
 	}
 	for path, item := range c.Paths {
 		for method, op := range item.operations() {

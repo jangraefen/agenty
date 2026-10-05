@@ -35,7 +35,6 @@ func TestInvariant_DefaultDeny(t *testing.T) {
 			del := &gatewaytest.Tool{Name: "tickets_delete", Result: json.RawMessage(`{}`)}
 			audit := &gatewaytest.Audit{}
 			gw, err := toolgateway.New(toolgateway.Config{
-				RunID:        runID,
 				MaxToolCalls: 100,
 				Policy:       &gatewaytest.Policy{},
 				Granted:      tt.granted,
@@ -43,8 +42,9 @@ func TestInvariant_DefaultDeny(t *testing.T) {
 				Audit:        audit,
 			})
 			require.NoError(t, err)
+			run := gw.Start()
 
-			result, err := gw.Call(context.Background(), toolgateway.ToolCall{Name: tt.call})
+			result, err := run.Call(context.Background(), toolgateway.ToolCall{Name: tt.call})
 
 			require.ErrorIs(t, err, toolgateway.ErrDenied)
 			require.ErrorContains(t, err, tt.reason)
@@ -96,7 +96,6 @@ func TestInvariant_DefaultDeny(t *testing.T) {
 			read := &gatewaytest.Tool{Name: "tickets_read", Result: json.RawMessage(`{}`)}
 			audit := &gatewaytest.Audit{}
 			gw, err := toolgateway.New(toolgateway.Config{
-				RunID:        runID,
 				MaxToolCalls: 100,
 				Policy:       tt.policy,
 				Approver:     tt.approver,
@@ -105,8 +104,9 @@ func TestInvariant_DefaultDeny(t *testing.T) {
 				Audit:        audit,
 			})
 			require.NoError(t, err)
+			run := gw.Start()
 
-			_, err = gw.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_read"})
+			_, err = run.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_read"})
 
 			require.ErrorIs(t, err, toolgateway.ErrDenied)
 			assert.Zero(t, read.Calls)
@@ -144,8 +144,8 @@ func TestInvariant_EveryCallAudited(t *testing.T) {
 			wantCalls:  1,
 			wantResult: json.RawMessage(`{"ok":true}`),
 			wantRecords: []toolgateway.Record{
-				{RunID: runID, Event: toolgateway.EventDecision, Tool: "tickets_read", Args: args, Decision: toolgateway.Allow},
-				{RunID: runID, Event: toolgateway.EventResult, Tool: "tickets_read", Args: args, Decision: toolgateway.Allow, Result: json.RawMessage(`{"ok":true}`)},
+				{Event: toolgateway.EventDecision, Tool: "tickets_read", Args: args, Decision: toolgateway.Allow},
+				{Event: toolgateway.EventResult, Tool: "tickets_read", Args: args, Decision: toolgateway.Allow, Result: json.RawMessage(`{"ok":true}`)},
 			},
 		},
 		{
@@ -153,7 +153,7 @@ func TestInvariant_EveryCallAudited(t *testing.T) {
 			call:      "tickets_delete",
 			wantErrIs: []error{toolgateway.ErrDenied},
 			wantRecords: []toolgateway.Record{
-				{RunID: runID, Event: toolgateway.EventDecision, Tool: "tickets_delete", Args: args, Decision: toolgateway.Deny, Reason: "tool not granted"},
+				{Event: toolgateway.EventDecision, Tool: "tickets_delete", Args: args, Decision: toolgateway.Deny, Reason: "tool not granted"},
 			},
 		},
 		{
@@ -163,8 +163,8 @@ func TestInvariant_EveryCallAudited(t *testing.T) {
 			wantCalls: 1,
 			wantErrIs: []error{toolErr},
 			wantRecords: []toolgateway.Record{
-				{RunID: runID, Event: toolgateway.EventDecision, Tool: "tickets_read", Args: args, Decision: toolgateway.Allow},
-				{RunID: runID, Event: toolgateway.EventResult, Tool: "tickets_read", Args: args, Decision: toolgateway.Allow, Err: "ticket system unavailable"},
+				{Event: toolgateway.EventDecision, Tool: "tickets_read", Args: args, Decision: toolgateway.Allow},
+				{Event: toolgateway.EventResult, Tool: "tickets_read", Args: args, Decision: toolgateway.Allow, Err: "ticket system unavailable"},
 			},
 		},
 		{
@@ -187,7 +187,7 @@ func TestInvariant_EveryCallAudited(t *testing.T) {
 			wantResult: json.RawMessage(`{"ok":true}`),
 			wantErrIs:  []error{toolgateway.ErrAudit, gatewaytest.ErrAuditDown},
 			wantRecords: []toolgateway.Record{
-				{RunID: runID, Event: toolgateway.EventDecision, Tool: "tickets_read", Args: args, Decision: toolgateway.Allow},
+				{Event: toolgateway.EventDecision, Tool: "tickets_read", Args: args, Decision: toolgateway.Allow},
 			},
 		},
 		{
@@ -198,9 +198,9 @@ func TestInvariant_EveryCallAudited(t *testing.T) {
 			wantCalls:  1,
 			wantResult: json.RawMessage(`{"ok":true}`),
 			wantRecords: []toolgateway.Record{
-				{RunID: runID, Event: toolgateway.EventDecision, Tool: "tickets_read", Args: args, Decision: toolgateway.RequireApproval, Reason: "policy: needs a human"},
-				{RunID: runID, Event: toolgateway.EventApproval, Tool: "tickets_read", Args: args, Decision: toolgateway.Allow, Reason: "looks fine", Approver: "alice"},
-				{RunID: runID, Event: toolgateway.EventResult, Tool: "tickets_read", Args: args, Decision: toolgateway.Allow, Reason: "looks fine", Approver: "alice", Result: json.RawMessage(`{"ok":true}`)},
+				{Event: toolgateway.EventDecision, Tool: "tickets_read", Args: args, Decision: toolgateway.RequireApproval, Reason: "policy: needs a human"},
+				{Event: toolgateway.EventApproval, Tool: "tickets_read", Args: args, Decision: toolgateway.Allow, Reason: "looks fine", Approver: "alice"},
+				{Event: toolgateway.EventResult, Tool: "tickets_read", Args: args, Decision: toolgateway.Allow, Reason: "looks fine", Approver: "alice", Result: json.RawMessage(`{"ok":true}`)},
 			},
 		},
 		{
@@ -210,8 +210,8 @@ func TestInvariant_EveryCallAudited(t *testing.T) {
 			approver:  &gatewaytest.Approver{Approval: toolgateway.Approval{Approved: false, Approver: "bob", Reason: "not today"}},
 			wantErrIs: []error{toolgateway.ErrDenied},
 			wantRecords: []toolgateway.Record{
-				{RunID: runID, Event: toolgateway.EventDecision, Tool: "tickets_read", Args: args, Decision: toolgateway.RequireApproval, Reason: "policy: needs a human"},
-				{RunID: runID, Event: toolgateway.EventApproval, Tool: "tickets_read", Args: args, Decision: toolgateway.Deny, Reason: "approval rejected: not today", Approver: "bob"},
+				{Event: toolgateway.EventDecision, Tool: "tickets_read", Args: args, Decision: toolgateway.RequireApproval, Reason: "policy: needs a human"},
+				{Event: toolgateway.EventApproval, Tool: "tickets_read", Args: args, Decision: toolgateway.Deny, Reason: "approval rejected: not today", Approver: "bob"},
 			},
 		},
 		{
@@ -221,8 +221,8 @@ func TestInvariant_EveryCallAudited(t *testing.T) {
 			approver:  &gatewaytest.Approver{Err: errors.New("approver unreachable")},
 			wantErrIs: []error{toolgateway.ErrDenied},
 			wantRecords: []toolgateway.Record{
-				{RunID: runID, Event: toolgateway.EventDecision, Tool: "tickets_read", Args: args, Decision: toolgateway.RequireApproval, Reason: "policy: needs a human"},
-				{RunID: runID, Event: toolgateway.EventApproval, Tool: "tickets_read", Args: args, Decision: toolgateway.Deny, Reason: "approval failed: approver unreachable"},
+				{Event: toolgateway.EventDecision, Tool: "tickets_read", Args: args, Decision: toolgateway.RequireApproval, Reason: "policy: needs a human"},
+				{Event: toolgateway.EventApproval, Tool: "tickets_read", Args: args, Decision: toolgateway.Deny, Reason: "approval failed: approver unreachable"},
 			},
 		},
 		{
@@ -233,7 +233,7 @@ func TestInvariant_EveryCallAudited(t *testing.T) {
 			failOn:    toolgateway.EventApproval,
 			wantErrIs: []error{toolgateway.ErrAudit, gatewaytest.ErrAuditDown},
 			wantRecords: []toolgateway.Record{
-				{RunID: runID, Event: toolgateway.EventDecision, Tool: "tickets_read", Args: args, Decision: toolgateway.RequireApproval, Reason: "policy: needs a human"},
+				{Event: toolgateway.EventDecision, Tool: "tickets_read", Args: args, Decision: toolgateway.RequireApproval, Reason: "policy: needs a human"},
 			},
 		},
 		{
@@ -244,7 +244,7 @@ func TestInvariant_EveryCallAudited(t *testing.T) {
 			failOn:    toolgateway.EventApproval,
 			wantErrIs: []error{toolgateway.ErrDenied, toolgateway.ErrAudit, gatewaytest.ErrAuditDown},
 			wantRecords: []toolgateway.Record{
-				{RunID: runID, Event: toolgateway.EventDecision, Tool: "tickets_read", Args: args, Decision: toolgateway.RequireApproval, Reason: "policy: needs a human"},
+				{Event: toolgateway.EventDecision, Tool: "tickets_read", Args: args, Decision: toolgateway.RequireApproval, Reason: "policy: needs a human"},
 			},
 		},
 	}
@@ -265,7 +265,6 @@ func TestInvariant_EveryCallAudited(t *testing.T) {
 				approver = tt.approver
 			}
 			gw, err := toolgateway.New(toolgateway.Config{
-				RunID:        runID,
 				MaxToolCalls: 100,
 				Policy:       policy,
 				Approver:     approver,
@@ -274,8 +273,9 @@ func TestInvariant_EveryCallAudited(t *testing.T) {
 				Audit:        audit,
 			})
 			require.NoError(t, err)
+			run := gw.Start()
 
-			result, err := gw.Call(context.Background(), toolgateway.ToolCall{Name: tt.call, Args: args})
+			result, err := run.Call(context.Background(), toolgateway.ToolCall{Name: tt.call, Args: args})
 
 			if len(tt.wantErrIs) == 0 {
 				require.NoError(t, err)
@@ -285,8 +285,9 @@ func TestInvariant_EveryCallAudited(t *testing.T) {
 			}
 			assert.Equal(t, tt.wantResult, result)
 			assert.Equal(t, tt.wantCalls, read.Calls+del.Calls)
-			assert.Equal(t, tt.wantRecords, gatewaytest.WithoutCallIDs(audit.Records))
+			assert.Equal(t, tt.wantRecords, gatewaytest.WithoutIDs(audit.Records))
 			for _, r := range audit.Records {
+				assert.Equal(t, run.ID(), r.RunID, "records carry the run's ID")
 				assert.Equal(t, audit.Records[0].CallID, r.CallID, "records of one call share a call ID")
 				assert.NotEmpty(t, r.CallID)
 			}

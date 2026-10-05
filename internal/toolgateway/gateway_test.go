@@ -20,15 +20,14 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 		cfg     toolgateway.Config
 		wantErr string
 	}{
-		{"missing run id", toolgateway.Config{Audit: &gatewaytest.Audit{}}, "run id is required"},
-		{"missing policy", toolgateway.Config{RunID: runID, MaxToolCalls: 100, Audit: &gatewaytest.Audit{}}, "policy is required"},
-		{"zero tool call limit", toolgateway.Config{RunID: runID, Policy: &gatewaytest.Policy{}, Audit: &gatewaytest.Audit{}}, "max tool calls must be greater than 0"},
-		{"nil audit", toolgateway.Config{RunID: runID, MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Tools: []toolgateway.Tool{read}}, "audit is required"},
-		{"nil tool", toolgateway.Config{RunID: runID, MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Tools: []toolgateway.Tool{nil}, Audit: &gatewaytest.Audit{}}, "tool 0 is nil"},
-		{"unnamed tool", toolgateway.Config{RunID: runID, MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Tools: []toolgateway.Tool{&gatewaytest.Tool{}}, Audit: &gatewaytest.Audit{}}, `tool 0: tool name "" must be`},
-		{"duplicate tool", toolgateway.Config{RunID: runID, MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Tools: []toolgateway.Tool{read, &gatewaytest.Tool{Name: "tickets_read"}}, Audit: &gatewaytest.Audit{}}, `duplicate tool "tickets_read"`},
-		{"empty grant", toolgateway.Config{RunID: runID, MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Granted: []string{""}, Audit: &gatewaytest.Audit{}}, `grant 0: tool name ""`},
-		{"invalid grant", toolgateway.Config{RunID: runID, MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Granted: []string{"tickets.read"}, Audit: &gatewaytest.Audit{}}, `grant 0: tool name "tickets.read"`},
+		{"missing policy", toolgateway.Config{MaxToolCalls: 100, Audit: &gatewaytest.Audit{}}, "policy is required"},
+		{"zero tool call limit", toolgateway.Config{Policy: &gatewaytest.Policy{}, Audit: &gatewaytest.Audit{}}, "max tool calls must be greater than 0"},
+		{"nil audit", toolgateway.Config{MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Tools: []toolgateway.Tool{read}}, "audit is required"},
+		{"nil tool", toolgateway.Config{MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Tools: []toolgateway.Tool{nil}, Audit: &gatewaytest.Audit{}}, "tool 0 is nil"},
+		{"unnamed tool", toolgateway.Config{MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Tools: []toolgateway.Tool{&gatewaytest.Tool{}}, Audit: &gatewaytest.Audit{}}, `tool 0: tool name "" must be`},
+		{"duplicate tool", toolgateway.Config{MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Tools: []toolgateway.Tool{read, &gatewaytest.Tool{Name: "tickets_read"}}, Audit: &gatewaytest.Audit{}}, `duplicate tool "tickets_read"`},
+		{"empty grant", toolgateway.Config{MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Granted: []string{""}, Audit: &gatewaytest.Audit{}}, `grant 0: tool name ""`},
+		{"invalid grant", toolgateway.Config{MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Granted: []string{"tickets.read"}, Audit: &gatewaytest.Audit{}}, `grant 0: tool name "tickets.read"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -43,7 +42,6 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 func TestCall_PassesArgsAndReturnsResult(t *testing.T) {
 	read := &gatewaytest.Tool{Name: "tickets_read", Result: json.RawMessage(`{"title":"Printer on fire"}`)}
 	gw, err := toolgateway.New(toolgateway.Config{
-		RunID:        runID,
 		MaxToolCalls: 100,
 		Policy:       &gatewaytest.Policy{},
 		Granted:      []string{"tickets_read"},
@@ -51,8 +49,9 @@ func TestCall_PassesArgsAndReturnsResult(t *testing.T) {
 		Audit:        &gatewaytest.Audit{},
 	})
 	require.NoError(t, err)
+	run := gw.Start()
 
-	result, err := gw.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_read", Args: json.RawMessage(`{"id":7}`)})
+	result, err := run.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_read", Args: json.RawMessage(`{"id":7}`)})
 
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"title":"Printer on fire"}`, string(result))
@@ -65,7 +64,6 @@ func TestCall_GrantsAreFixedAtConstruction(t *testing.T) {
 	del := &gatewaytest.Tool{Name: "tickets_delete"}
 	granted := []string{"tickets_read"}
 	gw, err := toolgateway.New(toolgateway.Config{
-		RunID:        runID,
 		MaxToolCalls: 100,
 		Policy:       &gatewaytest.Policy{},
 		Granted:      granted,
@@ -73,9 +71,10 @@ func TestCall_GrantsAreFixedAtConstruction(t *testing.T) {
 		Audit:        &gatewaytest.Audit{},
 	})
 	require.NoError(t, err)
+	run := gw.Start()
 
 	granted[0] = "tickets_delete"
-	_, err = gw.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_delete"})
+	_, err = run.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_delete"})
 
 	require.ErrorIs(t, err, toolgateway.ErrDenied)
 	assert.Zero(t, del.Calls)
@@ -84,7 +83,6 @@ func TestCall_GrantsAreFixedAtConstruction(t *testing.T) {
 func TestCall_EachCallGetsItsOwnCallID(t *testing.T) {
 	audit := &gatewaytest.Audit{}
 	gw, err := toolgateway.New(toolgateway.Config{
-		RunID:        runID,
 		MaxToolCalls: 100,
 		Policy:       &gatewaytest.Policy{},
 		Granted:      []string{"tickets_read"},
@@ -92,10 +90,11 @@ func TestCall_EachCallGetsItsOwnCallID(t *testing.T) {
 		Audit:        audit,
 	})
 	require.NoError(t, err)
+	run := gw.Start()
 
-	_, err = gw.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_read"})
+	_, err = run.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_read"})
 	require.NoError(t, err)
-	_, err = gw.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_read"})
+	_, err = run.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_read"})
 	require.NoError(t, err)
 
 	require.Len(t, audit.Records, 4)
@@ -104,7 +103,6 @@ func TestCall_EachCallGetsItsOwnCallID(t *testing.T) {
 
 func TestDefinitions_OnlyGrantedAndResolvedToolsSortedByName(t *testing.T) {
 	gw, err := toolgateway.New(toolgateway.Config{
-		RunID:        runID,
 		MaxToolCalls: 100,
 		Policy:       &gatewaytest.Policy{},
 		Granted:      []string{"tickets_read", "tickets_label", "tickets_ghost"},
@@ -126,10 +124,9 @@ func TestDefinitions_OnlyGrantedAndResolvedToolsSortedByName(t *testing.T) {
 	assert.JSONEq(t, `{"type":"object"}`, string(defs[1].InputSchema))
 }
 
-func TestCall_RecordsCarryTheRunID(t *testing.T) {
+func TestStart_EachRunHasItsOwnID(t *testing.T) {
 	audit := &gatewaytest.Audit{}
 	gw, err := toolgateway.New(toolgateway.Config{
-		RunID:        "run-42",
 		MaxToolCalls: 100,
 		Policy:       &gatewaytest.Policy{},
 		Granted:      []string{"tickets_read"},
@@ -137,19 +134,53 @@ func TestCall_RecordsCarryTheRunID(t *testing.T) {
 		Audit:        audit,
 	})
 	require.NoError(t, err)
+	first, second := gw.Start(), gw.Start()
 
-	_, err = gw.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_read"})
+	_, err = first.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_read"})
 	require.NoError(t, err)
-	_, err = gw.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_delete"})
+	_, err = first.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_delete"})
 	require.ErrorIs(t, err, toolgateway.ErrDenied)
+	_, err = second.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_read"})
+	require.NoError(t, err)
 
-	require.Len(t, audit.Records, 3)
-	for _, r := range audit.Records {
-		assert.Equal(t, "run-42", r.RunID)
+	require.NotEmpty(t, first.ID())
+	require.NotEqual(t, first.ID(), second.ID())
+	require.Len(t, audit.Records, 5)
+	for i, r := range audit.Records {
+		want := first.ID()
+		if i >= 3 {
+			want = second.ID()
+		}
+		assert.Equal(t, want, r.RunID, "record %d", i)
 	}
 }
 
-func TestValidateTools(t *testing.T) {
+func TestStart_EachRunHasItsOwnLimitAndCounts(t *testing.T) {
+	policy := &gatewaytest.Policy{}
+	read := &gatewaytest.Tool{Name: "tickets_read"}
+	gw, err := toolgateway.New(toolgateway.Config{
+		MaxToolCalls: 1,
+		Policy:       policy,
+		Granted:      []string{"tickets_read"},
+		Tools:        []toolgateway.Tool{read},
+		Audit:        &gatewaytest.Audit{},
+	})
+	require.NoError(t, err)
+	first, second := gw.Start(), gw.Start()
+
+	_, err = first.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_read"})
+	require.NoError(t, err)
+	_, err = first.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_read"})
+	require.ErrorContains(t, err, "tool call limit reached")
+	_, err = second.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_read"})
+	require.NoError(t, err, "the first run's calls do not count against the second")
+
+	assert.Equal(t, 2, read.Calls)
+	require.Len(t, policy.Inputs, 2)
+	assert.Zero(t, policy.Inputs[1].Calls.Total, "the second run starts with no executed calls")
+}
+
+func TestNew_ValidatesTools(t *testing.T) {
 	read := &gatewaytest.Tool{Name: "tickets_read"}
 	tests := []struct {
 		name    string
@@ -165,7 +196,7 @@ func TestValidateTools(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := toolgateway.ValidateTools(tt.tools)
+			_, err := toolgateway.New(toolgateway.Config{Tools: tt.tools, MaxToolCalls: 1, Policy: &gatewaytest.Policy{}, Audit: &gatewaytest.Audit{}})
 			if tt.wantErr == "" {
 				assert.NoError(t, err)
 				return

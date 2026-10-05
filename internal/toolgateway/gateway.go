@@ -60,16 +60,13 @@ type ToolCall struct {
 
 // Config configures a Gateway.
 type Config struct {
-	// RunID identifies the run the gateway serves. It is required and is
-	// carried by every audit record.
-	RunID string
 	// Harness names the harness of the run, for policy.
 	Harness string
 	// Granted names the tools the harness may call. Anything else is denied.
 	Granted []string
 	// Tools are the executors the gateway can resolve calls to.
 	Tools []Tool
-	// MaxToolCalls bounds the calls of the run, denied ones included. It is
+	// MaxToolCalls bounds the calls of each run, denied ones included. It is
 	// required.
 	MaxToolCalls int
 	// Policy decides on granted, resolved calls. It is required.
@@ -86,9 +83,10 @@ type Config struct {
 	Secrets []string
 }
 
-// Gateway checks, executes and records tool calls.
+// Gateway holds what every run of a harness shares: grants, tools, policy,
+// approver, audit and secrets. It is built and validated once; each run then
+// starts with Start and calls tools through the returned Run.
 type Gateway struct {
-	runID        string
 	harness      string
 	granted      map[string]bool
 	tools        map[string]Tool
@@ -98,18 +96,12 @@ type Gateway struct {
 	approver     Approver
 	audit        Audit
 	redact       *redactor
-
-	mu       sync.Mutex
-	attempts int
-	executed CallCounts
 }
 
 // New returns a Gateway for cfg. The grants are copied, so later changes to
 // cfg do not affect the gateway.
 func New(cfg Config) (*Gateway, error) {
 	switch {
-	case cfg.RunID == "":
-		return nil, errors.New("toolgateway: run id is required")
 	case cfg.Audit == nil:
 		return nil, errors.New("toolgateway: audit is required")
 	case cfg.Policy == nil:
@@ -118,7 +110,6 @@ func New(cfg Config) (*Gateway, error) {
 		return nil, errors.New("toolgateway: max tool calls must be greater than 0")
 	}
 	g := &Gateway{
-		runID:        cfg.RunID,
 		harness:      cfg.Harness,
 		granted:      make(map[string]bool, len(cfg.Granted)),
 		tools:        make(map[string]Tool, len(cfg.Tools)),
@@ -126,7 +117,6 @@ func New(cfg Config) (*Gateway, error) {
 		policy:       cfg.Policy,
 		approver:     cfg.Approver,
 		audit:        cfg.Audit,
-		executed:     CallCounts{ByTool: map[string]int{}},
 	}
 	for i, name := range cfg.Granted {
 		if err := ValidateToolName(name); err != nil {
@@ -134,7 +124,7 @@ func New(cfg Config) (*Gateway, error) {
 		}
 		g.granted[name] = true
 	}
-	if err := ValidateTools(cfg.Tools); err != nil {
+	if err := validateTools(cfg.Tools); err != nil {
 		return nil, err
 	}
 	redact, err := newRedactor(cfg.Secrets)
@@ -153,9 +143,9 @@ func New(cfg Config) (*Gateway, error) {
 	return g, nil
 }
 
-// ValidateTools checks that every tool is non-nil and has a unique, valid
-// name. New applies the same check.
-func ValidateTools(tools []Tool) error {
+// validateTools checks that every tool is non-nil and has a unique, valid
+// name.
+func validateTools(tools []Tool) error {
 	seen := make(map[string]bool, len(tools))
 	for i, tool := range tools {
 		if tool == nil {
@@ -173,25 +163,52 @@ func ValidateTools(tools []Tool) error {
 	return nil
 }
 
-// Definitions describes the tools the run may call: granted and resolved,
-// sorted by name.
+// Definitions describes the tools runs may call: granted and resolved, sorted
+// by name.
 func (g *Gateway) Definitions() []Definition {
 	return slices.Clone(g.defs)
+}
+
+// Start begins a run: it mints the run's ID, which every audit record of the
+// run carries, and starts the run's call counts at zero. Runs never share
+// counts, so one run's calls cannot affect another's limit or policy input.
+func (g *Gateway) Start() *Run {
+	return &Run{
+		gateway:  g,
+		id:       rand.Text(),
+		executed: CallCounts{ByTool: map[string]int{}},
+	}
+}
+
+// Run is one run's path to the tools: its ID and its call counts.
+type Run struct {
+	gateway *Gateway
+	id      string
+
+	mu       sync.Mutex
+	attempts int
+	executed CallCounts
+}
+
+// ID identifies the run in audit records and policy input.
+func (r *Run) ID() string {
+	return r.id
 }
 
 // Call runs one tool call through the gateway. A denied call returns an
 // error wrapping ErrDenied. A failure to record returns an error wrapping
 // ErrAudit; if only the result could not be recorded, the result is returned
 // with that error.
-func (g *Gateway) Call(ctx context.Context, call ToolCall) (json.RawMessage, error) {
+func (r *Run) Call(ctx context.Context, call ToolCall) (json.RawMessage, error) {
+	g := r.gateway
 	rec := Record{
-		RunID:  g.runID,
+		RunID:  r.id,
 		CallID: rand.Text(),
 		Event:  EventDecision,
 		Tool:   call.Name,
 		Args:   call.Args,
 	}
-	tool, verdict := g.decide(ctx, call)
+	tool, verdict := r.decide(ctx, call)
 	rec.Decision, rec.Reason = verdict.Decision, verdict.Reason
 
 	auditErr := g.record(ctx, rec)
@@ -221,7 +238,7 @@ func (g *Gateway) Call(ctx context.Context, call ToolCall) (json.RawMessage, err
 		}
 	}
 
-	g.countExecuted(call.Name)
+	r.countExecuted(call.Name)
 	result, toolErr := tool.Call(ctx, call.Args)
 	result, toolErr = g.redact.json(result), g.redact.error(toolErr)
 
@@ -244,13 +261,14 @@ type decision struct {
 
 // decide returns the tool to execute and the decision for call. Grant and
 // resolve come first, so policy only ever sees granted, resolvable calls and
-// cannot grant anything. Every attempt counts towards the call limit.
-func (g *Gateway) decide(ctx context.Context, call ToolCall) (Tool, decision) {
-	g.mu.Lock()
-	g.attempts++
-	attempts := g.attempts
-	counts := g.executed.clone()
-	g.mu.Unlock()
+// cannot grant anything. Every attempt counts towards the run's call limit.
+func (r *Run) decide(ctx context.Context, call ToolCall) (Tool, decision) {
+	g := r.gateway
+	r.mu.Lock()
+	r.attempts++
+	attempts := r.attempts
+	counts := r.executed.clone()
+	r.mu.Unlock()
 
 	if !g.granted[call.Name] {
 		return nil, deny("tool not granted")
@@ -264,7 +282,7 @@ func (g *Gateway) decide(ctx context.Context, call ToolCall) (Tool, decision) {
 	}
 
 	req := Request{
-		RunID:   g.runID,
+		RunID:   r.id,
 		Harness: g.harness,
 		Tool:    call.Name,
 		Args:    call.Args,
@@ -290,11 +308,11 @@ func (g *Gateway) decide(ctx context.Context, call ToolCall) (Tool, decision) {
 	}
 }
 
-func (g *Gateway) countExecuted(name string) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.executed.Total++
-	g.executed.ByTool[name]++
+func (r *Run) countExecuted(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.executed.Total++
+	r.executed.ByTool[name]++
 }
 
 // record writes rec to the audit log, with secrets redacted.

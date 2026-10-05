@@ -6,10 +6,8 @@ package agent
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
-	"slices"
 
 	"github.com/jangraefen/agenty/internal/harness"
 	"github.com/jangraefen/agenty/internal/model"
@@ -40,15 +38,12 @@ type Config struct {
 	Secrets []string
 }
 
-// Agent runs one harness. It holds no run state, so it can run many times.
+// Agent runs one harness. It holds the harness, the model and the tool gateway,
+// but no run state, so it can run many times, also at once.
 type Agent struct {
-	harness  harness.Harness
-	model    model.Model
-	tools    []toolgateway.Tool
-	policy   *policy.Engine
-	approver toolgateway.Approver
-	audit    toolgateway.Audit
-	secrets  []string
+	harness harness.Harness
+	model   model.Model
+	gateway *toolgateway.Gateway
 }
 
 // Result is the outcome of a run. On error it holds what happened up to the
@@ -61,8 +56,10 @@ type Result struct {
 }
 
 // New validates cfg, compiles central and harness policy as separate layers,
-// and returns an Agent. The harness is copied, so later changes to it do not
-// affect the agent. A harness that names a policy must come with its source.
+// builds the tool gateway from the harness grants, and returns an Agent. The
+// harness is copied and the gateway copies the grants, so later changes to the
+// harness do not affect the agent. A harness that names a policy must come
+// with its source.
 func New(ctx context.Context, cfg Config) (*Agent, error) {
 	switch {
 	case cfg.Harness == nil:
@@ -74,12 +71,6 @@ func New(ctx context.Context, cfg Config) (*Agent, error) {
 	}
 	if err := cfg.Harness.Validate(); err != nil {
 		return nil, fmt.Errorf("agent: invalid harness: %w", err)
-	}
-	if err := toolgateway.ValidateTools(cfg.Tools); err != nil {
-		return nil, fmt.Errorf("agent: %w", err)
-	}
-	if err := toolgateway.ValidateSecrets(cfg.Secrets); err != nil {
-		return nil, fmt.Errorf("agent: %w", err)
 	}
 	layers := []policy.Layer{{Name: "central", Modules: cfg.Policy}}
 	if p := cfg.Harness.Policy; p != nil {
@@ -99,21 +90,24 @@ func New(ctx context.Context, cfg Config) (*Agent, error) {
 	if err != nil {
 		return nil, fmt.Errorf("agent: %w", err)
 	}
-	h := *cfg.Harness
-	h.Tools = slices.Clone(h.Tools)
-	return &Agent{
-		harness:  h,
-		model:    cfg.Model,
-		tools:    slices.Clone(cfg.Tools),
-		policy:   engine,
-		approver: cfg.Approver,
-		audit:    cfg.Audit,
-		secrets:  slices.Clone(cfg.Secrets),
-	}, nil
+	gw, err := toolgateway.New(toolgateway.Config{
+		Harness:      cfg.Harness.Name,
+		Granted:      cfg.Harness.Tools,
+		Tools:        cfg.Tools,
+		MaxToolCalls: cfg.Harness.Limits.MaxToolCalls,
+		Policy:       engine,
+		Approver:     cfg.Approver,
+		Audit:        cfg.Audit,
+		Secrets:      cfg.Secrets,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("agent: %w", err)
+	}
+	return &Agent{harness: *cfg.Harness, model: cfg.Model, gateway: gw}, nil
 }
 
 // Run executes the agent loop for input. Each step is one model call. Tool
-// calls go through the run's gateway; denials and tool errors are reported
+// calls go through the gateway, in a gateway run of their own; denials and tool errors are reported
 // back to the model, while model errors, audit failures and cancellation end
 // the run. If the model still asks for tools on the last allowed step, those
 // calls are not executed and Run returns ErrMaxSteps.
@@ -121,26 +115,12 @@ func (a *Agent) Run(ctx context.Context, input string) (Result, error) {
 	if input == "" {
 		return Result{}, errors.New("agent: input is required")
 	}
+	run := a.gateway.Start()
 	res := Result{
-		RunID:    rand.Text(),
+		RunID:    run.ID(),
 		Messages: []model.Message{{Role: model.RoleUser, Text: input}},
 	}
-	gw, err := toolgateway.New(toolgateway.Config{
-		RunID:        res.RunID,
-		Harness:      a.harness.Name,
-		Granted:      a.harness.Tools,
-		Tools:        a.tools,
-		MaxToolCalls: a.harness.Limits.MaxToolCalls,
-		Policy:       a.policy,
-		Approver:     a.approver,
-		Audit:        a.audit,
-		Secrets:      a.secrets,
-	})
-	if err != nil {
-		// New has validated every input; this is a programming error.
-		return res, fmt.Errorf("agent: gateway: %w", err)
-	}
-	tools := gw.Definitions()
+	tools := a.gateway.Definitions()
 	maxSteps := a.harness.Limits.MaxSteps
 
 	for step := 1; step <= maxSteps; step++ {
@@ -163,7 +143,7 @@ func (a *Agent) Run(ctx context.Context, input string) (Result, error) {
 		if step == maxSteps {
 			break
 		}
-		results, err := callTools(ctx, gw, msg.ToolCalls)
+		results, err := callTools(ctx, run, msg.ToolCalls)
 		if err != nil {
 			return res, fmt.Errorf("agent: step %d: %w", step, err)
 		}
@@ -175,13 +155,13 @@ func (a *Agent) Run(ctx context.Context, input string) (Result, error) {
 // callTools runs calls in order through the gateway. Denials and tool errors
 // become error results for the model; audit failures and cancellation stop
 // the run before any further call.
-func callTools(ctx context.Context, gw *toolgateway.Gateway, calls []model.ToolCall) ([]model.ToolResult, error) {
+func callTools(ctx context.Context, run *toolgateway.Run, calls []model.ToolCall) ([]model.ToolResult, error) {
 	results := make([]model.ToolResult, 0, len(calls))
 	for _, c := range calls {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		out, err := gw.Call(ctx, toolgateway.ToolCall{Name: c.Name, Args: c.Args})
+		out, err := run.Call(ctx, toolgateway.ToolCall{Name: c.Name, Args: c.Args})
 		if errors.Is(err, toolgateway.ErrAudit) {
 			return nil, err
 		}

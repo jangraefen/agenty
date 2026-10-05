@@ -20,7 +20,6 @@ func TestCall_PolicySeesTheCallAndExecutedCounts(t *testing.T) {
 		"tickets_close": {Decision: toolgateway.Deny, Reasons: []string{"no closing"}},
 	}}
 	gw, err := toolgateway.New(toolgateway.Config{
-		RunID:        runID,
 		Harness:      "triage",
 		MaxToolCalls: 100,
 		Policy:       policy,
@@ -29,22 +28,23 @@ func TestCall_PolicySeesTheCallAndExecutedCounts(t *testing.T) {
 		Audit:        &gatewaytest.Audit{},
 	})
 	require.NoError(t, err)
+	run := gw.Start()
 
 	ctx := context.Background()
-	_, err = gw.Call(ctx, toolgateway.ToolCall{Name: "tickets_read", Args: json.RawMessage(`{"id":1}`)})
+	_, err = run.Call(ctx, toolgateway.ToolCall{Name: "tickets_read", Args: json.RawMessage(`{"id":1}`)})
 	require.NoError(t, err)
-	_, err = gw.Call(ctx, toolgateway.ToolCall{Name: "tickets_close"})
+	_, err = run.Call(ctx, toolgateway.ToolCall{Name: "tickets_close"})
 	require.ErrorIs(t, err, toolgateway.ErrDenied)
-	_, err = gw.Call(ctx, toolgateway.ToolCall{Name: "tickets_label"})
+	_, err = run.Call(ctx, toolgateway.ToolCall{Name: "tickets_label"})
 	require.Error(t, err, "the tool fails, but it was executed")
-	_, err = gw.Call(ctx, toolgateway.ToolCall{Name: "tickets_nope"})
+	_, err = run.Call(ctx, toolgateway.ToolCall{Name: "tickets_nope"})
 	require.ErrorIs(t, err, toolgateway.ErrDenied)
-	_, err = gw.Call(ctx, toolgateway.ToolCall{Name: "tickets_read", Args: json.RawMessage(`{"id":2}`)})
+	_, err = run.Call(ctx, toolgateway.ToolCall{Name: "tickets_read", Args: json.RawMessage(`{"id":2}`)})
 	require.NoError(t, err)
 
 	require.Len(t, policy.Inputs, 4, "ungranted calls never reach policy")
 	first := policy.Inputs[0]
-	assert.Equal(t, runID, first.RunID)
+	assert.Equal(t, run.ID(), first.RunID)
 	assert.Equal(t, "triage", first.Harness)
 	assert.Equal(t, "tickets_read", first.Tool)
 	assert.JSONEq(t, `{"id":1}`, string(first.Args))
@@ -59,7 +59,6 @@ func TestCall_PolicySeesTheCallAndExecutedCounts(t *testing.T) {
 func TestCall_ApproverSeesTheRequest(t *testing.T) {
 	approver := &gatewaytest.Approver{Approval: toolgateway.Approval{Approved: true, Approver: "alice"}}
 	gw, err := toolgateway.New(toolgateway.Config{
-		RunID:        runID,
 		Harness:      "triage",
 		MaxToolCalls: 100,
 		Policy: &gatewaytest.Policy{Verdicts: map[string]toolgateway.Verdict{
@@ -71,14 +70,15 @@ func TestCall_ApproverSeesTheRequest(t *testing.T) {
 		Audit:    &gatewaytest.Audit{},
 	})
 	require.NoError(t, err)
+	run := gw.Start()
 
-	_, err = gw.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_label", Args: json.RawMessage(`{"label":"urgent"}`)})
+	_, err = run.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_label", Args: json.RawMessage(`{"label":"urgent"}`)})
 	require.NoError(t, err)
 
 	require.Len(t, approver.Calls, 1)
 	assert.Equal(t, gatewaytest.ApprovalCall{
 		Request: toolgateway.Request{
-			RunID:   runID,
+			RunID:   run.ID(),
 			Harness: "triage",
 			Tool:    "tickets_label",
 			Args:    json.RawMessage(`{"label":"urgent"}`),
@@ -93,7 +93,6 @@ func TestCall_ToolCallLimitCountsEveryAttempt(t *testing.T) {
 	policy := &gatewaytest.Policy{}
 	audit := &gatewaytest.Audit{}
 	gw, err := toolgateway.New(toolgateway.Config{
-		RunID:        runID,
 		MaxToolCalls: 2,
 		Policy:       policy,
 		Granted:      []string{"tickets_read"},
@@ -101,13 +100,14 @@ func TestCall_ToolCallLimitCountsEveryAttempt(t *testing.T) {
 		Audit:        audit,
 	})
 	require.NoError(t, err)
+	run := gw.Start()
 
 	ctx := context.Background()
-	_, err = gw.Call(ctx, toolgateway.ToolCall{Name: "tickets_delete"})
+	_, err = run.Call(ctx, toolgateway.ToolCall{Name: "tickets_delete"})
 	require.ErrorIs(t, err, toolgateway.ErrDenied, "attempt 1: denied, but counted")
-	_, err = gw.Call(ctx, toolgateway.ToolCall{Name: "tickets_read"})
+	_, err = run.Call(ctx, toolgateway.ToolCall{Name: "tickets_read"})
 	require.NoError(t, err, "attempt 2: within the limit")
-	_, err = gw.Call(ctx, toolgateway.ToolCall{Name: "tickets_read"})
+	_, err = run.Call(ctx, toolgateway.ToolCall{Name: "tickets_read"})
 	require.ErrorIs(t, err, toolgateway.ErrDenied, "attempt 3: over the limit")
 	require.ErrorContains(t, err, "tool call limit reached")
 

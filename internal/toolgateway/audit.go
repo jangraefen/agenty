@@ -1,0 +1,42 @@
+package toolgateway
+
+import (
+	"context"
+	"encoding/json"
+)
+
+// Decision is the gateway's verdict on a tool call.
+type Decision string
+
+const (
+	Allow Decision = "allow"
+	Deny  Decision = "deny"
+)
+
+// Event says which step of a call a Record describes.
+type Event string
+
+const (
+	// EventDecision is recorded for every call, before anything executes.
+	EventDecision Event = "decision"
+	// EventResult is recorded after an allowed call has executed.
+	EventResult Event = "result"
+)
+
+// Record is one audit entry. All records of one call share its CallID.
+type Record struct {
+	CallID   string
+	Event    Event
+	Tool     string
+	Args     json.RawMessage
+	Decision Decision
+	Reason   string
+	Result   json.RawMessage
+	Err      string
+}
+
+// Audit stores audit records. If recording a decision fails, the gateway does
+// not execute the call; if recording a result fails, Call reports the error.
+type Audit interface {
+	Record(ctx context.Context, rec Record) error
+}

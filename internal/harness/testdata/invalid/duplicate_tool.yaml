@@ -1,0 +1,5 @@
+name: a
+instructions: x
+model: {provider: anthropic, name: m}
+tools: [tickets.read, tickets.read]
+limits: {max_steps: 1}

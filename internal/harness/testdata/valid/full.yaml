@@ -1,0 +1,11 @@
+name: ticket-triage
+instructions: |
+  Read the ticket and label it.
+model:
+  provider: anthropic
+  name: claude-sonnet-5-5
+tools:
+  - tickets.read
+  - tickets.label
+limits:
+  max_steps: 20

@@ -1,5 +1,5 @@
 // Package mcptool reaches tools on MCP servers. It turns each tool of a server
-// into a toolgateway.Tool named "<server>.<tool>", so the tool gateway can
+// into a toolgateway.Tool named "<server>_<tool>", so the tool gateway can
 // grant, police, execute and audit it like any other tool. This is the only
 // package that talks to MCP servers.
 package mcptool
@@ -32,12 +32,14 @@ func clientVersion() string {
 	return "(devel)"
 }
 
+// serverName has no underscore, so the first "_" of a tool name always ends the
+// server name.
 var serverName = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
 // Server is an MCP server Agenty starts as a subprocess and talks to over
 // stdin and stdout.
 type Server struct {
-	// Name prefixes the server's tools, as in "<name>.<tool>".
+	// Name prefixes the server's tools, as in "<name>_<tool>".
 	Name    string
 	Command string
 	Args    []string
@@ -108,6 +110,10 @@ func (s *Session) Tools(ctx context.Context) ([]toolgateway.Tool, error) {
 		if err != nil {
 			return nil, fmt.Errorf("mcptool: %s: list tools: %w", s.name, err)
 		}
+		name := s.name + "_" + t.Name
+		if err := toolgateway.ValidateToolName(name); err != nil {
+			return nil, fmt.Errorf("mcptool: %s: %w", s.name, err)
+		}
 		schema, err := json.Marshal(t.InputSchema)
 		if err != nil {
 			return nil, fmt.Errorf("mcptool: %s: tool %s: input schema: %w", s.name, t.Name, err)
@@ -116,7 +122,7 @@ func (s *Session) Tools(ctx context.Context) ([]toolgateway.Tool, error) {
 			session: s.session,
 			remote:  t.Name,
 			def: toolgateway.Definition{
-				Name:        s.name + "." + t.Name,
+				Name:        name,
 				Description: t.Description,
 				InputSchema: schema,
 			},

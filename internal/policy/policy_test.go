@@ -21,11 +21,11 @@ func input() toolgateway.Request {
 	return toolgateway.Request{
 		RunID:   "run-1",
 		Harness: "triage",
-		Tool:    "tickets.label",
+		Tool:    "tickets_label",
 		Args:    json.RawMessage(`{"id":7,"label":"urgent"}`),
 		Calls: toolgateway.CallCounts{
 			Total:  3,
-			ByTool: map[string]int{"tickets.read": 2, "tickets.label": 1},
+			ByTool: map[string]int{"tickets_read": 2, "tickets_label": 1},
 		},
 	}
 }
@@ -59,20 +59,20 @@ func TestEvaluate_Decisions(t *testing.T) {
 		wantReasons []string
 	}{
 		{"no rules allows", "", toolgateway.Allow, nil},
-		{"unmatched deny allows", `deny contains "never" if input.tool == "tickets.delete"`, toolgateway.Allow, nil},
-		{"matched deny denies", `deny contains "no labels" if input.tool == "tickets.label"`, toolgateway.Deny, []string{"no labels"}},
-		{"matched approval requires approval", `require_approval contains "writes need a human" if input.tool == "tickets.label"`, toolgateway.RequireApproval, []string{"writes need a human"}},
+		{"unmatched deny allows", `deny contains "never" if input.tool == "tickets_delete"`, toolgateway.Allow, nil},
+		{"matched deny denies", `deny contains "no labels" if input.tool == "tickets_label"`, toolgateway.Deny, []string{"no labels"}},
+		{"matched approval requires approval", `require_approval contains "writes need a human" if input.tool == "tickets_label"`, toolgateway.RequireApproval, []string{"writes need a human"}},
 		{
 			name: "deny beats approval and keeps only deny reasons",
-			rules: `require_approval contains "writes need a human" if input.tool == "tickets.label"
-deny contains "b: too many writes" if input.calls.by_tool["tickets.label"] >= 1
+			rules: `require_approval contains "writes need a human" if input.tool == "tickets_label"
+deny contains "b: too many writes" if input.calls.by_tool["tickets_label"] >= 1
 deny contains "a: urgent is reserved" if input.args.label == "urgent"`,
 			want:        toolgateway.Deny,
 			wantReasons: []string{"a: urgent is reserved", "b: too many writes"},
 		},
 		{
 			name:        "sees run, harness and counts",
-			rules:       `deny contains sprintf("%s/%s/%d/%d", [input.run_id, input.harness, input.calls.total, input.calls.by_tool["tickets.read"]]) if true`,
+			rules:       `deny contains sprintf("%s/%s/%d/%d", [input.run_id, input.harness, input.calls.total, input.calls.by_tool["tickets_read"]]) if true`,
 			want:        toolgateway.Deny,
 			wantReasons: []string{"run-1/triage/3/2"},
 		},
@@ -160,14 +160,14 @@ func TestEvaluate_InputDocument(t *testing.T) {
 	assert.JSONEq(t, `{
 		"run_id": "run-1",
 		"harness": "triage",
-		"tool": "tickets.label",
+		"tool": "tickets_label",
 		"args": {"id": 7, "label": "urgent"},
-		"calls": {"total": 3, "by_tool": {"tickets.read": 2, "tickets.label": 1}}
+		"calls": {"total": 3, "by_tool": {"tickets_read": 2, "tickets_label": 1}}
 	}`, v.Reasons[0], "this is the input contract policy authors write against")
 }
 
 func TestRulesModule_AddsThePackage(t *testing.T) {
-	m := policy.RulesModule("triage (inline)", `require_approval contains "writes need a human" if input.tool == "tickets.label"`)
+	m := policy.RulesModule("triage (inline)", `require_approval contains "writes need a human" if input.tool == "tickets_label"`)
 	assert.Equal(t, "triage (inline)", m.Name)
 
 	e, err := policy.New(context.Background(), policy.Layer{Name: "harness", Modules: []policy.Module{m}})

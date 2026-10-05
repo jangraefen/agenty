@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +24,13 @@ func connectInMemory(t *testing.T) (*mcptool.Session, *mcp.Server, *callLog) {
 	t.Helper()
 	log := &callLog{}
 	srv := newTestServer(log)
+	return connectServer(t, srv), srv, log
+}
+
+// connectServer serves srv over in-memory transports and connects a session
+// named "test" to it.
+func connectServer(t *testing.T, srv *mcp.Server) *mcptool.Session {
+	t.Helper()
 	clientT, serverT := mcp.NewInMemoryTransports()
 	ss, err := srv.Connect(t.Context(), serverT, nil)
 	require.NoError(t, err)
@@ -30,7 +38,7 @@ func connectInMemory(t *testing.T) (*mcptool.Session, *mcp.Server, *callLog) {
 	s, err := mcptool.ConnectTransport(t.Context(), "test", clientT)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, s.Close()) })
-	return s, srv, log
+	return s
 }
 
 func toolsByName(t *testing.T, s *mcptool.Session) map[string]toolgateway.Tool {
@@ -75,8 +83,8 @@ func TestTools_PrefixesNamesAndKeepsDefinitions(t *testing.T) {
 
 	tools := toolsByName(t, s)
 
-	assert.ElementsMatch(t, []string{"test.echo", "test.count", "test.fail", "test.fail-silently", "test.mixed", "test.env", "test.wait"}, slices.Collect(maps.Keys(tools)))
-	def := tools["test.echo"].Definition()
+	assert.ElementsMatch(t, []string{"test_echo", "test_count", "test_fail", "test_fail-silently", "test_mixed", "test_env", "test_wait"}, slices.Collect(maps.Keys(tools)))
+	def := tools["test_echo"].Definition()
 	assert.Equal(t, "Echoes its arguments.", def.Description)
 	assert.JSONEq(t, `{"type":"object"}`, string(def.InputSchema))
 	require.NoError(t, toolgateway.ValidateTools(slices.Collect(maps.Values(tools))), "the gateway accepts every MCP tool")
@@ -89,9 +97,9 @@ func TestCall_Results(t *testing.T) {
 		args json.RawMessage
 		want json.RawMessage
 	}{
-		{"text content becomes a JSON string", "test.echo", json.RawMessage(`{"id":7}`), jsonString(`{"id":7}`)},
-		{"structured content is returned as is", "test.count", nil, json.RawMessage(`{"count":2}`)},
-		{"unsupported content becomes placeholders", "test.mixed", nil, jsonString("see attachments\n[image omitted]\n[audio omitted]\n[resource link omitted]\n[resource omitted]")},
+		{"text content becomes a JSON string", "test_echo", json.RawMessage(`{"id":7}`), jsonString(`{"id":7}`)},
+		{"structured content is returned as is", "test_count", nil, json.RawMessage(`{"count":2}`)},
+		{"unsupported content becomes placeholders", "test_mixed", nil, jsonString("see attachments\n[image omitted]\n[audio omitted]\n[resource link omitted]\n[resource omitted]")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -114,10 +122,10 @@ func TestCall_Errors(t *testing.T) {
 		before  func(*mcp.Server)
 		wantErr string
 	}{
-		{"tool error carries the server's message", "test.fail", nil, nil, "ticket system unavailable"},
-		{"tool error without a message", "test.fail-silently", nil, nil, "tool reported an error"},
-		{"invalid arguments", "test.echo", json.RawMessage(`{not json`), nil, "arguments"},
-		{"tool gone from the server", "test.echo", nil, func(srv *mcp.Server) { srv.RemoveTools("echo") }, "echo"},
+		{"tool error carries the server's message", "test_fail", nil, nil, "ticket system unavailable"},
+		{"tool error without a message", "test_fail-silently", nil, nil, "tool reported an error"},
+		{"invalid arguments", "test_echo", json.RawMessage(`{not json`), nil, "arguments"},
+		{"tool gone from the server", "test_echo", nil, func(srv *mcp.Server) { srv.RemoveTools("echo") }, "echo"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -137,7 +145,7 @@ func TestCall_Errors(t *testing.T) {
 
 func TestCall_CancelledContextStopsTheCall(t *testing.T) {
 	s, _, _ := connectInMemory(t)
-	tool := toolsByName(t, s)["test.wait"]
+	tool := toolsByName(t, s)["test_wait"]
 	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
 
@@ -184,4 +192,29 @@ func TestConnectTransport_RejectsInvalidNames(t *testing.T) {
 
 	require.ErrorContains(t, err, `"Not Valid"`)
 	assert.Nil(t, s)
+}
+
+func TestTools_RejectsNamesModelsCannotUse(t *testing.T) {
+	tests := []struct {
+		name    string
+		tool    string
+		wantErr string
+	}{
+		{"dot in the tool name", "admin.list", `"test_admin.list"`},
+		{"too long with the server prefix", strings.Repeat("a", 60), "must be 1 to 64"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+			srv.AddTool(&mcp.Tool{Name: tt.tool, InputSchema: objectSchema}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				return &mcp.CallToolResult{}, nil
+			})
+			s := connectServer(t, srv)
+
+			tools, err := s.Tools(t.Context())
+
+			require.ErrorContains(t, err, tt.wantErr)
+			assert.Nil(t, tools)
+		})
+	}
 }

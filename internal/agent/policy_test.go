@@ -23,14 +23,14 @@ deny contains "ticket 13 is off limits" if input.args.id == 13`}}
 	approver := &gatewaytest.Approver{Approval: toolgateway.Approval{Approved: true, Approver: "alice"}}
 	cfg := f.config(model.NewScripted(
 		model.CallTools(
-			model.ToolCall{ID: "c1", Name: "tickets.read", Args: []byte(`{"id":13}`)},
-			model.ToolCall{ID: "c2", Name: "tickets.label", Args: []byte(`{"id":7}`)},
+			model.ToolCall{ID: "c1", Name: "tickets_read", Args: []byte(`{"id":13}`)},
+			model.ToolCall{ID: "c2", Name: "tickets_label", Args: []byte(`{"id":7}`)},
 		),
 		model.Reply("done"),
 	))
 	cfg.Policy = []policy.Module{{Name: "central.rego", Source: `package agenty.tool
 
-require_approval contains "writes need a human" if input.tool == "tickets.label"`}}
+require_approval contains "writes need a human" if input.tool == "tickets_label"`}}
 	cfg.Approver = approver
 	a, err := agent.New(context.Background(), cfg)
 	require.NoError(t, err)
@@ -54,7 +54,7 @@ func TestRun_ToolCallLimitIsReportedToTheModel(t *testing.T) {
 	f := newFixture(5)
 	f.harness.Limits.MaxToolCalls = 1
 	m := model.NewScripted(
-		model.CallTools(call("c1", "tickets.read"), call("c2", "tickets.read")),
+		model.CallTools(call("c1", "tickets_read"), call("c2", "tickets_read")),
 		model.Reply("done"),
 	)
 
@@ -71,7 +71,7 @@ func TestRun_ToolCallLimitIsReportedToTheModel(t *testing.T) {
 
 func TestRun_ApprovalWithoutApproverIsDenied(t *testing.T) {
 	f := newFixture(5)
-	cfg := f.config(model.NewScripted(model.CallTools(call("c1", "tickets.read")), model.Reply("done")))
+	cfg := f.config(model.NewScripted(model.CallTools(call("c1", "tickets_read")), model.Reply("done")))
 	cfg.Policy = []policy.Module{{Name: "central.rego", Source: `package agenty.tool
 
 require_approval contains "everything needs a human" if true`}}
@@ -88,8 +88,8 @@ require_approval contains "everything needs a human" if true`}}
 
 func TestRun_InlineHarnessRulesApply(t *testing.T) {
 	f := newFixture(5)
-	f.harness.Policy = &harness.Policy{Rules: `deny contains "no labels from this harness" if input.tool == "tickets.label"`}
-	m := model.NewScripted(model.CallTools(call("c1", "tickets.label"), call("c2", "tickets.read")), model.Reply("done"))
+	f.harness.Policy = &harness.Policy{Rules: `deny contains "no labels from this harness" if input.tool == "tickets_label"`}
+	m := model.NewScripted(model.CallTools(call("c1", "tickets_label"), call("c2", "tickets_read")), model.Reply("done"))
 
 	_, err := f.run(t, m)
 
@@ -102,10 +102,10 @@ func TestRun_InlineHarnessRulesApply(t *testing.T) {
 func TestRun_HarnessWithoutPolicyUsesCentralPolicyOnly(t *testing.T) {
 	f := newFixture(5)
 	require.Nil(t, f.harness.Policy)
-	cfg := f.config(model.NewScripted(model.CallTools(call("c1", "tickets.label"), call("c2", "tickets.read")), model.Reply("done")))
+	cfg := f.config(model.NewScripted(model.CallTools(call("c1", "tickets_label"), call("c2", "tickets_read")), model.Reply("done")))
 	cfg.Policy = []policy.Module{{Name: "central.rego", Source: `package agenty.tool
 
-deny contains "labels are frozen" if input.tool == "tickets.label"`}}
+deny contains "labels are frozen" if input.tool == "tickets_label"`}}
 	a, err := agent.New(context.Background(), cfg)
 	require.NoError(t, err)
 
@@ -120,10 +120,10 @@ func TestRun_HarnessFilesAndRulesShareOneLayer(t *testing.T) {
 	f := newFixture(5)
 	f.harness.Policy = &harness.Policy{
 		Files:       []string{"helpers.rego"},
-		FileSources: []string{"package agenty.tool\n\nwrites := {\"tickets.label\", \"tickets.close\"}\n"},
+		FileSources: []string{"package agenty.tool\n\nwrites := {\"tickets_label\", \"tickets_close\"}\n"},
 		Rules:       `deny contains "no writes from this harness" if writes[input.tool]`,
 	}
-	m := model.NewScripted(model.CallTools(call("c1", "tickets.label"), call("c2", "tickets.read")), model.Reply("done"))
+	m := model.NewScripted(model.CallTools(call("c1", "tickets_label"), call("c2", "tickets_read")), model.Reply("done"))
 
 	_, err := f.run(t, m)
 

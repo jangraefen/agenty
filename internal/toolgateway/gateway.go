@@ -13,10 +13,24 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
 )
+
+var toolName = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
+
+// ValidateToolName checks that name works with model provider APIs, which
+// allow 1 to 64 letters, digits, underscores and hyphens. Every tool and every
+// grant uses such a name, so the same name appears in the harness, the audit
+// log and the model request. Server-backed tools are named "<server>_<tool>".
+func ValidateToolName(name string) error {
+	if !toolName.MatchString(name) {
+		return fmt.Errorf("tool name %q must be 1 to 64 letters, digits, underscores or hyphens", name)
+	}
+	return nil
+}
 
 // ErrDenied is returned for every call the gateway refuses to execute.
 var ErrDenied = errors.New("tool call denied")
@@ -109,8 +123,8 @@ func New(cfg Config) (*Gateway, error) {
 		executed:     CallCounts{ByTool: map[string]int{}},
 	}
 	for i, name := range cfg.Granted {
-		if name == "" {
-			return nil, fmt.Errorf("toolgateway: grant %d is empty", i)
+		if err := ValidateToolName(name); err != nil {
+			return nil, fmt.Errorf("toolgateway: grant %d: %w", i, err)
 		}
 		g.granted[name] = true
 	}
@@ -128,7 +142,7 @@ func New(cfg Config) (*Gateway, error) {
 	return g, nil
 }
 
-// ValidateTools checks that every tool is non-nil and has a unique, non-empty
+// ValidateTools checks that every tool is non-nil and has a unique, valid
 // name. New applies the same check.
 func ValidateTools(tools []Tool) error {
 	seen := make(map[string]bool, len(tools))
@@ -137,10 +151,10 @@ func ValidateTools(tools []Tool) error {
 			return fmt.Errorf("toolgateway: tool %d is nil", i)
 		}
 		def := tool.Definition()
-		switch {
-		case def.Name == "":
-			return fmt.Errorf("toolgateway: tool %d has no name", i)
-		case seen[def.Name]:
+		if err := ValidateToolName(def.Name); err != nil {
+			return fmt.Errorf("toolgateway: tool %d: %w", i, err)
+		}
+		if seen[def.Name] {
 			return fmt.Errorf("toolgateway: duplicate tool %q", def.Name)
 		}
 		seen[def.Name] = true

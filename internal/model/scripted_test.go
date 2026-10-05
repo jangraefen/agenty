@@ -14,7 +14,7 @@ import (
 )
 
 func TestScripted_ReplaysStepsInOrder(t *testing.T) {
-	call := model.ToolCall{ID: "c1", Name: "tickets.read", Args: json.RawMessage(`{"id":1}`)}
+	call := model.ToolCall{ID: "c1", Name: "tickets_read", Args: json.RawMessage(`{"id":1}`)}
 	m := model.NewScripted(
 		model.CallTools(call),
 		model.Reply("done"),
@@ -68,7 +68,7 @@ func TestScripted_RecordsRequestCopies(t *testing.T) {
 	req := model.Request{
 		System:   "be brief",
 		Messages: msgs,
-		Tools:    []toolgateway.Definition{{Name: "tickets.read"}},
+		Tools:    []toolgateway.Definition{{Name: "tickets_read"}},
 	}
 
 	_, err := m.Generate(context.Background(), req)
@@ -81,7 +81,7 @@ func TestScripted_RecordsRequestCopies(t *testing.T) {
 	require.Len(t, got, 2)
 	assert.Equal(t, "be brief", got[0].System)
 	assert.Equal(t, "hello", got[0].Messages[0].Text, "recorded request must not change with the caller's slice")
-	assert.Equal(t, "tickets.read", got[0].Tools[0].Name)
+	assert.Equal(t, "tickets_read", got[0].Tools[0].Name)
 	assert.Equal(t, "second", got[1].System)
 
 	got[0].System = "mutated"

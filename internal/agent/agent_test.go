@@ -39,54 +39,54 @@ func TestRun_Outcomes(t *testing.T) {
 		{
 			name:        "calls a tool, then answers",
 			maxSteps:    3,
-			script:      []model.Step{model.CallTools(call("c1", "tickets.read")), model.Reply("done")},
+			script:      []model.Step{model.CallTools(call("c1", "tickets_read")), model.Reply("done")},
 			wantOutput:  "done",
 			wantSteps:   2,
-			wantAudited: []string{"tickets.read"},
+			wantAudited: []string{"tickets_read"},
 			wantCalls:   1,
 		},
 		{
 			name:     "several calls in one step run in order",
 			maxSteps: 3,
 			script: []model.Step{
-				model.CallTools(call("c1", "tickets.read"), call("c2", "tickets.label")),
+				model.CallTools(call("c1", "tickets_read"), call("c2", "tickets_label")),
 				model.Reply("done"),
 			},
 			wantOutput:  "done",
 			wantSteps:   2,
-			wantAudited: []string{"tickets.read", "tickets.label"},
+			wantAudited: []string{"tickets_read", "tickets_label"},
 			wantCalls:   2,
 		},
 		{
 			name:        "tool error goes back to the model and the run continues",
 			maxSteps:    3,
 			readErr:     errors.New("ticket system unavailable"),
-			script:      []model.Step{model.CallTools(call("c1", "tickets.read")), model.Reply("recovered")},
+			script:      []model.Step{model.CallTools(call("c1", "tickets_read")), model.Reply("recovered")},
 			wantOutput:  "recovered",
 			wantSteps:   2,
-			wantAudited: []string{"tickets.read"},
+			wantAudited: []string{"tickets_read"},
 			wantCalls:   1,
 		},
 		{
 			name:        "final answer on the last allowed step",
 			maxSteps:    2,
-			script:      []model.Step{model.CallTools(call("c1", "tickets.read")), model.Reply("just in time")},
+			script:      []model.Step{model.CallTools(call("c1", "tickets_read")), model.Reply("just in time")},
 			wantOutput:  "just in time",
 			wantSteps:   2,
-			wantAudited: []string{"tickets.read"},
+			wantAudited: []string{"tickets_read"},
 			wantCalls:   1,
 		},
 		{
 			name:     "max steps reached: calls of the last step are not executed",
 			maxSteps: 2,
 			script: []model.Step{
-				model.CallTools(call("c1", "tickets.read")),
-				model.CallTools(call("c2", "tickets.label")),
+				model.CallTools(call("c1", "tickets_read")),
+				model.CallTools(call("c2", "tickets_label")),
 				model.Reply("too late"),
 			},
 			wantSteps:   2,
 			wantErr:     agent.ErrMaxSteps,
-			wantAudited: []string{"tickets.read"},
+			wantAudited: []string{"tickets_read"},
 			wantCalls:   1,
 		},
 		{
@@ -99,7 +99,7 @@ func TestRun_Outcomes(t *testing.T) {
 			name:        "unrecorded decision ends the run",
 			maxSteps:    3,
 			failAuditOn: toolgateway.EventDecision,
-			script:      []model.Step{model.CallTools(call("c1", "tickets.read")), model.Reply("unreachable")},
+			script:      []model.Step{model.CallTools(call("c1", "tickets_read")), model.Reply("unreachable")},
 			wantSteps:   1,
 			wantErr:     toolgateway.ErrAudit,
 		},
@@ -107,10 +107,10 @@ func TestRun_Outcomes(t *testing.T) {
 			name:        "unrecorded result ends the run",
 			maxSteps:    3,
 			failAuditOn: toolgateway.EventResult,
-			script:      []model.Step{model.CallTools(call("c1", "tickets.read")), model.Reply("unreachable")},
+			script:      []model.Step{model.CallTools(call("c1", "tickets_read")), model.Reply("unreachable")},
 			wantSteps:   1,
 			wantErr:     toolgateway.ErrAudit,
-			wantAudited: []string{"tickets.read"},
+			wantAudited: []string{"tickets_read"},
 			wantCalls:   1,
 		},
 	}
@@ -157,14 +157,14 @@ func TestRun_FirstRequestCarriesInstructionsInputAndGrantedTools(t *testing.T) {
 		assert.Equal(t, "fake "+d.Name, d.Description)
 		assert.JSONEq(t, `{"type":"object"}`, string(d.InputSchema))
 	}
-	assert.Equal(t, []string{"tickets.label", "tickets.read"}, names,
+	assert.Equal(t, []string{"tickets_label", "tickets_read"}, names,
 		"only granted, resolvable tools are offered to the model")
 }
 
 func TestRun_FeedsToolResultsBackAndKeepsTheTranscript(t *testing.T) {
 	f := newFixture(3)
 	f.label.Err = errors.New("label service down")
-	toolCalls := []model.ToolCall{call("c1", "tickets.read"), call("c2", "tickets.delete"), call("c3", "tickets.label")}
+	toolCalls := []model.ToolCall{call("c1", "tickets_read"), call("c2", "tickets_delete"), call("c3", "tickets_label")}
 	m := model.NewScripted(model.CallTools(toolCalls...), model.Reply("done"))
 
 	res, err := f.run(t, m)
@@ -196,7 +196,7 @@ func TestRun_CancelledContextStopsFurtherSideEffects(t *testing.T) {
 	defer cancel()
 	f.read.OnCall = func(context.Context) { cancel() }
 	m := model.NewScripted(
-		model.CallTools(call("c1", "tickets.read"), call("c2", "tickets.label")),
+		model.CallTools(call("c1", "tickets_read"), call("c2", "tickets_label")),
 		model.Reply("unreachable"),
 	)
 
@@ -238,7 +238,7 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 		{"nil audit", withConfig(func(c *agent.Config) { c.Audit = nil }), "audit is required"},
 		{"invalid harness", withConfig(func(c *agent.Config) { c.Harness = &invalid }), "limits.max_steps"},
 		{"nil tool", withConfig(func(c *agent.Config) { c.Tools = append(c.Tools, nil) }), "tool 3 is nil"},
-		{"duplicate tool", withConfig(func(c *agent.Config) { c.Tools = append(c.Tools, f.read) }), `duplicate tool "tickets.read"`},
+		{"duplicate tool", withConfig(func(c *agent.Config) { c.Tools = append(c.Tools, f.read) }), `duplicate tool "tickets_read"`},
 		{"harness policy not loaded", withConfig(func(c *agent.Config) { c.Harness = &unloaded }), `harness policy "triage.rego" was not loaded`},
 		{"invalid central policy", withConfig(func(c *agent.Config) {
 			c.Policy = []policy.Module{{Name: "central.rego", Source: "package agenty.tool\n\ndeny contains"}}
@@ -273,8 +273,8 @@ func TestRun_RejectsEmptyInput(t *testing.T) {
 func TestRun_EachRunHasItsOwnRunIDAndTranscript(t *testing.T) {
 	f := newFixture(3)
 	m := model.NewScripted(
-		model.CallTools(call("c1", "tickets.read")), model.Reply("first done"),
-		model.CallTools(call("c2", "tickets.read")), model.Reply("second done"),
+		model.CallTools(call("c1", "tickets_read")), model.Reply("first done"),
+		model.CallTools(call("c2", "tickets_read")), model.Reply("second done"),
 	)
 	a, err := agent.New(context.Background(), f.config(m))
 	require.NoError(t, err)
@@ -305,11 +305,11 @@ func TestRun_EachRunHasItsOwnRunIDAndTranscript(t *testing.T) {
 
 func TestNew_HarnessChangesAfterNewDoNotWidenGrants(t *testing.T) {
 	f := newFixture(3)
-	m := model.NewScripted(model.CallTools(call("c1", "tickets.delete")), model.Reply("done"))
+	m := model.NewScripted(model.CallTools(call("c1", "tickets_delete")), model.Reply("done"))
 	a, err := agent.New(context.Background(), f.config(m))
 	require.NoError(t, err)
 
-	f.harness.Tools[2] = "tickets.delete"
+	f.harness.Tools[2] = "tickets_delete"
 	f.harness.Limits.MaxSteps = 1
 	_, err = a.Run(context.Background(), "ticket 7")
 

@@ -18,8 +18,8 @@ func TestInvariant_SideEffectsOnlyViaGateway(t *testing.T) {
 	t.Run("every tool execution is a gateway call", func(t *testing.T) {
 		f := newFixture(5)
 		m := model.NewScripted(
-			model.CallTools(call("c1", "tickets.read"), call("c2", "tickets.delete"), call("c3", "tickets.label")),
-			model.CallTools(call("c4", "tickets.read")),
+			model.CallTools(call("c1", "tickets_read"), call("c2", "tickets_delete"), call("c3", "tickets_label")),
+			model.CallTools(call("c4", "tickets_read")),
 			model.Reply("done"),
 		)
 
@@ -32,8 +32,8 @@ func TestInvariant_SideEffectsOnlyViaGateway(t *testing.T) {
 		for _, r := range recordsOf(f.audit.Records, toolgateway.EventResult) {
 			executed[r.Tool]++
 		}
-		assert.Equal(t, executed["tickets.read"], f.read.Calls)
-		assert.Equal(t, executed["tickets.label"], f.label.Calls)
+		assert.Equal(t, executed["tickets_read"], f.read.Calls)
+		assert.Equal(t, executed["tickets_label"], f.label.Calls)
 		assert.Zero(t, f.del.Calls)
 		assert.Equal(t, 3, f.toolCalls())
 	})
@@ -48,11 +48,11 @@ func TestInvariant_ModelIsNotTrusted(t *testing.T) {
 		call   string
 		reason string
 	}{
-		{"registered but not granted", "tickets.delete", "tool not granted"},
-		{"granted but not resolvable", "tickets.ghost", "tool not resolved"},
+		{"registered but not granted", "tickets_delete", "tool not granted"},
+		{"granted but not resolvable", "tickets_ghost", "tool not resolved"},
 		{"empty name", "", "tool not granted"},
-		{"case variant of a granted tool", "TICKETS.READ", "tool not granted"},
-		{"path-like name", "../tickets.read", "tool not granted"},
+		{"case variant of a granted tool", "TICKETS_READ", "tool not granted"},
+		{"path-like name", "../tickets_read", "tool not granted"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

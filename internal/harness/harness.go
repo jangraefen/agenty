@@ -11,6 +11,8 @@ import (
 	"regexp"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
 // Harness is the declarative definition of an agent.
@@ -141,10 +143,9 @@ func (h *Harness) Validate() error {
 	seen := make(map[string]bool, len(h.Tools))
 	for i, tool := range h.Tools {
 		field := fmt.Sprintf("tools[%d]", i)
-		switch {
-		case tool == "":
-			add(field, "must not be empty")
-		case seen[tool]:
+		if err := toolgateway.ValidateToolName(tool); err != nil {
+			add(field, err.Error())
+		} else if seen[tool] {
 			add(field, fmt.Sprintf("duplicate tool %q", tool))
 		}
 		seen[tool] = true

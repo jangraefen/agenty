@@ -2,7 +2,18 @@ packages:
   - .
   # Code generators that need a different TypeScript than the app (ARCHITECTURE §15.4).
   - codegen
+# Supply-chain quarantine (ARCHITECTURE §15.4): a package version must be at least
+# one day old before it is installed. Strict mode fails the install instead of
+# silently adding a too-young version to minimumReleaseAgeExclude.
+minimumReleaseAge: 1440
+minimumReleaseAgeStrict: true
+# Refuse a version whose publishing provenance is weaker than an earlier one's.
+trustPolicy: no-downgrade
+# Reviewed, temporary exceptions: remove each entry once its version is older
+# than minimumReleaseAge.
 minimumReleaseAgeExclude:
+  # jsdom 30.1.2 and its new transitive dependencies, published 2026-10-04
+  # (old enough from 2026-10-05T09:13Z).
   - data-urls@8.0.0
   - jsdom@30.1.2
   - tr46@7.0.0

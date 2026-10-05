@@ -168,3 +168,15 @@ func TestEvaluate_InputDocument(t *testing.T) {
 		"calls": {"total": 3, "by_tool": {"tickets.read": 2, "tickets.label": 1}, "by_effect": {"read": 2, "write": 1}}
 	}`, v.Reasons[0], "this is the input contract policy authors write against")
 }
+
+func TestRulesModule_AddsThePackage(t *testing.T) {
+	m := policy.RulesModule("triage (inline)", `require_approval contains "writes need a human" if input.effect == "write"`)
+	assert.Equal(t, "triage (inline)", m.Name)
+
+	e, err := policy.New(context.Background(), policy.Layer{Name: "harness", Modules: []policy.Module{m}})
+	require.NoError(t, err)
+	v, err := e.Evaluate(context.Background(), input())
+
+	require.NoError(t, err)
+	assert.Equal(t, toolgateway.RequireApproval, v.Decision)
+}

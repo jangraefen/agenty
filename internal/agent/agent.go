@@ -75,11 +75,15 @@ func New(ctx context.Context, cfg Config) (*Agent, error) {
 		return nil, fmt.Errorf("agent: %w", err)
 	}
 	layers := []policy.Layer{{Name: "central", Modules: cfg.Policy}}
-	if h := cfg.Harness; h.Policy != "" {
-		if h.PolicySource == "" {
-			return nil, fmt.Errorf("agent: harness policy %q was not loaded", h.Policy)
+	if p := cfg.Harness.Policy; p != nil {
+		module := policy.RulesModule(cfg.Harness.Name+" (inline policy)", p.Rules)
+		if p.File != "" {
+			if p.FileSource == "" {
+				return nil, fmt.Errorf("agent: harness policy %q was not loaded", p.File)
+			}
+			module = policy.Module{Name: p.File, Source: p.FileSource}
 		}
-		layers = append(layers, policy.Layer{Name: "harness", Modules: []policy.Module{{Name: h.Policy, Source: h.PolicySource}}})
+		layers = append(layers, policy.Layer{Name: "harness", Modules: []policy.Module{module}})
 	}
 	engine, err := policy.New(ctx, layers...)
 	if err != nil {

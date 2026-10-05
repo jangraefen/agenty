@@ -171,3 +171,9 @@ func sortedUnique(s []string) []string {
 	slices.Sort(s)
 	return slices.Compact(s)
 }
+
+// RulesModule makes a module from Rego rules written without a package line,
+// such as inline harness policy.
+func RulesModule(name, rules string) Module {
+	return Module{Name: name, Source: "package " + packagePath + "\n\n" + rules}
+}

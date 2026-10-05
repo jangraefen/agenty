@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jangraefen/agenty/internal/agent"
+	"github.com/jangraefen/agenty/internal/harness"
 	"github.com/jangraefen/agenty/internal/model"
 	"github.com/jangraefen/agenty/internal/policy"
 	"github.com/jangraefen/agenty/internal/toolgateway"
@@ -216,9 +217,11 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 	invalid := *f.harness
 	invalid.Limits.MaxSteps = 0
 	unloaded := *f.harness
-	unloaded.Policy = "triage.rego"
-	broken := unloaded
-	broken.PolicySource = "package agenty.tool\n\ndeny contains"
+	unloaded.Policy = &harness.Policy{File: "triage.rego"}
+	broken := *f.harness
+	broken.Policy = &harness.Policy{File: "triage.rego", FileSource: "package agenty.tool\n\ndeny contains"}
+	brokenInline := *f.harness
+	brokenInline.Policy = &harness.Policy{Rules: "deny contains"}
 	withConfig := func(change func(*agent.Config)) agent.Config {
 		cfg := f.config(m)
 		change(&cfg)
@@ -241,6 +244,7 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 			c.Policy = []policy.Module{{Name: "central.rego", Source: "package agenty.tool\n\ndeny contains"}}
 		}), "central.rego"},
 		{"invalid harness policy", withConfig(func(c *agent.Config) { c.Harness = &broken }), "triage.rego"},
+		{"invalid inline harness policy", withConfig(func(c *agent.Config) { c.Harness = &brokenInline }), "triage (inline policy)"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

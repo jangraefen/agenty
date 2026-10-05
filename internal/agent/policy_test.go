@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jangraefen/agenty/internal/agent"
+	"github.com/jangraefen/agenty/internal/harness"
 	"github.com/jangraefen/agenty/internal/model"
 	"github.com/jangraefen/agenty/internal/policy"
 	"github.com/jangraefen/agenty/internal/toolgateway"
@@ -17,10 +18,9 @@ import (
 func TestRun_CentralAndHarnessPolicyBothApply(t *testing.T) {
 	f := newFixture(5)
 	f.label.Effect = toolgateway.EffectWrite
-	f.harness.Policy = "triage.rego"
-	f.harness.PolicySource = `package agenty.tool
+	f.harness.Policy = &harness.Policy{File: "triage.rego", FileSource: `package agenty.tool
 
-deny contains "ticket 13 is off limits" if input.args.id == 13`
+deny contains "ticket 13 is off limits" if input.args.id == 13`}
 	approver := &gatewaytest.Approver{Approval: toolgateway.Approval{Approved: true, Approver: "alice"}}
 	cfg := f.config(model.NewScripted(
 		model.CallTools(
@@ -85,4 +85,34 @@ require_approval contains "everything needs a human" if true`}}
 	assert.Zero(t, f.read.Calls)
 	require.Len(t, f.audit.Records, 1)
 	assert.Equal(t, toolgateway.Deny, f.audit.Records[0].Decision)
+}
+
+func TestRun_InlineHarnessRulesApply(t *testing.T) {
+	f := newFixture(5)
+	f.harness.Policy = &harness.Policy{Rules: `deny contains "no labels from this harness" if input.tool == "tickets.label"`}
+	m := model.NewScripted(model.CallTools(call("c1", "tickets.label"), call("c2", "tickets.read")), model.Reply("done"))
+
+	_, err := f.run(t, m)
+
+	require.NoError(t, err)
+	assert.Zero(t, f.label.Calls)
+	assert.Equal(t, 1, f.read.Calls)
+	assert.Equal(t, "policy: no labels from this harness", f.audit.Records[0].Reason)
+}
+
+func TestRun_HarnessWithoutPolicyUsesCentralPolicyOnly(t *testing.T) {
+	f := newFixture(5)
+	require.Nil(t, f.harness.Policy)
+	cfg := f.config(model.NewScripted(model.CallTools(call("c1", "tickets.label"), call("c2", "tickets.read")), model.Reply("done")))
+	cfg.Policy = []policy.Module{{Name: "central.rego", Source: `package agenty.tool
+
+deny contains "labels are frozen" if input.tool == "tickets.label"`}}
+	a, err := agent.New(context.Background(), cfg)
+	require.NoError(t, err)
+
+	_, err = a.Run(context.Background(), "ticket 7")
+
+	require.NoError(t, err)
+	assert.Zero(t, f.label.Calls, "central policy still applies")
+	assert.Equal(t, 1, f.read.Calls, "nothing else is restricted")
 }

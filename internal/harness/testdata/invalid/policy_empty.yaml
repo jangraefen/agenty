@@ -2,5 +2,4 @@ name: a
 instructions: x
 model: {provider: anthropic, name: m}
 limits: {max_steps: 1, max_tool_calls: 10}
-policy:
-  file: does-not-exist.rego
+policy: {}

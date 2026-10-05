@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	charmlog "github.com/charmbracelet/log"
 )
 
 // Redacted replaces every occurrence of a registered secret.
@@ -113,6 +115,13 @@ type scope struct {
 // kind Any are rendered to strings first, so the text that is checked is the
 // text that is written whatever next's format; durations, times, and floats
 // are checked in both their text and their JSON form.
+//
+// The handler follows the slog.Handler contract for the next handler: it
+// drops empty attributes and groups without attributes and inlines groups
+// with an empty key into their parent. A top-level attribute whose key is
+// one charmbracelet/log writes itself (time, level, msg, prefix, caller) is
+// renamed to ReservedKeyPrefix followed by the key, so that it is neither
+// dropped nor duplicated.
 func NewRedactingHandler(next slog.Handler, secrets *Secrets) slog.Handler {
 	return &redactingHandler{next: next, secrets: secrets}
 }
@@ -155,25 +164,69 @@ func (h *redactingHandler) Handle(ctx context.Context, r slog.Record) error {
 		}
 	}
 
+	redacted := h.redactAttrs(attrs)
+	for i, a := range redacted {
+		if isReservedKey(a.Key) {
+			redacted[i].Key = ReservedKeyPrefix + a.Key
+		}
+	}
 	out := slog.NewRecord(r.Time, r.Level, h.secrets.Redact(r.Message), r.PC)
-	out.AddAttrs(h.redactAttrs(attrs)...)
+	out.AddAttrs(redacted...)
 	return h.next.Handle(ctx, out)
 }
 
+// ReservedKeyPrefix is prepended to the key of a top-level attribute that
+// collides with a field charmbracelet/log writes itself.
+const ReservedKeyPrefix = "attr."
+
+// isReservedKey reports whether key is one of the fields charmbracelet/log
+// writes for every record; it treats a top-level attribute with such a key
+// as its own field and drops or duplicates it.
+func isReservedKey(key string) bool {
+	switch key {
+	case charmlog.TimestampKey, charmlog.LevelKey, charmlog.MessageKey, charmlog.PrefixKey, charmlog.CallerKey:
+		return true
+	default:
+		return false
+	}
+}
+
+// redactAttrs returns the redacted attributes, without empty attributes and
+// empty groups, and with the attributes of groups with an empty key inlined.
 func (h *redactingHandler) redactAttrs(attrs []slog.Attr) []slog.Attr {
-	out := make([]slog.Attr, len(attrs))
-	for i, a := range attrs {
-		out[i] = h.redactAttr(a)
+	out := make([]slog.Attr, 0, len(attrs))
+	for _, a := range attrs {
+		out = h.appendRedacted(out, a)
 	}
 	return out
 }
 
-func (h *redactingHandler) redactAttr(a slog.Attr) slog.Attr {
+func (h *redactingHandler) appendRedacted(out []slog.Attr, a slog.Attr) []slog.Attr {
 	v := a.Value.Resolve()
-	key := h.secrets.Redact(a.Key)
+	switch {
+	case a.Key == "" && v.Kind() == slog.KindAny && v.Any() == nil:
+		// An empty attribute (a.Equal(slog.Attr{}), checked here without
+		// comparing values that may be uncomparable) is ignored.
+		return out
+	case v.Kind() == slog.KindGroup:
+		children := h.redactAttrs(v.Group())
+		switch {
+		case len(children) == 0:
+			return out
+		case a.Key == "":
+			return append(out, children...)
+		default:
+			return append(out, slog.Attr{Key: h.secrets.Redact(a.Key), Value: slog.GroupValue(children...)})
+		}
+	default:
+		return append(out, h.redactAttr(a.Key, v))
+	}
+}
+
+// redactAttr redacts an attribute whose resolved value v is not a group.
+func (h *redactingHandler) redactAttr(rawKey string, v slog.Value) slog.Attr {
+	key := h.secrets.Redact(rawKey)
 	switch v.Kind() {
-	case slog.KindGroup:
-		return slog.Attr{Key: key, Value: slog.GroupValue(h.redactAttrs(v.Group())...)}
 	case slog.KindString:
 		return slog.String(key, h.secrets.Redact(v.String()))
 	case slog.KindAny:

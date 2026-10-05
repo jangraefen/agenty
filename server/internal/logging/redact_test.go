@@ -72,6 +72,12 @@ var leakCases = []struct {
 		l.Info("m", slog.Group("a", slog.Group("b", slog.Group("c", slog.String("password", secret)))))
 	}},
 	{"group name", func(l *slog.Logger) { l.Info("m", slog.Group(secret, slog.String("k", "v"))) }},
+	{"empty-key group", func(l *slog.Logger) { l.Info("m", slog.Group("", slog.String("password", secret))) }},
+	{"empty-key group nested in group", func(l *slog.Logger) {
+		l.Info("m", slog.Group("g", slog.Group("", slog.String("password", secret))))
+	}},
+	{"With empty-key group", func(l *slog.Logger) { l.With(slog.Group("", "token", secret)).Info("m") }},
+	{"reserved key", func(l *slog.Logger) { l.Info("m", "msg", secret) }},
 	{"error", func(l *slog.Logger) { l.Info("m", "error", errors.New("login failed for "+secret)) }},
 	{"wrapped error", func(l *slog.Logger) {
 		l.Info("m", "error", fmt.Errorf("connect: %w", errors.New("password "+secret+" rejected")))

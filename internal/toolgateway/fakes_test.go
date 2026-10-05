@@ -8,6 +8,8 @@ import (
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
+var _ toolgateway.Tool = (*fakeTool)(nil)
+
 // fakeTool is a Tool that returns a fixed result and counts its calls.
 type fakeTool struct {
 	name    string
@@ -26,6 +28,8 @@ func (f *fakeTool) Call(_ context.Context, args json.RawMessage) (json.RawMessag
 }
 
 var errAuditDown = errors.New("audit store down")
+
+var _ toolgateway.Audit = (*recordingAudit)(nil)
 
 // recordingAudit keeps every record and fails writes of the event in failOn.
 type recordingAudit struct {

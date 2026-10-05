@@ -32,13 +32,13 @@ type Limits struct {
 	MaxSteps int `yaml:"max_steps"`
 }
 
+var _ error = (*FieldError)(nil)
+
 // FieldError reports an invalid field, named by its YAML path.
 type FieldError struct {
 	Field string
 	Msg   string
 }
-
-var _ error = (*FieldError)(nil)
 
 func (e *FieldError) Error() string {
 	return fmt.Sprintf("field %q: %s", e.Field, e.Msg)

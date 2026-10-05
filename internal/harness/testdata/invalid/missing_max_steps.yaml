@@ -1,0 +1,3 @@
+name: a
+instructions: x
+model: {provider: anthropic, name: m}

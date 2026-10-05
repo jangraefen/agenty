@@ -1,0 +1,7 @@
+name: minimal
+instructions: Answer the question.
+model:
+  provider: anthropic
+  name: claude-sonnet-5-5
+limits:
+  max_steps: 1

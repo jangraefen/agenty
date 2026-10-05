@@ -1,0 +1,4 @@
+name: a
+instructions: x
+model: {provider: anthropic}
+limits: {max_steps: 1}

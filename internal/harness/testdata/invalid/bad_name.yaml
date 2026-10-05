@@ -1,0 +1,4 @@
+name: Not A Slug
+instructions: x
+model: {provider: anthropic, name: m}
+limits: {max_steps: 1}

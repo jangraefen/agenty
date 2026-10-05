@@ -32,6 +32,14 @@ linters:
           deny:
             - pkg: github.com/modelcontextprotocol/go-sdk
               desc: reach MCP servers only through internal/mcptool and the tool gateway
+        anthropic:
+          # One place builds Anthropic clients, with the SDK's environment
+          # defaults turned off; a client built elsewhere could read credentials
+          # and endpoints from the environment.
+          files: ["$all", "!**/internal/model/anthropic/**"]
+          deny:
+            - pkg: github.com/anthropics/anthropic-sdk-go
+              desc: reach the Anthropic API only through internal/model/anthropic
     forbidigo:
       analyze-types: true
       forbid:

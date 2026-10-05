@@ -11,14 +11,15 @@ import (
 
 	"github.com/jangraefen/agenty/internal/model"
 	"github.com/jangraefen/agenty/internal/model/anthropic"
+	"github.com/jangraefen/agenty/internal/model/anthropic/anthropictest"
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
 const testKey = "sk-ant-test-key-0123456789"
 
-func newModel(t *testing.T, api *fakeAPI) *anthropic.Model {
+func newModel(t *testing.T, api *anthropictest.API) *anthropic.Model {
 	t.Helper()
-	m, err := anthropic.New(anthropic.Config{APIKey: testKey, Model: "claude-test", MaxTokens: 1024, BaseURL: api.srv.URL})
+	m, err := anthropic.New(anthropic.Config{APIKey: testKey, Model: "claude-test", MaxTokens: 1024, BaseURL: api.URL})
 	require.NoError(t, err)
 	return m
 }
@@ -45,7 +46,7 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 // TestGenerate_SendsTheConversation pins the request the adapter sends for a
 // conversation with tool calls, tool results and tools.
 func TestGenerate_SendsTheConversation(t *testing.T) {
-	api := newFakeAPI(t, reply(t, "end_turn", textBlock("done")))
+	api := anthropictest.New(t, anthropictest.Reply(t, "end_turn", anthropictest.TextBlock("done")))
 	req := model.Request{
 		System: "Triage the ticket.",
 		Messages: []model.Message{
@@ -68,7 +69,7 @@ func TestGenerate_SendsTheConversation(t *testing.T) {
 	_, err := newModel(t, api).Generate(context.Background(), req)
 
 	require.NoError(t, err)
-	reqs := api.recorded()
+	reqs := api.Requests()
 	require.Len(t, reqs, 1)
 	assert.JSONEq(t, `{
 		"model": "claude-test",
@@ -95,13 +96,13 @@ func TestGenerate_SendsTheConversation(t *testing.T) {
 }
 
 func TestGenerate_LeavesOutEmptySystemAndTools(t *testing.T) {
-	api := newFakeAPI(t, reply(t, "end_turn", textBlock("hi")))
+	api := anthropictest.New(t, anthropictest.Reply(t, "end_turn", anthropictest.TextBlock("hi")))
 
 	_, err := newModel(t, api).Generate(context.Background(), model.Request{Messages: []model.Message{{Role: model.RoleUser, Text: "hello"}}})
 
 	require.NoError(t, err)
 	var body map[string]any
-	require.NoError(t, json.Unmarshal(api.recorded()[0].Body, &body))
+	require.NoError(t, json.Unmarshal(api.Requests()[0].Body, &body))
 	assert.NotContains(t, body, "system")
 	assert.NotContains(t, body, "tools")
 }
@@ -109,23 +110,27 @@ func TestGenerate_LeavesOutEmptySystemAndTools(t *testing.T) {
 func TestGenerate_Replies(t *testing.T) {
 	tests := []struct {
 		name string
-		resp func(*testing.T) response
+		resp func(*testing.T) anthropictest.Response
 		want model.Message
 	}{
 		{
 			name: "final answer",
-			resp: func(t *testing.T) response { return reply(t, "end_turn", textBlock("Labelled as urgent.")) },
+			resp: func(t *testing.T) anthropictest.Response {
+				return anthropictest.Reply(t, "end_turn", anthropictest.TextBlock("Labelled as urgent."))
+			},
 			want: model.Message{Role: model.RoleAssistant, Text: "Labelled as urgent."},
 		},
 		{
 			name: "text blocks are joined",
-			resp: func(t *testing.T) response { return reply(t, "end_turn", textBlock("First."), textBlock("Second.")) },
+			resp: func(t *testing.T) anthropictest.Response {
+				return anthropictest.Reply(t, "end_turn", anthropictest.TextBlock("First."), anthropictest.TextBlock("Second."))
+			},
 			want: model.Message{Role: model.RoleAssistant, Text: "First.\nSecond."},
 		},
 		{
 			name: "tool calls keep their ids, names and input",
-			resp: func(t *testing.T) response {
-				return reply(t, "tool_use", textBlock("Let me look."), toolUseBlock("toolu_1", "tickets_read", map[string]any{"id": 7}), toolUseBlock("toolu_2", "tickets_label", map[string]any{}))
+			resp: func(t *testing.T) anthropictest.Response {
+				return anthropictest.Reply(t, "tool_use", anthropictest.TextBlock("Let me look."), anthropictest.ToolUseBlock("toolu_1", "tickets_read", map[string]any{"id": 7}), anthropictest.ToolUseBlock("toolu_2", "tickets_label", map[string]any{}))
 			},
 			want: model.Message{Role: model.RoleAssistant, Text: "Let me look.", ToolCalls: []model.ToolCall{
 				{ID: "toolu_1", Name: "tickets_read", Args: json.RawMessage(`{"id":7}`)},
@@ -134,13 +139,15 @@ func TestGenerate_Replies(t *testing.T) {
 		},
 		{
 			name: "stop sequence is a normal end",
-			resp: func(t *testing.T) response { return reply(t, "stop_sequence", textBlock("Done")) },
+			resp: func(t *testing.T) anthropictest.Response {
+				return anthropictest.Reply(t, "stop_sequence", anthropictest.TextBlock("Done"))
+			},
 			want: model.Message{Role: model.RoleAssistant, Text: "Done"},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			api := newFakeAPI(t, tt.resp(t))
+			api := anthropictest.New(t, tt.resp(t))
 
 			got, err := newModel(t, api).Generate(context.Background(), model.Request{Messages: []model.Message{{Role: model.RoleUser, Text: "ticket 7"}}})
 
@@ -162,24 +169,28 @@ func TestGenerate_Replies(t *testing.T) {
 func TestGenerate_UnusableRepliesAreErrors(t *testing.T) {
 	tests := []struct {
 		name    string
-		resp    func(*testing.T) response
+		resp    func(*testing.T) anthropictest.Response
 		wantIs  error
 		wantErr string
 	}{
-		{"truncated by max tokens", func(t *testing.T) response { return reply(t, "max_tokens", textBlock("Half an ans")) }, anthropic.ErrTruncated, ""},
-		{"refusal", func(t *testing.T) response { return reply(t, "refusal") }, anthropic.ErrRefused, ""},
-		{"context window exceeded", func(t *testing.T) response { return reply(t, "model_context_window_exceeded") }, anthropic.ErrTruncated, ""},
-		{"paused turn", func(t *testing.T) response { return reply(t, "pause_turn") }, nil, `stop reason "pause_turn"`},
-		{"unsupported content block", func(t *testing.T) response {
-			return reply(t, "end_turn", map[string]any{"type": "redacted_thinking", "data": "x"})
+		{"truncated by max tokens", func(t *testing.T) anthropictest.Response {
+			return anthropictest.Reply(t, "max_tokens", anthropictest.TextBlock("Half an ans"))
+		}, anthropic.ErrTruncated, ""},
+		{"refusal", func(t *testing.T) anthropictest.Response { return anthropictest.Reply(t, "refusal") }, anthropic.ErrRefused, ""},
+		{"context window exceeded", func(t *testing.T) anthropictest.Response {
+			return anthropictest.Reply(t, "model_context_window_exceeded")
+		}, anthropic.ErrTruncated, ""},
+		{"paused turn", func(t *testing.T) anthropictest.Response { return anthropictest.Reply(t, "pause_turn") }, nil, `stop reason "pause_turn"`},
+		{"unsupported content block", func(t *testing.T) anthropictest.Response {
+			return anthropictest.Reply(t, "end_turn", map[string]any{"type": "redacted_thinking", "data": "x"})
 		}, nil, `content block "redacted_thinking"`},
-		{"API error", func(*testing.T) response {
-			return response{status: http.StatusBadRequest, body: `{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long"}}`}
+		{"API error", func(*testing.T) anthropictest.Response {
+			return anthropictest.Response{Status: http.StatusBadRequest, Body: `{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long"}}`}
 		}, nil, "prompt is too long"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			api := newFakeAPI(t, tt.resp(t))
+			api := anthropictest.New(t, tt.resp(t))
 
 			got, err := newModel(t, api).Generate(context.Background(), model.Request{Messages: []model.Message{{Role: model.RoleUser, Text: "ticket 7"}}})
 
@@ -208,12 +219,12 @@ func TestGenerate_InvalidConversationsAreErrors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			api := newFakeAPI(t)
+			api := anthropictest.New(t)
 
 			_, err := newModel(t, api).Generate(context.Background(), model.Request{Messages: tt.msgs})
 
 			require.ErrorContains(t, err, tt.wantErr)
-			assert.Empty(t, api.recorded(), "an invalid conversation is never sent")
+			assert.Empty(t, api.Requests(), "an invalid conversation is never sent")
 		})
 	}
 }
@@ -229,7 +240,7 @@ func TestGenerate_InvalidToolSchemasAreErrors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			api := newFakeAPI(t)
+			api := anthropictest.New(t)
 
 			_, err := newModel(t, api).Generate(context.Background(), model.Request{
 				Messages: []model.Message{{Role: model.RoleUser, Text: "x"}},
@@ -237,13 +248,13 @@ func TestGenerate_InvalidToolSchemasAreErrors(t *testing.T) {
 			})
 
 			require.ErrorContains(t, err, tt.wantErr)
-			assert.Empty(t, api.recorded())
+			assert.Empty(t, api.Requests())
 		})
 	}
 }
 
 func TestGenerate_ToolWithoutSchemaTakesAnyObject(t *testing.T) {
-	api := newFakeAPI(t, reply(t, "end_turn", textBlock("hi")))
+	api := anthropictest.New(t, anthropictest.Reply(t, "end_turn", anthropictest.TextBlock("hi")))
 
 	_, err := newModel(t, api).Generate(context.Background(), model.Request{
 		Messages: []model.Message{{Role: model.RoleUser, Text: "x"}},
@@ -254,13 +265,13 @@ func TestGenerate_ToolWithoutSchemaTakesAnyObject(t *testing.T) {
 	var body struct {
 		Tools []json.RawMessage `json:"tools"`
 	}
-	require.NoError(t, json.Unmarshal(api.recorded()[0].Body, &body))
+	require.NoError(t, json.Unmarshal(api.Requests()[0].Body, &body))
 	require.Len(t, body.Tools, 1)
 	assert.JSONEq(t, `{"name":"tickets_read","input_schema":{"type":"object"}}`, string(body.Tools[0]))
 }
 
 func TestGenerate_CancelledContext(t *testing.T) {
-	api := newFakeAPI(t, reply(t, "end_turn", textBlock("late")))
+	api := anthropictest.New(t, anthropictest.Reply(t, "end_turn", anthropictest.TextBlock("late")))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -273,20 +284,40 @@ func TestGenerate_CancelledContext(t *testing.T) {
 // defaults are off: no variable can redirect requests, and with them the API
 // key, or add credentials or headers.
 func TestGenerate_IgnoresTheEnvironment(t *testing.T) {
-	elsewhere := newFakeAPI(t)
-	t.Setenv("ANTHROPIC_BASE_URL", elsewhere.srv.URL)
-	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-from-the-environment")
-	t.Setenv("ANTHROPIC_AUTH_TOKEN", "token-from-the-environment")
-	t.Setenv("ANTHROPIC_CUSTOM_HEADERS", "X-Leak: yes")
-	api := newFakeAPI(t, reply(t, "end_turn", textBlock("hi")))
+	tests := []struct {
+		name string
+		env  map[string]string
+	}{
+		{"base URL and API key", map[string]string{"ANTHROPIC_BASE_URL": "elsewhere", "ANTHROPIC_API_KEY": "sk-ant-from-the-environment"}},
+		{"auth token", map[string]string{"ANTHROPIC_AUTH_TOKEN": "token-from-the-environment"}},
+		{"custom headers", map[string]string{"ANTHROPIC_CUSTOM_HEADERS": "X-Leak: yes"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// No real profile or credential may interfere with the case.
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			for _, key := range []string{"ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE", "ANTHROPIC_CUSTOM_HEADERS"} {
+				t.Setenv(key, "")
+			}
+			elsewhere := anthropictest.New(t)
+			for key, value := range tt.env {
+				if value == "elsewhere" {
+					value = elsewhere.URL
+				}
+				t.Setenv(key, value)
+			}
+			api := anthropictest.New(t, anthropictest.Reply(t, "end_turn", anthropictest.TextBlock("hi")))
 
-	_, err := newModel(t, api).Generate(context.Background(), model.Request{Messages: []model.Message{{Role: model.RoleUser, Text: "x"}}})
+			_, err := newModel(t, api).Generate(context.Background(), model.Request{Messages: []model.Message{{Role: model.RoleUser, Text: "x"}}})
 
-	require.NoError(t, err)
-	assert.Empty(t, elsewhere.recorded())
-	reqs := api.recorded()
-	require.Len(t, reqs, 1)
-	assert.Equal(t, testKey, reqs[0].Header.Get("X-Api-Key"))
-	assert.Empty(t, reqs[0].Header.Get("Authorization"))
-	assert.Empty(t, reqs[0].Header.Get("X-Leak"))
+			require.NoError(t, err)
+			assert.Empty(t, elsewhere.Requests())
+			reqs := api.Requests()
+			require.Len(t, reqs, 1)
+			assert.Equal(t, testKey, reqs[0].Header.Get("X-Api-Key"))
+			assert.Empty(t, reqs[0].Header.Get("Authorization"))
+			assert.Empty(t, reqs[0].Header.Get("X-Leak"))
+		})
+	}
 }

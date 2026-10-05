@@ -1,4 +1,5 @@
-package anthropic_test
+// Package anthropictest provides a fake Anthropic Messages API for tests.
+package anthropictest
 
 import (
 	"encoding/json"
@@ -12,35 +13,41 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakeAPI is a fake Anthropic Messages API. It answers with queued responses
-// and records every request.
-type fakeAPI struct {
+// API is a fake Anthropic Messages API. It answers with queued responses and
+// records every request. Point the provider's BaseURL at URL.
+type API struct {
+	URL string
+
 	srv *httptest.Server
 
 	mu        sync.Mutex
-	requests  []recorded
-	responses []response
+	requests  []Request
+	responses []Response
 }
 
-type recorded struct {
+// Request is a request the fake received.
+type Request struct {
 	Header http.Header
 	Body   json.RawMessage
 }
 
-type response struct {
-	status int
-	body   string
+// Response is a response the fake sends.
+type Response struct {
+	Status int
+	Body   string
 }
 
-func newFakeAPI(t *testing.T, responses ...response) *fakeAPI {
+// New starts a fake that answers with responses, in order, and stops it when
+// the test ends. Without a queued response it answers 400.
+func New(t *testing.T, responses ...Response) *API {
 	t.Helper()
-	f := &fakeAPI{responses: responses}
+	f := &API{responses: responses}
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		assert.NoError(t, err)
 		assert.Equal(t, "/v1/messages", r.URL.Path)
 		f.mu.Lock()
-		f.requests = append(f.requests, recorded{Header: r.Header.Clone(), Body: body})
+		f.requests = append(f.requests, Request{Header: r.Header.Clone(), Body: body})
 		if len(f.responses) == 0 {
 			f.mu.Unlock()
 			http.Error(w, `{"type":"error","error":{"type":"invalid_request_error","message":"no response queued"}}`, http.StatusBadRequest)
@@ -50,23 +57,25 @@ func newFakeAPI(t *testing.T, responses ...response) *fakeAPI {
 		f.responses = f.responses[1:]
 		f.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(resp.status)
-		_, err = io.WriteString(w, resp.body)
+		w.WriteHeader(resp.Status)
+		_, err = io.WriteString(w, resp.Body)
 		assert.NoError(t, err)
 	}))
 	t.Cleanup(f.srv.Close)
+	f.URL = f.srv.URL
 	return f
 }
 
-func (f *fakeAPI) recorded() []recorded {
+// Requests returns the requests received so far.
+func (f *API) Requests() []Request {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]recorded(nil), f.requests...)
+	return append([]Request(nil), f.requests...)
 }
 
-// reply is a successful Messages API response with the given stop reason and
+// Reply is a successful Messages API response with the given stop reason and
 // content blocks.
-func reply(t *testing.T, stopReason string, content ...map[string]any) response {
+func Reply(t *testing.T, stopReason string, content ...map[string]any) Response {
 	t.Helper()
 	if content == nil {
 		content = []map[string]any{}
@@ -82,13 +91,15 @@ func reply(t *testing.T, stopReason string, content ...map[string]any) response 
 		"usage":         map[string]any{"input_tokens": 1, "output_tokens": 1},
 	})
 	require.NoError(t, err)
-	return response{status: http.StatusOK, body: string(body)}
+	return Response{Status: http.StatusOK, Body: string(body)}
 }
 
-func textBlock(text string) map[string]any {
+// TextBlock is a text content block.
+func TextBlock(text string) map[string]any {
 	return map[string]any{"type": "text", "text": text}
 }
 
-func toolUseBlock(id, name string, input any) map[string]any {
+// ToolUseBlock is a tool_use content block.
+func ToolUseBlock(id, name string, input any) map[string]any {
 	return map[string]any{"type": "tool_use", "id": id, "name": name, "input": input}
 }

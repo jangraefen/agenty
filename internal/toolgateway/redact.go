@@ -23,11 +23,20 @@ type redactor struct {
 	replacer *strings.Replacer
 }
 
-func newRedactor(secrets []string) (*redactor, error) {
+// ValidateSecrets checks that every secret is long enough to redact without
+// also matching ordinary text. New applies the same check.
+func ValidateSecrets(secrets []string) error {
 	for i, s := range secrets {
 		if len(s) < minSecretLength {
-			return nil, fmt.Errorf("toolgateway: secret %d is shorter than %d characters", i, minSecretLength)
+			return fmt.Errorf("toolgateway: secret %d is shorter than %d characters", i, minSecretLength)
 		}
+	}
+	return nil
+}
+
+func newRedactor(secrets []string) (*redactor, error) {
+	if err := ValidateSecrets(secrets); err != nil {
+		return nil, err
 	}
 	// Longest first: the replacer tries pairs in order, so a secret that
 	// contains another one is replaced whole.

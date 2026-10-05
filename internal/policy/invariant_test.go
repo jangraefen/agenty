@@ -45,7 +45,7 @@ func TestInvariant_StrictestWins(t *testing.T) {
 // can tighten central policy, never loosen it. Each layer is compiled on its
 // own, so a harness layer cannot reach into central rules.
 func TestInvariant_PolicyCannotLoosen(t *testing.T) {
-	central := layer("central", `exempt contains "tickets.read"
+	central := layer("central", `exempt contains "tickets_read"
 
 deny contains "writes are frozen" if not exempt[input.tool]`)
 
@@ -53,10 +53,10 @@ deny contains "writes are frozen" if not exempt[input.tool]`)
 		name    string
 		harness string
 	}{
-		{"adds to a central helper set", `exempt contains "tickets.label"`},
+		{"adds to a central helper set", `exempt contains "tickets_label"`},
 		{"declares an allow", `allow := true`},
 		{"redefines deny as empty", `deny := set()`},
-		{"redefines the helper", `exempt := {"tickets.label"}`},
+		{"redefines the helper", `exempt := {"tickets_label"}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

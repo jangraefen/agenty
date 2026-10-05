@@ -5,12 +5,12 @@ model:
   provider: anthropic
   name: claude-sonnet-5-5
 tools:
-  - tickets.read
-  - tickets.label
+  - tickets_read
+  - tickets_label
 limits:
   max_steps: 20
   max_tool_calls: 50
 policy:
   files: [triage.rego, helpers.rego]
   rules: |
-    deny contains "too many writes" if input.calls.by_tool["tickets.label"] >= 10
+    deny contains "too many writes" if input.calls.by_tool["tickets_label"] >= 10

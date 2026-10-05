@@ -32,14 +32,14 @@ func TestLoad_Valid(t *testing.T) {
 				Name:         "ticket-triage",
 				Instructions: "Read the ticket and label it.\n",
 				Model:        harness.Model{Provider: "anthropic", Name: "claude-sonnet-5-5"},
-				Tools:        []string{"tickets.read", "tickets.label"},
+				Tools:        []string{"tickets_read", "tickets_label"},
 				Limits:       harness.Limits{MaxSteps: 20, MaxToolCalls: 50},
 				Policy: &harness.Policy{
 					Files: []string{"triage.rego", "helpers.rego"},
-					Rules: "deny contains \"too many writes\" if input.calls.by_tool[\"tickets.label\"] >= 10\n",
+					Rules: "deny contains \"too many writes\" if input.calls.by_tool[\"tickets_label\"] >= 10\n",
 					FileSources: []string{
-						"package agenty.tool\n\nrequire_approval contains \"labels need a human\" if input.tool == \"tickets.label\"\n",
-						"package agenty.tool\n\nwrites := {\"tickets.label\", \"tickets.close\"}\n",
+						"package agenty.tool\n\nrequire_approval contains \"labels need a human\" if input.tool == \"tickets_label\"\n",
+						"package agenty.tool\n\nwrites := {\"tickets_label\", \"tickets_close\"}\n",
 					},
 				},
 			},
@@ -50,9 +50,9 @@ func TestLoad_Valid(t *testing.T) {
 				Name:         "inline",
 				Instructions: "Label tickets.",
 				Model:        harness.Model{Provider: "anthropic", Name: "claude-sonnet-5-5"},
-				Tools:        []string{"tickets.label"},
+				Tools:        []string{"tickets_label"},
 				Limits:       harness.Limits{MaxSteps: 3, MaxToolCalls: 5},
-				Policy:       &harness.Policy{Rules: "require_approval contains \"writes need a human\" if input.tool == \"tickets.label\"\n"},
+				Policy:       &harness.Policy{Rules: "require_approval contains \"writes need a human\" if input.tool == \"tickets_label\"\n"},
 			},
 		},
 	}
@@ -85,6 +85,7 @@ func TestLoad_InvalidFields(t *testing.T) {
 		{"policy_rules_with_package.yaml", []string{"policy.rules"}},
 		{"duplicate_tool.yaml", []string{"tools[1]"}},
 		{"empty_tool.yaml", []string{"tools[1]"}},
+		{"bad_tool_name.yaml", []string{"tools[1]"}},
 		{"many_errors.yaml", []string{"name", "instructions", "model.provider", "model.name", "limits.max_steps", "limits.max_tool_calls"}},
 		{"empty.yaml", []string{"name", "instructions", "model.provider", "model.name", "limits.max_steps", "limits.max_tool_calls"}},
 	}

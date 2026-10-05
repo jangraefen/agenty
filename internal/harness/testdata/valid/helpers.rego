@@ -1,3 +1,3 @@
 package agenty.tool
 
-writes := {"tickets.label", "tickets.close"}
+writes := {"tickets_label", "tickets_close"}

@@ -24,9 +24,9 @@ func TestAgent_RunsMCPToolsThroughTheGateway(t *testing.T) {
 	audit := &gatewaytest.Audit{}
 	m := model.NewScripted(
 		model.CallTools(
-			model.ToolCall{ID: "c1", Name: "test.echo", Args: json.RawMessage(`{"id":7}`)},
-			model.ToolCall{ID: "c2", Name: "test.mixed"},
-			model.ToolCall{ID: "c3", Name: "test.fail"},
+			model.ToolCall{ID: "c1", Name: "test_echo", Args: json.RawMessage(`{"id":7}`)},
+			model.ToolCall{ID: "c2", Name: "test_mixed"},
+			model.ToolCall{ID: "c3", Name: "test_fail"},
 		),
 		model.Reply("done"),
 	)
@@ -35,7 +35,7 @@ func TestAgent_RunsMCPToolsThroughTheGateway(t *testing.T) {
 			Name:         "triage",
 			Instructions: "Triage the ticket.",
 			Model:        harness.Model{Provider: "scripted", Name: "scripted"},
-			Tools:        []string{"test.echo", "test.fail"},
+			Tools:        []string{"test_echo", "test_fail"},
 			Limits:       harness.Limits{MaxSteps: 3, MaxToolCalls: 10},
 		},
 		Model: m,
@@ -52,7 +52,7 @@ func TestAgent_RunsMCPToolsThroughTheGateway(t *testing.T) {
 	for _, d := range m.Requests()[0].Tools {
 		names = append(names, d.Name)
 	}
-	assert.Equal(t, []string{"test.echo", "test.fail"}, names, "the model is offered granted tools only")
+	assert.Equal(t, []string{"test_echo", "test_fail"}, names, "the model is offered granted tools only")
 
 	results := res.Messages[2].ToolResults
 	require.Len(t, results, 3)

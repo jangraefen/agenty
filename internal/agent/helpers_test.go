@@ -25,21 +25,21 @@ type fixture struct {
 	del     *gatewaytest.Tool
 }
 
-// newFixture grants tickets.read, tickets.label and tickets.ghost (which no
-// tool resolves). tickets.delete is registered but not granted.
+// newFixture grants tickets_read, tickets_label and tickets_ghost (which no
+// tool resolves). tickets_delete is registered but not granted.
 func newFixture(maxSteps int) *fixture {
 	return &fixture{
 		harness: &harness.Harness{
 			Name:         "triage",
 			Instructions: instructions,
 			Model:        harness.Model{Provider: "scripted", Name: "scripted"},
-			Tools:        []string{"tickets.read", "tickets.label", "tickets.ghost"},
+			Tools:        []string{"tickets_read", "tickets_label", "tickets_ghost"},
 			Limits:       harness.Limits{MaxSteps: maxSteps, MaxToolCalls: 50},
 		},
 		audit: &gatewaytest.Audit{},
-		read:  &gatewaytest.Tool{Name: "tickets.read", Result: json.RawMessage(`{"title":"Printer on fire"}`)},
-		label: &gatewaytest.Tool{Name: "tickets.label", Result: json.RawMessage(`{"ok":true}`)},
-		del:   &gatewaytest.Tool{Name: "tickets.delete", Result: json.RawMessage(`{"ok":true}`)},
+		read:  &gatewaytest.Tool{Name: "tickets_read", Result: json.RawMessage(`{"title":"Printer on fire"}`)},
+		label: &gatewaytest.Tool{Name: "tickets_label", Result: json.RawMessage(`{"ok":true}`)},
+		del:   &gatewaytest.Tool{Name: "tickets_delete", Result: json.RawMessage(`{"ok":true}`)},
 	}
 }
 

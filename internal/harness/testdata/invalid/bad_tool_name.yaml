@@ -1,5 +1,5 @@
 name: a
 instructions: x
 model: {provider: anthropic, name: m}
-tools: [tickets_read, tickets_read]
+tools: [tickets_read, tickets.label]
 limits: {max_steps: 1, max_tool_calls: 10}

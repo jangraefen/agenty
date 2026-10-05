@@ -19,10 +19,9 @@ const (
 	quoted   = `pa"ss\word-123`
 )
 
-func newRedactingGateway(t *testing.T, tool *gatewaytest.Tool, audit *gatewaytest.Audit) *toolgateway.Gateway {
+func newRedactingRun(t *testing.T, tool *gatewaytest.Tool, audit *gatewaytest.Audit) *toolgateway.Run {
 	t.Helper()
 	gw, err := toolgateway.New(toolgateway.Config{
-		RunID:        runID,
 		Granted:      []string{tool.Name},
 		Tools:        []toolgateway.Tool{tool},
 		MaxToolCalls: 100,
@@ -31,7 +30,7 @@ func newRedactingGateway(t *testing.T, tool *gatewaytest.Tool, audit *gatewaytes
 		Secrets:      []string{apiKey, apiKeyV2, quoted},
 	})
 	require.NoError(t, err)
-	return gw
+	return gw.Start()
 }
 
 func TestCall_RedactsSecretsFromResults(t *testing.T) {
@@ -50,9 +49,9 @@ func TestCall_RedactsSecretsFromResults(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			audit := &gatewaytest.Audit{}
-			gw := newRedactingGateway(t, &gatewaytest.Tool{Name: "vault_read", Result: tt.result}, audit)
+			run := newRedactingRun(t, &gatewaytest.Tool{Name: "vault_read", Result: tt.result}, audit)
 
-			got, err := gw.Call(context.Background(), toolgateway.ToolCall{Name: "vault_read"})
+			got, err := run.Call(context.Background(), toolgateway.ToolCall{Name: "vault_read"})
 
 			require.NoError(t, err)
 			assert.JSONEq(t, tt.want, string(got))
@@ -64,7 +63,6 @@ func TestCall_RedactsSecretsFromResults(t *testing.T) {
 
 func TestCall_RedactedResultThatIsNoLongerJSONBecomesAString(t *testing.T) {
 	gw, err := toolgateway.New(toolgateway.Config{
-		RunID:        runID,
 		Granted:      []string{"vault_read"},
 		Tools:        []toolgateway.Tool{&gatewaytest.Tool{Name: "vault_read", Result: json.RawMessage(`{"pin":12345678}`)}},
 		MaxToolCalls: 100,
@@ -73,8 +71,9 @@ func TestCall_RedactedResultThatIsNoLongerJSONBecomesAString(t *testing.T) {
 		Secrets:      []string{"12345678"},
 	})
 	require.NoError(t, err)
+	run := gw.Start()
 
-	got, err := gw.Call(context.Background(), toolgateway.ToolCall{Name: "vault_read"})
+	got, err := run.Call(context.Background(), toolgateway.ToolCall{Name: "vault_read"})
 
 	require.NoError(t, err)
 	assert.JSONEq(t, `"{\"pin\":[redacted]}"`, string(got))
@@ -83,9 +82,9 @@ func TestCall_RedactedResultThatIsNoLongerJSONBecomesAString(t *testing.T) {
 func TestCall_RedactsSecretsFromToolErrorsAndArgs(t *testing.T) {
 	cause := errors.New("login failed for " + apiKey)
 	audit := &gatewaytest.Audit{}
-	gw := newRedactingGateway(t, &gatewaytest.Tool{Name: "vault_read", Err: cause}, audit)
+	run := newRedactingRun(t, &gatewaytest.Tool{Name: "vault_read", Err: cause}, audit)
 
-	_, err := gw.Call(context.Background(), toolgateway.ToolCall{Name: "vault_read", Args: json.RawMessage(`{"key":"` + apiKey + `"}`)})
+	_, err := run.Call(context.Background(), toolgateway.ToolCall{Name: "vault_read", Args: json.RawMessage(`{"key":"` + apiKey + `"}`)})
 
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), apiKey)
@@ -102,7 +101,6 @@ func TestCall_RedactsSecretsFromToolErrorsAndArgs(t *testing.T) {
 func TestNew_RejectsSecretsTooShortToRedact(t *testing.T) {
 	for _, secret := range []string{"", "1234567"} {
 		_, err := toolgateway.New(toolgateway.Config{
-			RunID:        runID,
 			MaxToolCalls: 100,
 			Policy:       &gatewaytest.Policy{},
 			Audit:        &gatewaytest.Audit{},
@@ -120,7 +118,6 @@ func TestCall_RedactsSecretsWithHTMLCharacters(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			gw, err := toolgateway.New(toolgateway.Config{
-				RunID:        runID,
 				Granted:      []string{"vault_read"},
 				Tools:        []toolgateway.Tool{&gatewaytest.Tool{Name: "vault_read", Result: result}},
 				MaxToolCalls: 100,
@@ -129,8 +126,9 @@ func TestCall_RedactsSecretsWithHTMLCharacters(t *testing.T) {
 				Secrets:      []string{secret},
 			})
 			require.NoError(t, err)
+			run := gw.Start()
 
-			got, err := gw.Call(context.Background(), toolgateway.ToolCall{Name: "vault_read"})
+			got, err := run.Call(context.Background(), toolgateway.ToolCall{Name: "vault_read"})
 
 			require.NoError(t, err)
 			assert.JSONEq(t, `{"v":"[redacted]"}`, string(got))

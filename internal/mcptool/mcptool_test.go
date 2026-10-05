@@ -57,7 +57,6 @@ func toolsByName(t *testing.T, s *mcptool.Session) map[string]toolgateway.Tool {
 func callTool(ctx context.Context, t *testing.T, tool toolgateway.Tool, args json.RawMessage) (json.RawMessage, error) {
 	t.Helper()
 	gw, err := toolgateway.New(toolgateway.Config{
-		RunID:        "run-1",
 		Granted:      []string{tool.Definition().Name},
 		Tools:        []toolgateway.Tool{tool},
 		MaxToolCalls: 100,
@@ -65,7 +64,7 @@ func callTool(ctx context.Context, t *testing.T, tool toolgateway.Tool, args jso
 		Audit:        &gatewaytest.Audit{},
 	})
 	require.NoError(t, err)
-	return gw.Call(ctx, toolgateway.ToolCall{Name: tool.Definition().Name, Args: args})
+	return gw.Start().Call(ctx, toolgateway.ToolCall{Name: tool.Definition().Name, Args: args})
 }
 
 // jsonString encodes s as JSON. It runs while test tables are built, before
@@ -87,7 +86,8 @@ func TestTools_PrefixesNamesAndKeepsDefinitions(t *testing.T) {
 	def := tools["test_echo"].Definition()
 	assert.Equal(t, "Echoes its arguments.", def.Description)
 	assert.JSONEq(t, `{"type":"object"}`, string(def.InputSchema))
-	require.NoError(t, toolgateway.ValidateTools(slices.Collect(maps.Values(tools))), "the gateway accepts every MCP tool")
+	_, err := toolgateway.New(toolgateway.Config{Tools: slices.Collect(maps.Values(tools)), MaxToolCalls: 1, Policy: &gatewaytest.Policy{}, Audit: &gatewaytest.Audit{}})
+	require.NoError(t, err, "the gateway accepts every MCP tool")
 }
 
 func TestCall_Results(t *testing.T) {

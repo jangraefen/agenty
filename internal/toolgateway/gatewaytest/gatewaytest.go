@@ -63,11 +63,12 @@ func (a *Audit) Record(_ context.Context, rec toolgateway.Record) error {
 	return nil
 }
 
-// WithoutCallIDs returns records with CallID cleared, for comparing everything else.
-func WithoutCallIDs(records []toolgateway.Record) []toolgateway.Record {
+// WithoutIDs returns records with RunID and CallID cleared, for comparing
+// everything else.
+func WithoutIDs(records []toolgateway.Record) []toolgateway.Record {
 	var out []toolgateway.Record
 	for _, r := range records {
-		r.CallID = ""
+		r.RunID, r.CallID = "", ""
 		out = append(out, r)
 	}
 	return out

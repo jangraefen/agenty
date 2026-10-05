@@ -499,13 +499,13 @@ Verified 2026-10-04 against each project's repository. **Before adding any depen
 | pgx, sqlc, goose, gronx | MIT |
 | jackc/puddle (`pgxpool`), mfridman/interpolate and go.uber.org/multierr (goose dependencies; checked 2026-10-05) | MIT |
 | sethvargo/go-retry (goose dependency; checked 2026-10-05) | Apache-2.0 |
-| golang.org/x/sync (`pgxpool` dependency; checked 2026-10-05) | BSD-3-Clause |
+| golang.org/x/sync (`pgxpool` dependency, also used by goose and charmbracelet/ultraviolet; checked 2026-10-05) | BSD-3-Clause |
 | Open Policy Agent, gVisor, connect-go | Apache-2.0 |
 | MCP Go SDK | Apache-2.0 (new contributions) / MIT (not-yet-relicensed parts) |
 | openai-go, go-genai, aws-sdk-go-v2 (incl. smithy-go; their vendored copies of `singleflight` are BSD-3-Clause; checked 2026-10-05), go-oidc, opentelemetry-go | Apache-2.0 |
 | anthropic-sdk-go, charmbracelet/log (module `charm.land/log/v2`), Gin, goccy/go-yaml (configuration file; already required by Gin) | MIT |
 | Dependencies of `charm.land/log/v2` v2.0.1 (checked 2026-10-05): `charm.land/lipgloss/v2`, charmbracelet/colorprofile, ultraviolet, x/ansi, x/term, x/termios, x/windows, go-logfmt/logfmt, clipperhouse/displaywidth, clipperhouse/uax29, muesli/cancelreader, lucasb-eyer/go-colorful, mattn/go-runewidth, rivo/uniseg, xo/terminfo | MIT |
-| golang.org/x/sys (dependency of the charmbracelet terminal packages; checked 2026-10-05) | BSD-3-Clause |
+| golang.org/x/sys (dependency of Gin via mattn/go-isatty and of the charmbracelet terminal packages; checked 2026-10-05) | BSD-3-Clause |
 | golang.org/x/exp (required by `charm.land/log/v2` only for Go before 1.21, so not compiled into Agenty; checked 2026-10-05) | BSD-3-Clause |
 | crewjam/saml | BSD-2-Clause |
 | distroless `static-debian13` (runtime base image; checked 2026-10-05) | Apache-2.0 (project); bundled Debian data packages (no executables) under their own licenses: ca-certificates MPL-2.0 (certificates) and GPL-2.0+ (packaging), tzdata public domain, media-types ad-hoc permissive, base-files GPL-2.0+, netbase GPL-2.0 (data and configuration files only; aggregated in the image, nothing linked into Agenty) |

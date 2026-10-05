@@ -53,7 +53,7 @@ type Limits struct {
 	MaxToolCalls int `yaml:"max_tool_calls"`
 }
 
-var _ error = (*FieldError)(nil)
+var _ error = (*FieldError)(nil) //nolint:errcheck // an interface guard, not a discarded error
 
 // FieldError reports an invalid field, named by its YAML path.
 type FieldError struct {

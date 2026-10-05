@@ -13,6 +13,10 @@ linters:
     - testifylint # testify usage, e.g. require vs assert
     - unconvert
   settings:
+    errcheck:
+      # Errors assigned to _ count as unchecked: surface them, or panic if they
+      # cannot happen.
+      check-blank: true
     depguard:
       rules:
         opa:
@@ -21,6 +25,13 @@ linters:
           deny:
             - pkg: github.com/open-policy-agent/opa
               desc: evaluate policy only through internal/policy
+        mcp:
+          # Only internal/mcptool talks to MCP servers; a session elsewhere could
+          # call tools around the gateway (trust model guarantee 2).
+          files: ["$all", "!**/internal/mcptool/**"]
+          deny:
+            - pkg: github.com/modelcontextprotocol/go-sdk
+              desc: reach MCP servers only through internal/mcptool and the tool gateway
     forbidigo:
       analyze-types: true
       forbid:

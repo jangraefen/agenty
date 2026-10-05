@@ -15,6 +15,7 @@ Agenty is an open-source, self-hostable platform for building governed AI agent 
 - **Tests first**: write the failing test before the implementation. Each trust-model guarantee has a named test; extend it when touching security-relevant code. The gateway and policy code get the most thorough tests.
 - **Go tests**: use testify; `require` for preconditions where the test cannot continue, `assert` for independent checks; prefer table-driven tests. Use the scripted model, never a real one, in gating tests.
 - **Lint**: `golangci-lint run ./...` must pass. Its `forbidigo` rules encode trust-model guarantees; never exclude or `//nolint` them. Every `//nolint` names its linter and says why.
+- **Errors**: never discard one, not even with `_`. Return it, or panic if it truly cannot happen; the linter enforces this.
 - **Logging**: use the `log/slog` API (handler: `charmbracelet/log`).
 - **Dependencies**: keep them few; every new dependency must be open source and free to self-host.
 

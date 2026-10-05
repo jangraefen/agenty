@@ -152,7 +152,10 @@ func reasons(v any) ([]string, error) {
 			out = append(out, s)
 			continue
 		}
-		b, _ := json.Marshal(m) // values decoded from OPA results always marshal
+		b, err := json.Marshal(m)
+		if err != nil {
+			return nil, fmt.Errorf("reason %v: %w", m, err)
+		}
 		out = append(out, string(b))
 	}
 	return out, nil

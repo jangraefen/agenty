@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"math"
 	"testing"
 
 	"github.com/open-policy-agent/opa/v1/rego"
@@ -15,4 +16,9 @@ func TestRuleSets_RequiresExactlyOneResult(t *testing.T) {
 			require.ErrorContains(t, err, "expected one result")
 		})
 	}
+}
+
+func TestReasons_UnrenderableReasonIsAnError(t *testing.T) {
+	_, err := reasons([]any{math.Inf(1)})
+	require.ErrorContains(t, err, "reason +Inf")
 }

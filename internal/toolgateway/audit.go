@@ -23,8 +23,10 @@ const (
 	EventResult Event = "result"
 )
 
-// Record is one audit entry. All records of one call share its CallID.
+// Record is one audit entry. All records of one call share its CallID, and
+// all records of one run share its RunID.
 type Record struct {
+	RunID    string
 	CallID   string
 	Event    Event
 	Tool     string

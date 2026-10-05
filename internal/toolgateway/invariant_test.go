@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jangraefen/agenty/internal/toolgateway"
+	"github.com/jangraefen/agenty/internal/toolgateway/gatewaytest"
 )
 
 // TestInvariant_DefaultDeny guards trust-model guarantee 3:
@@ -29,10 +30,11 @@ func TestInvariant_DefaultDeny(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			read := &fakeTool{name: "tickets.read", result: json.RawMessage(`{}`)}
-			del := &fakeTool{name: "tickets.delete", result: json.RawMessage(`{}`)}
-			audit := &recordingAudit{}
+			read := &gatewaytest.Tool{Name: "tickets.read", Result: json.RawMessage(`{}`)}
+			del := &gatewaytest.Tool{Name: "tickets.delete", Result: json.RawMessage(`{}`)}
+			audit := &gatewaytest.Audit{}
 			gw, err := toolgateway.New(toolgateway.Config{
+				RunID:   runID,
 				Granted: tt.granted,
 				Tools:   []toolgateway.Tool{read, del},
 				Audit:   audit,
@@ -44,11 +46,11 @@ func TestInvariant_DefaultDeny(t *testing.T) {
 			require.ErrorIs(t, err, toolgateway.ErrDenied)
 			assert.ErrorContains(t, err, tt.reason)
 			assert.Nil(t, result)
-			assert.Zero(t, read.calls, "denied call must not execute any tool")
-			assert.Zero(t, del.calls, "denied call must not execute any tool")
-			require.Len(t, audit.records, 1)
-			assert.Equal(t, toolgateway.Deny, audit.records[0].Decision)
-			assert.Equal(t, tt.reason, audit.records[0].Reason)
+			assert.Zero(t, read.Calls, "denied call must not execute any tool")
+			assert.Zero(t, del.Calls, "denied call must not execute any tool")
+			require.Len(t, audit.Records, 1)
+			assert.Equal(t, toolgateway.Deny, audit.Records[0].Decision)
+			assert.Equal(t, tt.reason, audit.Records[0].Reason)
 		})
 	}
 }
@@ -76,8 +78,8 @@ func TestInvariant_EveryCallAudited(t *testing.T) {
 			wantCalls:  1,
 			wantResult: json.RawMessage(`{"ok":true}`),
 			wantRecords: []toolgateway.Record{
-				{Event: toolgateway.EventDecision, Tool: "tickets.read", Args: args, Decision: toolgateway.Allow},
-				{Event: toolgateway.EventResult, Tool: "tickets.read", Args: args, Decision: toolgateway.Allow, Result: json.RawMessage(`{"ok":true}`)},
+				{RunID: runID, Event: toolgateway.EventDecision, Tool: "tickets.read", Args: args, Decision: toolgateway.Allow},
+				{RunID: runID, Event: toolgateway.EventResult, Tool: "tickets.read", Args: args, Decision: toolgateway.Allow, Result: json.RawMessage(`{"ok":true}`)},
 			},
 		},
 		{
@@ -85,7 +87,7 @@ func TestInvariant_EveryCallAudited(t *testing.T) {
 			call:      "tickets.delete",
 			wantErrIs: []error{toolgateway.ErrDenied},
 			wantRecords: []toolgateway.Record{
-				{Event: toolgateway.EventDecision, Tool: "tickets.delete", Args: args, Decision: toolgateway.Deny, Reason: "tool not granted"},
+				{RunID: runID, Event: toolgateway.EventDecision, Tool: "tickets.delete", Args: args, Decision: toolgateway.Deny, Reason: "tool not granted"},
 			},
 		},
 		{
@@ -95,21 +97,21 @@ func TestInvariant_EveryCallAudited(t *testing.T) {
 			wantCalls: 1,
 			wantErrIs: []error{toolErr},
 			wantRecords: []toolgateway.Record{
-				{Event: toolgateway.EventDecision, Tool: "tickets.read", Args: args, Decision: toolgateway.Allow},
-				{Event: toolgateway.EventResult, Tool: "tickets.read", Args: args, Decision: toolgateway.Allow, Err: "ticket system unavailable"},
+				{RunID: runID, Event: toolgateway.EventDecision, Tool: "tickets.read", Args: args, Decision: toolgateway.Allow},
+				{RunID: runID, Event: toolgateway.EventResult, Tool: "tickets.read", Args: args, Decision: toolgateway.Allow, Err: "ticket system unavailable"},
 			},
 		},
 		{
 			name:      "unrecorded decision blocks execution",
 			call:      "tickets.read",
 			failOn:    toolgateway.EventDecision,
-			wantErrIs: []error{toolgateway.ErrAudit, errAuditDown},
+			wantErrIs: []error{toolgateway.ErrAudit, gatewaytest.ErrAuditDown},
 		},
 		{
 			name:      "unrecorded denial is still a denial",
 			call:      "tickets.delete",
 			failOn:    toolgateway.EventDecision,
-			wantErrIs: []error{toolgateway.ErrDenied, toolgateway.ErrAudit, errAuditDown},
+			wantErrIs: []error{toolgateway.ErrDenied, toolgateway.ErrAudit, gatewaytest.ErrAuditDown},
 		},
 		{
 			name:       "unrecorded result is reported with the result",
@@ -117,21 +119,22 @@ func TestInvariant_EveryCallAudited(t *testing.T) {
 			failOn:     toolgateway.EventResult,
 			wantCalls:  1,
 			wantResult: json.RawMessage(`{"ok":true}`),
-			wantErrIs:  []error{toolgateway.ErrAudit, errAuditDown},
+			wantErrIs:  []error{toolgateway.ErrAudit, gatewaytest.ErrAuditDown},
 			wantRecords: []toolgateway.Record{
-				{Event: toolgateway.EventDecision, Tool: "tickets.read", Args: args, Decision: toolgateway.Allow},
+				{RunID: runID, Event: toolgateway.EventDecision, Tool: "tickets.read", Args: args, Decision: toolgateway.Allow},
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			read := &fakeTool{name: "tickets.read", result: json.RawMessage(`{"ok":true}`), err: tt.toolErr}
+			read := &gatewaytest.Tool{Name: "tickets.read", Result: json.RawMessage(`{"ok":true}`), Err: tt.toolErr}
 			if tt.toolErr != nil {
-				read.result = nil
+				read.Result = nil
 			}
-			del := &fakeTool{name: "tickets.delete"}
-			audit := &recordingAudit{failOn: tt.failOn}
+			del := &gatewaytest.Tool{Name: "tickets.delete"}
+			audit := &gatewaytest.Audit{FailOn: tt.failOn}
 			gw, err := toolgateway.New(toolgateway.Config{
+				RunID:   runID,
 				Granted: []string{"tickets.read"},
 				Tools:   []toolgateway.Tool{read, del},
 				Audit:   audit,
@@ -147,10 +150,10 @@ func TestInvariant_EveryCallAudited(t *testing.T) {
 				assert.ErrorIs(t, err, target)
 			}
 			assert.Equal(t, tt.wantResult, result)
-			assert.Equal(t, tt.wantCalls, read.calls+del.calls)
-			assert.Equal(t, tt.wantRecords, withoutCallIDs(audit.records))
-			for _, r := range audit.records {
-				assert.Equal(t, audit.records[0].CallID, r.CallID, "records of one call share a call ID")
+			assert.Equal(t, tt.wantCalls, read.Calls+del.Calls)
+			assert.Equal(t, tt.wantRecords, gatewaytest.WithoutCallIDs(audit.Records))
+			for _, r := range audit.Records {
+				assert.Equal(t, audit.Records[0].CallID, r.CallID, "records of one call share a call ID")
 				assert.NotEmpty(t, r.CallID)
 			}
 		})

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { createApiClient } from "./client"
 
 /** Returns a fetch that records each request and answers with the given response. */
@@ -17,10 +17,6 @@ function fakeFetch(status: number, contentType: string, body: unknown) {
 }
 
 describe("createApiClient", () => {
-	afterEach(() => {
-		vi.unstubAllGlobals()
-	})
-
 	it("requests operations relative to the base URL", async () => {
 		const { fetch, requests } = fakeFetch(200, "application/json", { status: "ok", roles: ["api"] })
 		const client = createApiClient({ baseUrl: "https://agenty.example/base", fetch })

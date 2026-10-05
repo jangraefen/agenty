@@ -20,5 +20,6 @@ export interface ApiClientOptions {
 
 /** Creates a client for the public API at the given base URL. */
 export function createApiClient({ baseUrl, fetch }: ApiClientOptions): ApiClient {
-	return createClient<paths>(fetch ? { baseUrl, fetch } : { baseUrl })
+	// openapi-fetch falls back to globalThis.fetch when fetch is undefined.
+	return createClient<paths>({ baseUrl, fetch })
 }

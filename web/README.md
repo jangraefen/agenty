@@ -8,8 +8,8 @@ The web app is a pure API client: it uses only the public API, and only through 
 
 Requires Node.js and pnpm (`task setup` checks the versions); this repository uses pnpm, never npm. The Task targets install the pinned packages with `pnpm install --frozen-lockfile` when needed:
 
-- `task lint:web`: Biome and the TypeScript type check
-- `task test:unit:web`: Vitest
+- `task lint:web`: Biome (warnings fail, too) and the TypeScript type check
+- `task test:unit:web`: Vitest (`src/test-setup.ts` cleans up rendered components after each test; stubbed globals and mocks are restored by configuration)
 - `task build:web`: Vite production build into `web/dist`
 - `task check:licenses:web`: dependency license allowlists (`scripts/check-licenses.mjs`) ([ARCHITECTURE.md §16](../docs/ARCHITECTURE.md))
 

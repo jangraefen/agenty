@@ -11,7 +11,7 @@
 		"dev": "vite",
 		"build": "vite build",
 		"preview": "vite preview",
-		"lint": "biome check .",
+		"lint": "biome check --error-on-warnings .",
 		"typecheck": "tsc --noEmit",
 		"test": "vitest run",
 		"licenses": "node scripts/check-licenses.mjs"

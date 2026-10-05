@@ -12,6 +12,7 @@
 		"noFallthroughCasesInSwitch": true,
 		"noUncheckedIndexedAccess": true,
 		"verbatimModuleSyntax": true,
+		"erasableSyntaxOnly": true,
 		"isolatedModules": true,
 		"moduleDetection": "force",
 		"skipLibCheck": true,

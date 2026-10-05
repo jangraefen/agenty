@@ -41,7 +41,7 @@ func TestS3PassesOnClientErrors(t *testing.T) {
 	errDown := errors.New("service unavailable")
 	s, err := blob.NewS3(failingS3{errDown}, "bucket", "")
 	require.NoError(t, err)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	require.ErrorIs(t, s.Put(ctx, "k", strings.NewReader("v"), 1), errDown, "Put")
 	_, err = s.Get(ctx, "k")
@@ -84,7 +84,7 @@ func TestS3RejectsKeysTooLongWithPrefix(t *testing.T) {
 	const prefix = "tenant/"
 	s, err := blob.NewS3(failingS3{errCalled}, "bucket", prefix)
 	require.NoError(t, err)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	longest := strings.Repeat("k", blob.MaxKeyLength-len(prefix))
 	assert.ErrorIs(t, s.Delete(ctx, longest), errCalled, "longest key reaches the client")

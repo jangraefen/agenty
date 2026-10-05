@@ -20,7 +20,7 @@ import (
 // (AC-E02-7). newStore returns a fresh, empty store for each subtest.
 func runContract(t *testing.T, newStore func(t *testing.T) blob.Blob) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	t.Run("PutThenGetReturnsContent", func(t *testing.T) {
 		s := newStore(t)
@@ -194,12 +194,12 @@ func invalidKeys() []string {
 
 func put(t *testing.T, s blob.Blob, key, content string) {
 	t.Helper()
-	require.NoError(t, s.Put(context.Background(), key, strings.NewReader(content), int64(len(content))), "Put %q", key)
+	require.NoError(t, s.Put(t.Context(), key, strings.NewReader(content), int64(len(content))), "Put %q", key)
 }
 
 func get(t *testing.T, s blob.Blob, key string) string {
 	t.Helper()
-	rc, err := s.Get(context.Background(), key)
+	rc, err := s.Get(t.Context(), key)
 	require.NoError(t, err, "Get %q", key)
 	defer func() { require.NoError(t, rc.Close()) }()
 	data, err := io.ReadAll(rc)

@@ -148,7 +148,7 @@ func (s *Server) exec(t testing.TB, sql string) {
 
 func execOn(t testing.TB, dsn, sql string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout) //nolint:usetesting // execOn also runs in cleanups, after t.Context() is canceled.
 	defer cancel()
 
 	conn, err := pgx.Connect(ctx, dsn)

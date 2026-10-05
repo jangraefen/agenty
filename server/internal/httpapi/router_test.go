@@ -21,7 +21,7 @@ const roleAPI = "api"
 func do(t *testing.T, h http.Handler, method, target string) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), method, target, http.NoBody))
+	h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), method, target, http.NoBody))
 	return rec
 }
 

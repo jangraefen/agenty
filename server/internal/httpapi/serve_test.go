@@ -28,7 +28,7 @@ func slowServer(t *testing.T, timeout time.Duration) (addr string, arrived <-cha
 		<-releaseCh
 		_, _ = io.WriteString(w, "finished")
 	})
-	ctx, cancelFn := context.WithCancel(context.Background())
+	ctx, cancelFn := context.WithCancel(t.Context())
 	doneCh := make(chan error, 1)
 	go func() { doneCh <- httpapi.Serve(ctx, ln, h, timeout) }()
 	return ln.Addr().String(), arrivedCh, releaseCh, cancelFn, doneCh
@@ -102,7 +102,7 @@ func TestServeReportsListenerFailure(t *testing.T) {
 	require.NoError(t, err, "listen")
 	_ = ln.Close()
 
-	err = httpapi.Serve(context.Background(), ln, http.NotFoundHandler(), time.Second)
+	err = httpapi.Serve(t.Context(), ln, http.NotFoundHandler(), time.Second)
 
 	assert.Error(t, err, "Serve on a closed listener succeeded, want error")
 }

@@ -3,7 +3,6 @@
 package blob_test
 
 import (
-	"context"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -55,7 +54,7 @@ func newS3(t *testing.T, prefix string) (blob.Blob, *s3.Client, string) {
 func newS3With(t *testing.T, client *s3.Client, prefix string) (blob.Blob, *s3.Client, string) {
 	t.Helper()
 	const bucket = "agenty-test"
-	_, err := client.CreateBucket(context.Background(), &s3.CreateBucketInput{Bucket: aws.String(bucket)})
+	_, err := client.CreateBucket(t.Context(), &s3.CreateBucketInput{Bucket: aws.String(bucket)})
 	require.NoError(t, err)
 	s, err := blob.NewS3(client, bucket, prefix)
 	require.NoError(t, err)
@@ -88,7 +87,7 @@ func TestS3ContractPlainHTTP(t *testing.T) {
 func TestS3PrefixCountsTowardsMaxKeyLength(t *testing.T) {
 	const prefix = "tenant/"
 	s, _, _ := newS3(t, prefix)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	longest := strings.Repeat("k", blob.MaxKeyLength-len(prefix))
 	put(t, s, longest, "fits")
@@ -107,7 +106,7 @@ func TestS3StoresObjectsUnderPrefix(t *testing.T) {
 	s, client, bucket := newS3(t, "tenant/")
 	put(t, s, "runs/r1/out", "data")
 
-	out, err := client.HeadObject(context.Background(), &s3.HeadObjectInput{
+	out, err := client.HeadObject(t.Context(), &s3.HeadObjectInput{
 		Bucket: aws.String(bucket), Key: aws.String("tenant/runs/r1/out"),
 	})
 	require.NoError(t, err)
@@ -117,7 +116,7 @@ func TestS3StoresObjectsUnderPrefix(t *testing.T) {
 func TestS3MissingBucketIsNotNotFound(t *testing.T) {
 	s, err := blob.NewS3(fakeS3(t), "no-such-bucket", "")
 	require.NoError(t, err)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	_, err = s.Get(ctx, "k")
 	require.Error(t, err)

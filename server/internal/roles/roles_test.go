@@ -83,7 +83,7 @@ func (f *fakeComponent) Run(ctx context.Context) error {
 
 func TestRunStartsEveryComponentAndStopsOnCancel(t *testing.T) {
 	a, b := newFake(nil), newFake(nil)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 
 	go func() { done <- roles.Run(ctx, map[roles.Role]roles.Component{roles.API: a, roles.Worker: b}) }()
@@ -105,7 +105,7 @@ func TestRunStopsAllComponentsWhenOneFails(t *testing.T) {
 	done := make(chan error, 1)
 
 	go func() {
-		done <- roles.Run(context.Background(), map[roles.Role]roles.Component{roles.API: failing, roles.Worker: idle})
+		done <- roles.Run(t.Context(), map[roles.Role]roles.Component{roles.API: failing, roles.Worker: idle})
 	}()
 
 	select {
@@ -118,7 +118,7 @@ func TestRunStopsAllComponentsWhenOneFails(t *testing.T) {
 }
 
 func TestIdleRunsUntilCanceled(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 
 	go func() { done <- roles.Idle().Run(ctx) }()

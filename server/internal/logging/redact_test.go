@@ -171,7 +171,7 @@ func TestRedactsNonStringValuesWhoseTextIsASecret(t *testing.T) {
 			secrets.Register("4242424242")
 			logger, buf := newLogger(t, f, slog.LevelDebug, secrets)
 
-			logger.Info("m", "pin", 4242424242, "upin", uint64(4242424242), slog.Int64("i64", 4242424242))
+			logger.Info("m", "pin", 4242424242, "upin", uint64(4242424242), slog.Int64("i64", 4242424242)) //nolint:sloglint // Mixed on purpose: both argument forms must be redacted.
 
 			assertRedacted(t, buf.String(), "4242424242")
 		})
@@ -335,9 +335,9 @@ func TestRedactingHandlerDelegatesEnabled(t *testing.T) {
 	next := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError})
 	h := logging.NewRedactingHandler(next, logging.NewSecrets())
 
-	assert.False(t, h.Enabled(context.Background(), slog.LevelWarn))
-	assert.True(t, h.Enabled(context.Background(), slog.LevelError))
-	assert.False(t, h.WithGroup("g").Enabled(context.Background(), slog.LevelWarn))
+	assert.False(t, h.Enabled(t.Context(), slog.LevelWarn))
+	assert.True(t, h.Enabled(t.Context(), slog.LevelError))
+	assert.False(t, h.WithGroup("g").Enabled(t.Context(), slog.LevelWarn))
 }
 
 func TestRedactingHandlerWorksWithStandardJSONHandler(t *testing.T) {
@@ -402,7 +402,7 @@ func TestRedactsNonStringValuesWhoseJSONIsASecret(t *testing.T) {
 				secrets.Register(tc.secret)
 				logger, buf := newLogger(t, f, slog.LevelDebug, secrets)
 
-				logger.LogAttrs(context.Background(), slog.LevelInfo, "m", tc.attr)
+				logger.LogAttrs(t.Context(), slog.LevelInfo, "m", tc.attr)
 
 				assert.NotContains(t, buf.String(), tc.secret, "output %q", buf.String())
 			})

@@ -10,6 +10,7 @@ linters:
   default: none
   enable:
     - bodyclose
+    - containedctx
     - depguard
     - dupl
     - errcheck
@@ -24,11 +25,15 @@ linters:
     - govet
     - ineffassign
     - modernize
+    - nolintlint
     - prealloc
     - revive
+    - sloglint
     - staticcheck
+    - testifylint
     - unconvert
     - unused
+    - usetesting
     - whitespace
   settings:
     # Architecture boundaries (ARCHITECTURE §3, §4, §15.3). Package paths follow §5.1:
@@ -66,17 +71,33 @@ linters:
       disable:
         - fieldalignment
       enable-all: true
-    gosec:
-      excludes:
-        - G115
-        - G124
     goconst:
       min-occurrences: 15
+    # Every //nolint names the linter and says why; stale directives fail the lint.
+    nolintlint:
+      require-specific: true
+      require-explanation: true
+      allow-unused: false
+    # Structured logging through log/slog (AGENTS.md): key-value pairs or attributes, never mixed.
+    sloglint:
+      no-mixed-args: true
+    # AGENTS.md: require for preconditions, assert for independent checks. The require-error
+    # checker would force require for every error assertion, contradicting that rule.
+    testifylint:
+      enable-all: true
+      disable:
+        - require-error
+    usetesting:
+      context-background: true
+      context-todo: true
+      os-mkdir-temp: true
+      os-setenv: true
+      os-temp-dir: true
+      os-create-temp: true
+      os-chdir: true
   exclusions:
     presets:
       - comments
-      - common-false-positives
-      - legacy
       - std-error-handling
     rules:
       - linters:
@@ -85,6 +106,12 @@ linters:
       - linters:
           - funlen
         path: _test\.go$
+      # Tests build and run binaries and read fixtures from paths they compute themselves;
+      # production code annotates each such call with //nolint:gosec and a reason instead.
+      - linters:
+          - gosec
+        path: _test\.go$
+        text: "G(204|302|304):"
 formatters:
   enable:
     - gofmt

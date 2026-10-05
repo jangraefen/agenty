@@ -32,7 +32,7 @@ func TestLocalRejectsPathTraversal(t *testing.T) {
 	root := filepath.Join(parent, "root")
 	s, err := blob.NewLocal(root)
 	require.NoError(t, err)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	for _, key := range []string{"../escape", "a/../../escape", "/etc/passwd", `..\escape`, "..", "a/.."} {
 		require.ErrorIs(t, s.Put(ctx, key, strings.NewReader("x"), 1), blob.ErrInvalidKey, "Put %q", key)
@@ -49,7 +49,7 @@ func TestLocalLeavesNoTemporaryFiles(t *testing.T) {
 	root := t.TempDir()
 	s, err := blob.NewLocal(root)
 	require.NoError(t, err)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	require.NoError(t, s.Put(ctx, "ok", strings.NewReader("data"), 4))
 	require.ErrorIs(t, s.Put(ctx, "short", strings.NewReader("da"), 4), blob.ErrSizeMismatch)
@@ -112,7 +112,7 @@ func TestLocalReportsFileSystemErrors(t *testing.T) {
 	s, err := blob.NewLocal(root)
 	require.NoError(t, err)
 	put(t, s, "k", "v")
-	ctx := context.Background()
+	ctx := t.Context()
 
 	require.NoError(t, os.Chmod(root, 0o000))
 	t.Cleanup(func() { _ = os.Chmod(root, 0o700) })

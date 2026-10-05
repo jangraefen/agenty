@@ -104,7 +104,7 @@ func silentHost(t *testing.T) string {
 			_ = c.Close()
 		}
 	})
-	return "postgres://agenty:hunter2@" + ln.Addr().String() + "/agenty?sslmode=disable" //nolint:gosec // Test credential.
+	return "postgres://agenty:hunter2@" + ln.Addr().String() + "/agenty?sslmode=disable"
 }
 
 func TestReadyGivesUpOnASilentDatabaseHost(t *testing.T) {

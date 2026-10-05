@@ -103,7 +103,7 @@ func launch(t *testing.T, roleList, dsn string, migrations fs.FS) started {
 func launchWithConfig(t *testing.T, roleList, dsn string, migrations fs.FS, extraConfig string) started {
 	t.Helper()
 	path := writeConfig(t, "server:\n  address: 127.0.0.1:0\n  shutdownTimeout: 5s\n"+databaseConfig(dsn)+extraConfig)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background()) //nolint:usetesting // The server must outlive t.Context(); cleanups stop it.
 	t.Cleanup(cancel)
 	startedAt := make(chan net.Addr, 1)
 	code := make(chan int, 1)
@@ -180,7 +180,7 @@ func (s started) stop(t *testing.T) {
 
 func healthRoles(t *testing.T, addr string) []string {
 	t.Helper()
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+addr+"/healthz", http.NoBody)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+addr+"/healthz", http.NoBody)
 	require.NoError(t, err, "request")
 	resp, err := client.Do(req)
 	require.NoError(t, err, "GET /healthz")
@@ -219,7 +219,7 @@ func TestServeReportsSelectedRoles(t *testing.T) {
 
 func readyStatus(t *testing.T, addr string) int {
 	t.Helper()
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+addr+"/readyz", http.NoBody)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+addr+"/readyz", http.NoBody)
 	require.NoError(t, err, "request")
 	resp, err := client.Do(req)
 	require.NoError(t, err, "GET /readyz")
@@ -230,7 +230,7 @@ func readyStatus(t *testing.T, addr string) int {
 // readyBody returns the body of /readyz.
 func readyBody(t *testing.T, addr string) string {
 	t.Helper()
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+addr+"/readyz", http.NoBody)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+addr+"/readyz", http.NoBody)
 	require.NoError(t, err, "request")
 	resp, err := client.Do(req)
 	require.NoError(t, err, "GET /readyz")
@@ -244,7 +244,7 @@ func readyBody(t *testing.T, addr string) string {
 func execSQL(t *testing.T, dsn, sql string, args ...any) {
 	t.Helper()
 	// Not t.Context(): execSQL also runs in cleanups, after it is canceled.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second) //nolint:usetesting // Runs in cleanups, after t.Context() is canceled.
 	defer cancel()
 	conn, err := pgx.Connect(ctx, dsn)
 	require.NoError(t, err, "connect")
@@ -257,7 +257,7 @@ func queryInt(t *testing.T, dsn, sql string) int {
 	t.Helper()
 	conn, err := pgx.Connect(t.Context(), dsn)
 	require.NoError(t, err, "connect")
-	defer func() { _ = conn.Close(context.Background()) }()
+	defer func() { _ = conn.Close(t.Context()) }()
 	var n int
 	require.NoError(t, conn.QueryRow(t.Context(), sql).Scan(&n), "query %s", sql)
 	return n
@@ -280,8 +280,8 @@ func blockMigrations(t *testing.T, dsn string) (release func()) {
 	_, err = tx.Exec(t.Context(), "LOCK TABLE gate IN ACCESS EXCLUSIVE MODE")
 	require.NoError(t, err, "lock gate")
 	release = func() {
-		_ = tx.Rollback(context.Background())
-		_ = conn.Close(context.Background())
+		_ = tx.Rollback(context.Background()) //nolint:usetesting // Runs in a cleanup, after t.Context() is canceled.
+		_ = conn.Close(context.Background())  //nolint:usetesting // Runs in a cleanup, after t.Context() is canceled.
 	}
 	t.Cleanup(release)
 	return release
@@ -431,7 +431,7 @@ func TestServeLogsInConfiguredFormat(t *testing.T) {
 		t.Run(tt.format, func(t *testing.T) {
 			s := startWithConfig(t, "api", "log:\n  format: "+tt.format+"\n")
 			// Probes are logged at debug level; an unknown path at info.
-			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+s.addr+"/no-such-path", http.NoBody)
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+s.addr+"/no-such-path", http.NoBody)
 			require.NoError(t, err, "request")
 			resp, err := http.DefaultClient.Do(req)
 			require.NoError(t, err, "GET /no-such-path")

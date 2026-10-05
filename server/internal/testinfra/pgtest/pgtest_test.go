@@ -28,7 +28,7 @@ func connect(t *testing.T, dsn string) *pgx.Conn {
 	defer cancel()
 	conn, err := pgx.Connect(ctx, dsn)
 	require.NoError(t, err, "connect")
-	t.Cleanup(func() { _ = conn.Close(context.Background()) })
+	t.Cleanup(func() { _ = conn.Close(context.Background()) }) //nolint:usetesting // Cleanups run after t.Context() is canceled.
 	return conn
 }
 
@@ -47,7 +47,7 @@ func TestNewDatabaseHasPgvector(t *testing.T) {
 	var distance float64
 	err := conn.QueryRow(t.Context(), "SELECT '[1,2,3]'::vector <-> '[1,2,5]'::vector").Scan(&distance)
 	require.NoError(t, err, "vector query")
-	assert.Equal(t, 2.0, distance, "L2 distance")
+	assert.InDelta(t, 2.0, distance, 1e-9, "L2 distance")
 }
 
 func TestNewDatabaseIsIsolated(t *testing.T) {
@@ -81,7 +81,7 @@ func TestTerminateStopsServer(t *testing.T) {
 	srv, err := pgtest.Start(t.Context())
 	require.NoError(t, err, "start")
 	dsn := srv.DSN()
-	connect(t, dsn).Close(t.Context())
+	_ = connect(t, dsn).Close(t.Context())
 
 	require.NoError(t, srv.Terminate(t.Context()), "terminate")
 

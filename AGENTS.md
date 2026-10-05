@@ -26,6 +26,7 @@ Agenty is an open-source, self-hostable platform for building governed AI agent 
 - Do not merge, push, or rewrite history unless asked.
 - The repository is public but not yet licensed; do not add a license or accept external contributions without the maintainer's decision.
 - Never put secrets in the repository or logs.
+- Local credentials live in a git-ignored `.env` at the module root, loaded with `internal/dotenv`. Agents must never read, print or commit it.
 
 ## Keeping documents current
 

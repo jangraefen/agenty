@@ -35,6 +35,9 @@ type Config struct {
 	// one, such calls are denied.
 	Approver toolgateway.Approver
 	Audit    toolgateway.Audit
+	// Secrets are credential values, such as the model API key and MCP server
+	// tokens, that the gateway redacts from everything it hands on.
+	Secrets []string
 }
 
 // Agent runs one harness. It holds no run state, so it can run many times.
@@ -45,6 +48,7 @@ type Agent struct {
 	policy   *policy.Engine
 	approver toolgateway.Approver
 	audit    toolgateway.Audit
+	secrets  []string
 }
 
 // Result is the outcome of a run. On error it holds what happened up to the
@@ -74,6 +78,9 @@ func New(ctx context.Context, cfg Config) (*Agent, error) {
 	if err := toolgateway.ValidateTools(cfg.Tools); err != nil {
 		return nil, fmt.Errorf("agent: %w", err)
 	}
+	if err := toolgateway.ValidateSecrets(cfg.Secrets); err != nil {
+		return nil, fmt.Errorf("agent: %w", err)
+	}
 	layers := []policy.Layer{{Name: "central", Modules: cfg.Policy}}
 	if p := cfg.Harness.Policy; p != nil {
 		var modules []policy.Module
@@ -101,6 +108,7 @@ func New(ctx context.Context, cfg Config) (*Agent, error) {
 		policy:   engine,
 		approver: cfg.Approver,
 		audit:    cfg.Audit,
+		secrets:  slices.Clone(cfg.Secrets),
 	}, nil
 }
 
@@ -126,6 +134,7 @@ func (a *Agent) Run(ctx context.Context, input string) (Result, error) {
 		Policy:       a.policy,
 		Approver:     a.approver,
 		Audit:        a.audit,
+		Secrets:      a.secrets,
 	})
 	if err != nil {
 		// New has validated every input; this is a programming error.

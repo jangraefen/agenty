@@ -184,7 +184,7 @@ func (g *Gateway) Call(ctx context.Context, call ToolCall) (json.RawMessage, err
 	}
 
 	if rec.Decision == RequireApproval {
-		approval, err := g.approve(ctx, call, verdict.Reasons)
+		approval, err := g.approver.Approve(ctx, verdict.Request, verdict.Reasons)
 		rec.Event, rec.Approver = EventApproval, approval.Approver
 		rec.Decision, rec.Reason = Allow, approval.Reason
 		switch {
@@ -214,10 +214,11 @@ func (g *Gateway) Call(ctx context.Context, call ToolCall) (json.RawMessage, err
 }
 
 // decision is the outcome of decide: the gateway's decision, its reason, and
-// the policy reasons behind it.
+// for calls that reached policy, the request and the policy reasons.
 type decision struct {
 	Decision Decision
 	Reason   string
+	Request  Request
 	Reasons  []string
 }
 
@@ -242,14 +243,15 @@ func (g *Gateway) decide(ctx context.Context, call ToolCall) (Tool, decision) {
 		return nil, deny("tool call limit reached")
 	}
 
-	verdict, err := g.policy.Evaluate(ctx, PolicyInput{
+	req := Request{
 		RunID:   g.runID,
 		Harness: g.harness,
 		Tool:    call.Name,
 		Effect:  g.effects[call.Name],
 		Args:    call.Args,
 		Calls:   counts,
-	})
+	}
+	verdict, err := g.policy.Evaluate(ctx, req)
 	if err != nil {
 		return nil, deny("policy error: " + err.Error())
 	}
@@ -263,20 +265,10 @@ func (g *Gateway) decide(ctx context.Context, call ToolCall) (Tool, decision) {
 		if g.approver == nil {
 			return nil, deny("no approver for required approval: " + reasons)
 		}
-		return tool, decision{Decision: RequireApproval, Reason: "policy: " + reasons, Reasons: verdict.Reasons}
+		return tool, decision{Decision: RequireApproval, Reason: "policy: " + reasons, Request: req, Reasons: verdict.Reasons}
 	default:
 		return nil, deny(fmt.Sprintf("invalid policy decision %q", verdict.Decision))
 	}
-}
-
-func (g *Gateway) approve(ctx context.Context, call ToolCall, reasons []string) (Approval, error) {
-	return g.approver.Approve(ctx, ApprovalRequest{
-		RunID:   g.runID,
-		Tool:    call.Name,
-		Effect:  g.effects[call.Name],
-		Args:    call.Args,
-		Reasons: reasons,
-	})
 }
 
 func (g *Gateway) countExecuted(name string) {

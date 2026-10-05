@@ -63,6 +63,7 @@ func TestCall_ApproverSeesTheRequest(t *testing.T) {
 	approver := &gatewaytest.Approver{Approval: toolgateway.Approval{Approved: true, Approver: "alice"}}
 	gw, err := toolgateway.New(toolgateway.Config{
 		RunID:        runID,
+		Harness:      "triage",
 		MaxToolCalls: 100,
 		Policy: &gatewaytest.Policy{Verdicts: map[string]toolgateway.Verdict{
 			"tickets.label": {Decision: toolgateway.RequireApproval, Reasons: []string{"writes need a human", "label is public"}},
@@ -77,14 +78,18 @@ func TestCall_ApproverSeesTheRequest(t *testing.T) {
 	_, err = gw.Call(context.Background(), toolgateway.ToolCall{Name: "tickets.label", Args: json.RawMessage(`{"label":"urgent"}`)})
 	require.NoError(t, err)
 
-	require.Len(t, approver.Requests, 1)
-	assert.Equal(t, toolgateway.ApprovalRequest{
-		RunID:   runID,
-		Tool:    "tickets.label",
-		Effect:  toolgateway.EffectWrite,
-		Args:    json.RawMessage(`{"label":"urgent"}`),
+	require.Len(t, approver.Calls, 1)
+	assert.Equal(t, gatewaytest.ApprovalCall{
+		Request: toolgateway.Request{
+			RunID:   runID,
+			Harness: "triage",
+			Tool:    "tickets.label",
+			Effect:  toolgateway.EffectWrite,
+			Args:    json.RawMessage(`{"label":"urgent"}`),
+			Calls:   toolgateway.CallCounts{ByTool: map[string]int{}, ByEffect: map[toolgateway.Effect]int{}},
+		},
 		Reasons: []string{"writes need a human", "label is public"},
-	}, approver.Requests[0])
+	}, approver.Calls[0], "the approver sees the same request as policy")
 }
 
 func TestCall_ToolCallLimitCountsEveryAttempt(t *testing.T) {

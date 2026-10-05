@@ -88,11 +88,11 @@ type Policy struct {
 	Verdicts map[string]toolgateway.Verdict
 	Err      error
 
-	Inputs []toolgateway.PolicyInput
+	Inputs []toolgateway.Request
 }
 
 // Evaluate records in and returns the configured verdict or error.
-func (p *Policy) Evaluate(_ context.Context, in toolgateway.PolicyInput) (toolgateway.Verdict, error) {
+func (p *Policy) Evaluate(_ context.Context, in toolgateway.Request) (toolgateway.Verdict, error) {
 	p.Inputs = append(p.Inputs, in)
 	if p.Err != nil {
 		return toolgateway.Verdict{}, p.Err
@@ -110,11 +110,17 @@ type Approver struct {
 	Approval toolgateway.Approval
 	Err      error
 
-	Requests []toolgateway.ApprovalRequest
+	Calls []ApprovalCall
 }
 
-// Approve records req and returns the configured approval or error.
-func (a *Approver) Approve(_ context.Context, req toolgateway.ApprovalRequest) (toolgateway.Approval, error) {
-	a.Requests = append(a.Requests, req)
+// ApprovalCall is one request an Approver received.
+type ApprovalCall struct {
+	Request toolgateway.Request
+	Reasons []string
+}
+
+// Approve records the call and returns the configured approval or error.
+func (a *Approver) Approve(_ context.Context, req toolgateway.Request, reasons []string) (toolgateway.Approval, error) {
+	a.Calls = append(a.Calls, ApprovalCall{Request: req, Reasons: reasons})
 	return a.Approval, a.Err
 }

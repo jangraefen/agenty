@@ -41,8 +41,8 @@ require_approval contains "writes need a human" if input.effect == "write"`}}
 
 	assert.Zero(t, f.read.Calls, "harness policy denied the read")
 	assert.Equal(t, 1, f.label.Calls, "central policy required approval, and alice approved")
-	require.Len(t, approver.Requests, 1)
-	assert.Equal(t, []string{"writes need a human"}, approver.Requests[0].Reasons)
+	require.Len(t, approver.Calls, 1)
+	assert.Equal(t, []string{"writes need a human"}, approver.Calls[0].Reasons)
 
 	results := res.Messages[2].ToolResults
 	require.Len(t, results, 2)

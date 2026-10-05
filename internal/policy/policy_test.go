@@ -17,8 +17,8 @@ func layer(name, rules string) policy.Layer {
 	return policy.Layer{Name: name, Modules: []policy.Module{{Name: name + ".rego", Source: "package agenty.tool\n\n" + rules}}}
 }
 
-func input() toolgateway.PolicyInput {
-	return toolgateway.PolicyInput{
+func input() toolgateway.Request {
+	return toolgateway.Request{
 		RunID:   "run-1",
 		Harness: "triage",
 		Tool:    "tickets.label",
@@ -124,7 +124,7 @@ func TestEvaluate_Errors(t *testing.T) {
 		args    json.RawMessage
 		wantErr []string
 	}{
-		{"invalid args JSON", ``, json.RawMessage(`{not json`), []string{"args: "}},
+		{"invalid args JSON", ``, json.RawMessage(`{not json`), []string{"policy: input: "}},
 		{"builtin error is an error, not a silent no-match", `deny contains "too big" if to_number(input.args.label) > 3`, nil, []string{"central: ", "to_number"}},
 		{"conflicting values", `x := 1 if true
 x := 2 if true
@@ -149,4 +149,22 @@ deny contains "x" if x == 1`, nil, []string{"central: ", "conflict"}},
 			assert.Zero(t, v)
 		})
 	}
+}
+
+func TestEvaluate_InputDocument(t *testing.T) {
+	e, err := policy.New(context.Background(), layer("central", `deny contains json.marshal(input) if true`))
+	require.NoError(t, err)
+
+	v, err := e.Evaluate(context.Background(), input())
+
+	require.NoError(t, err)
+	require.Len(t, v.Reasons, 1)
+	assert.JSONEq(t, `{
+		"run_id": "run-1",
+		"harness": "triage",
+		"tool": "tickets.label",
+		"effect": "write",
+		"args": {"id": 7, "label": "urgent"},
+		"calls": {"total": 3, "by_tool": {"tickets.read": 2, "tickets.label": 1}, "by_effect": {"read": 2, "write": 1}}
+	}`, v.Reasons[0], "this is the input contract policy authors write against")
 }

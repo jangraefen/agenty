@@ -90,10 +90,12 @@ func New(ctx context.Context, layers ...Layer) (*Engine, error) {
 
 // Evaluate decides on one call. Any error, in any layer, is returned, and the
 // gateway denies the call.
-func (e *Engine) Evaluate(ctx context.Context, in toolgateway.PolicyInput) (toolgateway.Verdict, error) {
-	doc, err := inputDocument(in)
+func (e *Engine) Evaluate(ctx context.Context, req toolgateway.Request) (toolgateway.Verdict, error) {
+	// The request's JSON form is the input document; convert it once for all
+	// layers.
+	doc, err := ast.InterfaceToValue(req)
 	if err != nil {
-		return toolgateway.Verdict{}, err
+		return toolgateway.Verdict{}, fmt.Errorf("policy: input: %w", err)
 	}
 	var deny, approval []string
 	for _, l := range e.layers {
@@ -113,8 +115,8 @@ func (e *Engine) Evaluate(ctx context.Context, in toolgateway.PolicyInput) (tool
 	}
 }
 
-func (l preparedLayer) evaluate(ctx context.Context, doc map[string]any) (deny, approval []string, err error) {
-	rs, err := l.query.Eval(ctx, rego.EvalInput(doc))
+func (l preparedLayer) evaluate(ctx context.Context, doc ast.Value) (deny, approval []string, err error) {
+	rs, err := l.query.Eval(ctx, rego.EvalParsedInput(doc))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -154,35 +156,6 @@ func reasons(v any) ([]string, error) {
 		out = append(out, string(b))
 	}
 	return out, nil
-}
-
-func inputDocument(in toolgateway.PolicyInput) (map[string]any, error) {
-	var args any
-	if len(in.Args) > 0 {
-		if err := json.Unmarshal(in.Args, &args); err != nil {
-			return nil, fmt.Errorf("policy: args: %w", err)
-		}
-	}
-	byTool := map[string]any{}
-	for tool, n := range in.Calls.ByTool {
-		byTool[tool] = n
-	}
-	byEffect := map[string]any{}
-	for effect, n := range in.Calls.ByEffect {
-		byEffect[string(effect)] = n
-	}
-	return map[string]any{
-		"run_id":  in.RunID,
-		"harness": in.Harness,
-		"tool":    in.Tool,
-		"effect":  string(in.Effect),
-		"args":    args,
-		"calls": map[string]any{
-			"total":     in.Calls.Total,
-			"by_tool":   byTool,
-			"by_effect": byEffect,
-		},
-	}, nil
 }
 
 // packageName renders a package path as written, without the data prefix.

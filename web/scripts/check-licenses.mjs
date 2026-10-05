@@ -2,15 +2,50 @@
 // Package data comes from `pnpm licenses list --json`, which covers every package in the
 // lockfile that is installed for this platform, including optional native binaries, across all
 // workspace packages (the app and codegen/).
+// The allowlists come from the file shared with the Go check (go-licenses-allowlist.txt at the
+// repository root, or the path given as the first argument): production dependencies against the
+// "shipped" scope, all dependencies against "shipped", "dev", and the web-only "dev-web".
 // Exits non-zero and names each offending package and its license.
-// Keep the allowlists in line with the Go allowlist in go-licenses-allowlist.txt (Python-2.0 is web-only).
 import { execFileSync } from "node:child_process"
+import { readFileSync } from "node:fs"
+import { fileURLToPath } from "node:url"
+
+const SCOPES = ["shipped", "dev", "dev-web"]
+
+/**
+ * Reads the allowlist file: one "<scope> <SPDX ID>" per line, blank lines and "#" comments ignored.
+ * Throws on a malformed line, an unknown scope, or no shipped licenses.
+ * @param {string} path
+ * @returns {Record<string, string[]>} the licenses of each scope
+ */
+function readAllowlist(path) {
+	/** @type {Record<string, string[]>} */
+	const byScope = Object.fromEntries(SCOPES.map((scope) => [scope, []]))
+	for (const line of readFileSync(path, "utf8").split("\n")) {
+		if (/^\s*(#|$)/.test(line)) continue
+		const fields = line.trim().split(/\s+/)
+		if (fields.length !== 2 || !SCOPES.includes(fields[0])) throw new Error(`invalid allowlist line: ${line}`)
+		byScope[fields[0]].push(fields[1])
+	}
+	if (byScope.shipped.length === 0) throw new Error(`invalid allowlist ${path}: no shipped licenses`)
+	return byScope
+}
+
+const allowlistPath = process.argv[2] ?? fileURLToPath(new URL("../../go-licenses-allowlist.txt", import.meta.url))
+/** @type {Record<string, string[]>} */
+let allowlist
+try {
+	allowlist = readAllowlist(allowlistPath)
+} catch (error) {
+	console.error(`FAILED  licenses: ${error instanceof Error ? error.message : error}`)
+	process.exit(1)
+}
 
 // Production dependencies are shipped in the built assets and must be permissive.
-const SHIPPED = ["MIT", "ISC", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "0BSD"]
+const SHIPPED = allowlist.shipped
 
 // All dependencies, including build and test tools, which are not distributed.
-const ALL = [...SHIPPED, "MIT-0", "BlueOak-1.0.0", "CC0-1.0", "MPL-2.0", "Python-2.0"]
+const ALL = [...SHIPPED, ...allowlist.dev, ...allowlist["dev-web"]]
 
 /**
  * Reports whether an SPDX license expression is satisfied by the allowlist:

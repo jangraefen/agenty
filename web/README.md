@@ -11,6 +11,6 @@ Requires Node.js and pnpm (`task setup` checks the versions); this repository us
 - `task lint:web`: Biome and the TypeScript type check
 - `task test:unit:web`: Vitest
 - `task build:web`: Vite production build into `web/dist`
-- `task check:licenses:web`: dependency license allowlists (`scripts/check-licenses.mjs`) ([ARCHITECTURE.md §16](../docs/ARCHITECTURE.md))
+- `task check:licenses:web`: dependency licenses against the shared allowlist `../go-licenses-allowlist.txt` (`scripts/check-licenses.mjs`) ([ARCHITECTURE.md §16](../docs/ARCHITECTURE.md))
 
 `pnpm run dev` (in `web/`) starts the Vite dev server.

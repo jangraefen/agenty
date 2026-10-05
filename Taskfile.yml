@@ -250,10 +250,13 @@ tasks:
     cmds:
       - |
         [ -f "{{.ALLOWLIST}}" ] || { echo "missing allowlist {{.ALLOWLIST}}" >&2; exit 1; }
+        # Lists the licenses of the given scopes. The file is shared with check:licenses:web: the web-only
+        # scope dev-web is validated but never read here.
         list() { awk -v scopes="$1" '
+          BEGIN { n = split(scopes, s, " "); for (i = 1; i <= n; i++) want[s[i]] = 1 }
           /^[[:space:]]*(#|$)/ { next }
-          NF != 2 || ($1 != "shipped" && $1 != "dev") { print "invalid allowlist line: " $0 > "/dev/stderr"; exit 1 }
-          index(scopes, $1) { printf "%s%s", sep, $2; sep = "," }' "{{.ALLOWLIST}}"; }
+          NF != 2 || ($1 != "shipped" && $1 != "dev" && $1 != "dev-web") { print "invalid allowlist line: " $0 > "/dev/stderr"; exit 1 }
+          $1 in want { printf "%s%s", sep, $2; sep = "," }' "{{.ALLOWLIST}}"; }
         shipped=$(list shipped) || exit 1
         all=$(list "shipped dev") || exit 1
         # An empty --allowed_licenses would make go-licenses ignore the allowlist.
@@ -286,12 +289,15 @@ tasks:
         done
         exit ${failed:-0}
 
+  # Reads the shipped, dev, and dev-web scopes of the allowlist shared with check:licenses:go.
   check:licenses:web:
-    desc: Check web dependency licenses (shipped and all) against the allowlists in web/scripts/check-licenses.mjs
+    desc: Check web dependency licenses (shipped and all) against go-licenses-allowlist.txt
     deps: [web:deps]
     dir: web
+    vars:
+      ALLOWLIST: '{{.ALLOWLIST | default (print .ROOT_DIR "/go-licenses-allowlist.txt")}}'
     cmds:
-      - pnpm run --silent licenses
+      - pnpm run --silent licenses "{{.ALLOWLIST}}"
 
   test:unit:
     desc: Run unit tests
@@ -377,6 +383,33 @@ tasks:
     desc: Prove that every quality gate fails when its rule is violated
     cmds:
       - task: test:gates:generated
+      - task: test:gates:licenses
+
+  # Runs check:licenses:web against modified copies of the shared allowlist: the unchanged copy must pass,
+  # and removing a needed license or breaking the format must fail.
+  test:gates:licenses:
+    internal: true
+    silent: true
+    cmds:
+      - |
+        tmp=$(mktemp -d) && trap 'rm -rf "$tmp"' EXIT || exit 1
+        failed=0
+        expect() { # pass|fail, description, sed script applied to the allowlist
+          sed "$3" go-licenses-allowlist.txt >"$tmp/allowlist.txt" || exit 1
+          if task -d "{{.ROOT_DIR}}" --silent check:licenses:web ALLOWLIST="$tmp/allowlist.txt" >"$tmp/log" 2>&1; then got=pass; else got=fail; fi
+          if [ "$got" = "$1" ]; then
+            echo "ok      gate licenses web: $2"
+          else
+            echo "FAILED  gate licenses web: $2 (check:licenses:web: $got, want $1)"; cat "$tmp/log"; failed=1
+          fi
+        }
+        expect pass "unchanged allowlist passes" ''
+        expect fail "shipped license removed fails" '/^shipped MIT$/d'
+        expect fail "web-only dev license removed fails" '/^dev-web Python-2.0$/d'
+        expect fail "unknown scope fails" '/^dev-web /p; s/^dev-web /devweb /'
+        expect fail "malformed line fails" '/^dev MIT-0$/p; s/^dev MIT-0$/dev MIT-0 extra/'
+        expect fail "no shipped licenses fails" '/^shipped /d'
+        exit $failed
 
   # Runs check:generated against a temporary copy of the contract and the generated files: the unchanged
   # copy must pass, and every kind of drift must fail.

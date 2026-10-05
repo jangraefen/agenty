@@ -9,8 +9,9 @@ pre-commit:
   parallel: true
   commands:
     # Architecture rules run as part of Go lint (depguard). The Go inputs are the Go modules (code, go.mod,
-    # go.sum, embedded SQL migrations, sqlc queries, test data), the workspace, the lint configuration,
-    # api/ (generated server code and a contract test), and deploy/ (Dockerfile and compose tests).
+    # go.sum, embedded SQL migrations, sqlc queries, test data), the workspace, the lint configuration, the
+    # coverage-gate configuration (a unit test reads it), api/ (generated server code and a contract test),
+    # and deploy/ (Dockerfile and compose tests).
     lint-go:
       glob: &go-inputs
         - "server/**"
@@ -18,6 +19,7 @@ pre-commit:
         - "go.work"
         - "go.work.sum"
         - ".golangci.yaml"
+        - ".covergate.yaml"
         - "api/**"
         - "deploy/**"
         - "Taskfile.yml"

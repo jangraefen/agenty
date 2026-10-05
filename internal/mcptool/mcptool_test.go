@@ -26,10 +26,10 @@ func connectInMemory(t *testing.T) (*mcptool.Session, *mcp.Server, *callLog) {
 	clientT, serverT := mcp.NewInMemoryTransports()
 	ss, err := srv.Connect(t.Context(), serverT, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = ss.Close() })
+	t.Cleanup(func() { assert.NoError(t, ss.Close()) })
 	s, err := mcptool.ConnectTransport(t.Context(), "test", clientT)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = s.Close() })
+	t.Cleanup(func() { assert.NoError(t, s.Close()) })
 	return s, srv, log
 }
 
@@ -60,8 +60,13 @@ func callTool(ctx context.Context, t *testing.T, tool toolgateway.Tool, args jso
 	return gw.Call(ctx, toolgateway.ToolCall{Name: tool.Definition().Name, Args: args})
 }
 
+// jsonString encodes s as JSON. It runs while test tables are built, before
+// there is a *testing.T to fail, so it panics instead.
 func jsonString(s string) json.RawMessage {
-	b, _ := json.Marshal(s)
+	b, err := json.Marshal(s)
+	if err != nil {
+		panic(err)
+	}
 	return b
 }
 

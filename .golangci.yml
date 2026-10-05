@@ -13,6 +13,10 @@ linters:
     - testifylint # testify usage, e.g. require vs assert
     - unconvert
   settings:
+    errcheck:
+      # Errors assigned to _ count as unchecked: surface them, or panic if they
+      # cannot happen.
+      check-blank: true
     depguard:
       rules:
         opa:

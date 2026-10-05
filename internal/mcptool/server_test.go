@@ -67,7 +67,9 @@ func newTestServer(log *callLog) *mcp.Server {
 		var in struct {
 			Name string `json:"name"`
 		}
-		_ = json.Unmarshal(args, &in)
+		if err := json.Unmarshal(args, &in); err != nil {
+			return &mcp.CallToolResult{IsError: true, Content: text(err.Error())}
+		}
 		return &mcp.CallToolResult{Content: text(os.Getenv(in.Name))}
 	})
 	add("wait", "Blocks until the call is cancelled.", func(ctx context.Context, _ json.RawMessage) *mcp.CallToolResult {

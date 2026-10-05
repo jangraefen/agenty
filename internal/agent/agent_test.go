@@ -10,6 +10,7 @@ import (
 
 	"github.com/jangraefen/agenty/internal/agent"
 	"github.com/jangraefen/agenty/internal/model"
+	"github.com/jangraefen/agenty/internal/policy"
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
@@ -198,7 +199,7 @@ func TestRun_CancelledContextStopsFurtherSideEffects(t *testing.T) {
 		model.Reply("unreachable"),
 	)
 
-	a, err := agent.New(f.config(m))
+	a, err := agent.New(context.Background(), f.config(m))
 	require.NoError(t, err)
 
 	res, err := a.Run(ctx, "ticket 7")
@@ -214,6 +215,10 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 	m := model.NewScripted(model.Reply("unused"))
 	invalid := *f.harness
 	invalid.Limits.MaxSteps = 0
+	unloaded := *f.harness
+	unloaded.Policy = "triage.rego"
+	broken := unloaded
+	broken.PolicySource = "package agenty.tool\n\ndeny contains"
 	withConfig := func(change func(*agent.Config)) agent.Config {
 		cfg := f.config(m)
 		change(&cfg)
@@ -231,10 +236,15 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 		{"invalid harness", withConfig(func(c *agent.Config) { c.Harness = &invalid }), "limits.max_steps"},
 		{"nil tool", withConfig(func(c *agent.Config) { c.Tools = append(c.Tools, nil) }), "tool 3 is nil"},
 		{"duplicate tool", withConfig(func(c *agent.Config) { c.Tools = append(c.Tools, f.read) }), `duplicate tool "tickets.read"`},
+		{"harness policy not loaded", withConfig(func(c *agent.Config) { c.Harness = &unloaded }), `harness policy "triage.rego" was not loaded`},
+		{"invalid central policy", withConfig(func(c *agent.Config) {
+			c.Policy = []policy.Module{{Name: "central.rego", Source: "package agenty.tool\n\ndeny contains"}}
+		}), "central.rego"},
+		{"invalid harness policy", withConfig(func(c *agent.Config) { c.Harness = &broken }), "triage.rego"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a, err := agent.New(tt.cfg)
+			a, err := agent.New(context.Background(), tt.cfg)
 			require.ErrorContains(t, err, tt.wantErr)
 			assert.Nil(t, a)
 		})
@@ -245,7 +255,7 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 func TestRun_RejectsEmptyInput(t *testing.T) {
 	f := newFixture(3)
 	m := model.NewScripted(model.Reply("unused"))
-	a, err := agent.New(f.config(m))
+	a, err := agent.New(context.Background(), f.config(m))
 	require.NoError(t, err)
 
 	res, err := a.Run(context.Background(), "")
@@ -262,7 +272,7 @@ func TestRun_EachRunHasItsOwnRunIDAndTranscript(t *testing.T) {
 		model.CallTools(call("c1", "tickets.read")), model.Reply("first done"),
 		model.CallTools(call("c2", "tickets.read")), model.Reply("second done"),
 	)
-	a, err := agent.New(f.config(m))
+	a, err := agent.New(context.Background(), f.config(m))
 	require.NoError(t, err)
 
 	first, err := a.Run(context.Background(), "ticket 7")
@@ -292,7 +302,7 @@ func TestRun_EachRunHasItsOwnRunIDAndTranscript(t *testing.T) {
 func TestNew_HarnessChangesAfterNewDoNotWidenGrants(t *testing.T) {
 	f := newFixture(3)
 	m := model.NewScripted(model.CallTools(call("c1", "tickets.delete")), model.Reply("done"))
-	a, err := agent.New(f.config(m))
+	a, err := agent.New(context.Background(), f.config(m))
 	require.NoError(t, err)
 
 	f.harness.Tools[2] = "tickets.delete"

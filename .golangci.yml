@@ -4,6 +4,7 @@ linters:
   # standard: errcheck, govet, ineffassign, staticcheck, unused.
   default: standard
   enable:
+    - depguard # import boundaries, below
     - errorlint # wrapped errors are compared with errors.Is/As
     - forbidigo # trust-model rules, below
     - gosec # security-sensitive patterns
@@ -12,6 +13,14 @@ linters:
     - testifylint # testify usage, e.g. require vs assert
     - unconvert
   settings:
+    depguard:
+      rules:
+        opa:
+          # OPA stays behind internal/policy: one place evaluates Rego.
+          files: ["$all", "!**/internal/policy/**"]
+          deny:
+            - pkg: github.com/open-policy-agent/opa
+              desc: evaluate policy only through internal/policy
     forbidigo:
       analyze-types: true
       forbid:

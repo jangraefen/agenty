@@ -1,0 +1,88 @@
+package agent_test
+
+import (
+	"context"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/jangraefen/agenty/internal/agent"
+	"github.com/jangraefen/agenty/internal/model"
+	"github.com/jangraefen/agenty/internal/policy"
+	"github.com/jangraefen/agenty/internal/toolgateway"
+	"github.com/jangraefen/agenty/internal/toolgateway/gatewaytest"
+)
+
+func TestRun_CentralAndHarnessPolicyBothApply(t *testing.T) {
+	f := newFixture(5)
+	f.label.Effect = toolgateway.EffectWrite
+	f.harness.Policy = "triage.rego"
+	f.harness.PolicySource = `package agenty.tool
+
+deny contains "ticket 13 is off limits" if input.args.id == 13`
+	approver := &gatewaytest.Approver{Approval: toolgateway.Approval{Approved: true, Approver: "alice"}}
+	cfg := f.config(model.NewScripted(
+		model.CallTools(
+			model.ToolCall{ID: "c1", Name: "tickets.read", Args: []byte(`{"id":13}`)},
+			model.ToolCall{ID: "c2", Name: "tickets.label", Args: []byte(`{"id":7}`)},
+		),
+		model.Reply("done"),
+	))
+	cfg.Policy = []policy.Module{{Name: "central.rego", Source: `package agenty.tool
+
+require_approval contains "writes need a human" if input.effect == "write"`}}
+	cfg.Approver = approver
+	a, err := agent.New(context.Background(), cfg)
+	require.NoError(t, err)
+
+	res, err := a.Run(context.Background(), "ticket 7")
+	require.NoError(t, err)
+
+	assert.Zero(t, f.read.Calls, "harness policy denied the read")
+	assert.Equal(t, 1, f.label.Calls, "central policy required approval, and alice approved")
+	require.Len(t, approver.Requests, 1)
+	assert.Equal(t, []string{"writes need a human"}, approver.Requests[0].Reasons)
+
+	results := res.Messages[2].ToolResults
+	require.Len(t, results, 2)
+	assert.True(t, results[0].IsError)
+	assert.Contains(t, results[0].Content, "ticket 13 is off limits")
+	assert.False(t, results[1].IsError)
+}
+
+func TestRun_ToolCallLimitIsReportedToTheModel(t *testing.T) {
+	f := newFixture(5)
+	f.harness.Limits.MaxToolCalls = 1
+	m := model.NewScripted(
+		model.CallTools(call("c1", "tickets.read"), call("c2", "tickets.read")),
+		model.Reply("done"),
+	)
+
+	res, err := f.run(t, m)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, f.read.Calls)
+	results := res.Messages[2].ToolResults
+	require.Len(t, results, 2)
+	assert.False(t, results[0].IsError)
+	assert.True(t, results[1].IsError)
+	assert.Contains(t, results[1].Content, "tool call limit reached")
+}
+
+func TestRun_ApprovalWithoutApproverIsDenied(t *testing.T) {
+	f := newFixture(5)
+	cfg := f.config(model.NewScripted(model.CallTools(call("c1", "tickets.read")), model.Reply("done")))
+	cfg.Policy = []policy.Module{{Name: "central.rego", Source: `package agenty.tool
+
+require_approval contains "everything needs a human" if true`}}
+	a, err := agent.New(context.Background(), cfg)
+	require.NoError(t, err)
+
+	_, err = a.Run(context.Background(), "ticket 7")
+
+	require.NoError(t, err)
+	assert.Zero(t, f.read.Calls)
+	require.Len(t, f.audit.Records, 1)
+	assert.Equal(t, toolgateway.Deny, f.audit.Records[0].Decision)
+}

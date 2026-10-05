@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/url"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/goccy/go-yaml"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/jangraefen/agenty/server/internal/logging"
 )
@@ -228,15 +230,22 @@ func parseAddress(v value, field string, dst *string) error {
 	return nil
 }
 
-// parseDatabaseURL requires a PostgreSQL connection string that pgx accepts.
-// The error never repeats the value or pgx's parse error, which could contain
-// the password (ARCHITECTURE §3 invariant 6).
+// parseDatabaseURL requires a PostgreSQL connection string that the pgx pool
+// accepts, including its pool_* settings, so a value that database.Open would
+// reject fails here, naming the field. The error never repeats the value or
+// pgx's parse error, which could contain the password (ARCHITECTURE §3
+// invariant 6); for an unreadable file, such as sslrootcert, it adds only the
+// file's path and the file-system error.
 func parseDatabaseURL(v value, field string, dst *string) error {
 	if v.raw == "" {
 		return fmt.Errorf("%s: required; set it in the file or in %s", v.source(field), envDatabaseURL)
 	}
-	if _, err := pgconn.ParseConfig(v.raw); err != nil {
-		return fmt.Errorf("%s: not a valid PostgreSQL connection URL or keyword/value string", v.source(field))
+	if _, err := pgxpool.ParseConfig(v.raw); err != nil {
+		const invalid = "not a valid PostgreSQL connection URL or keyword/value string"
+		if pathErr, ok := errors.AsType[*fs.PathError](err); ok {
+			return fmt.Errorf("%s: %s: cannot read %q: %w", v.source(field), invalid, pathErr.Path, pathErr.Err)
+		}
+		return fmt.Errorf("%s: %s", v.source(field), invalid)
 	}
 	*dst = v.raw
 	return nil

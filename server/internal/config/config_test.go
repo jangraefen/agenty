@@ -154,6 +154,32 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
 			wantInErr: []string{"database.url", "AGENTY_DATABASE_URL"},
 			notInErr:  []string{"hunter2-env"},
 		},
+		{ //nolint:gosec // Test credential.
+			name:      "invalid database pool setting",
+			file:      "database:\n  url: postgres://agenty:hunter2-pool@localhost:5432/agenty?pool_max_conns=abc\n",
+			wantInErr: []string{"database.url"},
+			notInErr:  []string{"hunter2-pool", "abc"},
+		},
+		{
+			name:      "invalid database pool setting from environment",
+			file:      dbSection,
+			env:       map[string]string{"AGENTY_DATABASE_URL": "postgres://agenty:hunter2-pool-env@localhost:5432/agenty?pool_max_conn_lifetime=forever"}, //nolint:gosec // Test credential.
+			wantInErr: []string{"database.url", "AGENTY_DATABASE_URL"},
+			notInErr:  []string{"hunter2-pool-env", "forever"},
+		},
+		{ //nolint:gosec // Test credential.
+			name:      "unreadable database TLS file names the path",
+			file:      "database:\n  url: postgres://u:secretpw@db:5432/x?sslmode=verify-full&sslrootcert=/nonexistent/ca.pem\n",
+			wantInErr: []string{"database.url", "/nonexistent/ca.pem"},
+			notInErr:  []string{"secretpw"},
+		},
+		{
+			name:      "unreadable database TLS file from environment names the path",
+			file:      dbSection,
+			env:       map[string]string{"AGENTY_DATABASE_URL": "host=db user=u password=secretpw-env dbname=x sslmode=verify-full sslrootcert=/nonexistent/env-ca.pem"}, //nolint:gosec // Test credential.
+			wantInErr: []string{"database.url", "AGENTY_DATABASE_URL", "/nonexistent/env-ca.pem"},
+			notInErr:  []string{"secretpw-env"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

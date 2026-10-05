@@ -13,7 +13,7 @@ trustPolicy: no-downgrade
 # than minimumReleaseAge.
 minimumReleaseAgeExclude:
   # jsdom 30.1.2 and its new transitive dependencies, published 2026-10-04
-  # (old enough from 2026-10-05T09:13Z).
+  # (old enough from 2026-10-05T09:16Z).
   - data-urls@8.0.0
   - jsdom@30.1.2
   - tr46@7.0.0

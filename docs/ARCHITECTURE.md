@@ -527,7 +527,7 @@ Verified 2026-10-04 against each project's repository. **Before adding any depen
 | axe-core | MPL-2.0 |
 | golangci-lint | GPL-3.0 (standalone tool, not linked) |
 | Node.js, pnpm, @vitejs/plugin-react, jsdom, @types/react, @types/react-dom | MIT |
-| @vitest/coverage-v8 (Vitest coverage provider; checked 2026-10-05, with its dependencies @bcoe/v8-coverage, @vitest/istanbul-lib-coverage, @vitest/istanbul-lib-report, ast-v8-to-istanbul, magicast, @babel/parser, @babel/types, js-tokens, tinyrainbow) | MIT |
+| @vitest/coverage-v8 (Vitest coverage provider; checked 2026-10-05, with its dependencies @bcoe/v8-coverage, @vitest/istanbul-lib-coverage, @vitest/istanbul-lib-report, ast-v8-to-istanbul, magicast, @babel/parser, @babel/types, @babel/helper-string-parser, js-tokens, tinyrainbow) | MIT |
 | openapi-typescript (TypeScript generator; checked 2026-10-05, with its dependencies such as @redocly/openapi-core) | MIT |
 | argparse 2.x (JavaScript port of Python's argparse, via js-yaml in openapi-typescript; JavaScript, not Python code) | Python-2.0 (PSF License, permissive) |
 | TypeScript (7 for the app; 5.9 only for openapi-typescript in `web/codegen`) | Apache-2.0 |

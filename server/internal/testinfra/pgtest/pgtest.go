@@ -38,7 +38,7 @@ const (
 	PostgresMajor = 18
 
 	user         = "agenty"
-	password     = "agenty"
+	password     = "agenty-test-password"
 	adminDB      = "agenty"
 	startTimeout = 2 * time.Minute
 	queryTimeout = 30 * time.Second

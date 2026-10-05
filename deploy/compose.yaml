@@ -1,6 +1,6 @@
 # Local development stack (ARCHITECTURE §14).
 #   docker compose -f deploy/compose.yaml up -d
-#   DSN: postgres://agenty:agenty@localhost:5432/agenty?sslmode=disable
+#   DSN: postgres://agenty:agenty-dev-password@localhost:5432/agenty?sslmode=disable
 # Development credentials only; never use them outside a local machine.
 # The image ships pgvector; the extension is created per database (migrations, or pgtest.NewDatabase in tests).
 name: agenty
@@ -11,7 +11,7 @@ services:
     image: pgvector/pgvector:0.8.7-pg18-trixie
     environment:
       POSTGRES_USER: agenty
-      POSTGRES_PASSWORD: agenty
+      POSTGRES_PASSWORD: agenty-dev-password
       POSTGRES_DB: agenty
     ports:
       - "127.0.0.1:${AGENTY_POSTGRES_PORT:-5432}:5432"

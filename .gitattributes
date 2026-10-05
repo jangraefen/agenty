@@ -1,3 +1,6 @@
+# Normalize line endings to LF (.editorconfig); check:generated compares generated files byte for byte.
+* text=auto eol=lf
+
 # Generated code (ARCHITECTURE §4) is collapsed in GitHub diffs; regenerate it with `task generate`.
 *.gen.go linguist-generated=true
 *.gen.ts linguist-generated=true

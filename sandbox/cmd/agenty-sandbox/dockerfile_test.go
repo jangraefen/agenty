@@ -30,7 +30,7 @@ func TestDockerfile(t *testing.T) {
 	assert.Contains(t, dockerfile, `org.opencontainers.image.version="${VERSION}"`, "Dockerfile does not set the OCI version label")
 	// Dependencies are downloaded in their own layer from go.mod and go.sum, so
 	// that source changes do not invalidate the module cache.
-	assert.Regexp(t, `(?m)^COPY\s+sandbox/go\.mod\s+sandbox/go\.su(m|\[m\])\s+\./\s*\nRUN go mod download$`, dockerfile,
+	assert.Regexp(t, `(?m)^COPY\s+sandbox/go\.mod\s+sandbox/go\.sum\s+\./\s*\nRUN go mod download$`, dockerfile,
 		"Dockerfile does not copy go.mod and go.sum before `go mod download`")
 	users := regexp.MustCompile(`(?m)^USER\s+(\S+)`).FindAllStringSubmatch(dockerfile, -1)
 	require.NotEmpty(t, users, "Dockerfile sets no USER")

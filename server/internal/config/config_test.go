@@ -18,7 +18,7 @@ import (
 )
 
 // dbSection is a valid database section; the database URL is required.
-const dbSection = "database:\n  url: postgres://agenty:agenty@localhost:5432/agenty?sslmode=disable\n" //nolint:gosec // Test credential.
+const dbSection = "database:\n  url: postgres://agenty:agenty-dev-password@localhost:5432/agenty?sslmode=disable\n" //nolint:gosec // Test credential.
 
 func writeFile(t *testing.T, content string) string {
 	t.Helper()
@@ -42,7 +42,7 @@ func TestLoadReadsFile(t *testing.T) {
 	require.NoError(t, err, "Load")
 	assert.Equal(t, "127.0.0.1:9000", cfg.Server.Address, "Server.Address")
 	assert.Equal(t, 5*time.Second, cfg.Server.ShutdownTimeout, "Server.ShutdownTimeout")
-	assert.Equal(t, "postgres://agenty:agenty@localhost:5432/agenty?sslmode=disable", cfg.Database.URL, "Database.URL")
+	assert.Equal(t, "postgres://agenty:agenty-dev-password@localhost:5432/agenty?sslmode=disable", cfg.Database.URL, "Database.URL")
 }
 
 func TestLoadAppliesDefaults(t *testing.T) {

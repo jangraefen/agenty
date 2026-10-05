@@ -19,7 +19,7 @@ Both run as the non-root user 65532 on a distroless static base image. Base imag
 
 ```sh
 docker compose -f deploy/compose.yaml up -d --wait
-# postgres://agenty:agenty@localhost:5432/agenty?sslmode=disable
+# postgres://agenty:agenty-dev-password@localhost:5432/agenty?sslmode=disable
 ```
 
 Set `AGENTY_POSTGRES_PORT` to use another host port. `docker compose -f deploy/compose.yaml down -v` removes the container and its data.

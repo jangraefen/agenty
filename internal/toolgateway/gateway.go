@@ -36,7 +36,6 @@ type Definition struct {
 	Description string
 	// InputSchema is the JSON Schema of the tool arguments.
 	InputSchema json.RawMessage
-	Effect      Effect
 }
 
 // ToolCall is a request, usually from the model, to call a tool.
@@ -74,7 +73,6 @@ type Gateway struct {
 	harness      string
 	granted      map[string]bool
 	tools        map[string]Tool
-	effects      map[string]Effect
 	defs         []Definition
 	maxToolCalls int
 	policy       Policy
@@ -104,12 +102,11 @@ func New(cfg Config) (*Gateway, error) {
 		harness:      cfg.Harness,
 		granted:      make(map[string]bool, len(cfg.Granted)),
 		tools:        make(map[string]Tool, len(cfg.Tools)),
-		effects:      make(map[string]Effect, len(cfg.Tools)),
 		maxToolCalls: cfg.MaxToolCalls,
 		policy:       cfg.Policy,
 		approver:     cfg.Approver,
 		audit:        cfg.Audit,
-		executed:     CallCounts{ByTool: map[string]int{}, ByEffect: map[Effect]int{}},
+		executed:     CallCounts{ByTool: map[string]int{}},
 	}
 	for i, name := range cfg.Granted {
 		if name == "" {
@@ -123,7 +120,6 @@ func New(cfg Config) (*Gateway, error) {
 	for _, tool := range cfg.Tools {
 		def := tool.Definition()
 		g.tools[def.Name] = tool
-		g.effects[def.Name] = def.Effect
 		if g.granted[def.Name] {
 			g.defs = append(g.defs, def)
 		}
@@ -133,7 +129,7 @@ func New(cfg Config) (*Gateway, error) {
 }
 
 // ValidateTools checks that every tool is non-nil and has a unique, non-empty
-// name and a known effect. New applies the same check.
+// name. New applies the same check.
 func ValidateTools(tools []Tool) error {
 	seen := make(map[string]bool, len(tools))
 	for i, tool := range tools {
@@ -146,8 +142,6 @@ func ValidateTools(tools []Tool) error {
 			return fmt.Errorf("toolgateway: tool %d has no name", i)
 		case seen[def.Name]:
 			return fmt.Errorf("toolgateway: duplicate tool %q", def.Name)
-		case def.Effect != EffectRead && def.Effect != EffectWrite:
-			return fmt.Errorf("toolgateway: tool %q has invalid effect %q", def.Name, def.Effect)
 		}
 		seen[def.Name] = true
 	}
@@ -247,7 +241,6 @@ func (g *Gateway) decide(ctx context.Context, call ToolCall) (Tool, decision) {
 		RunID:   g.runID,
 		Harness: g.harness,
 		Tool:    call.Name,
-		Effect:  g.effects[call.Name],
 		Args:    call.Args,
 		Calls:   counts,
 	}
@@ -276,7 +269,6 @@ func (g *Gateway) countExecuted(name string) {
 	defer g.mu.Unlock()
 	g.executed.Total++
 	g.executed.ByTool[name]++
-	g.executed.ByEffect[g.effects[name]]++
 }
 
 func (g *Gateway) record(ctx context.Context, rec Record) error {

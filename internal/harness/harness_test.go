@@ -36,10 +36,10 @@ func TestLoad_Valid(t *testing.T) {
 				Limits:       harness.Limits{MaxSteps: 20, MaxToolCalls: 50},
 				Policy: &harness.Policy{
 					Files: []string{"triage.rego", "helpers.rego"},
-					Rules: "deny contains \"too many writes\" if input.calls.by_effect.write >= 10\n",
+					Rules: "deny contains \"too many writes\" if input.calls.by_tool[\"tickets.label\"] >= 10\n",
 					FileSources: []string{
 						"package agenty.tool\n\nrequire_approval contains \"labels need a human\" if input.tool == \"tickets.label\"\n",
-						"package agenty.tool\n\nwrites contains input.tool if input.effect == \"write\"\n",
+						"package agenty.tool\n\nwrites := {\"tickets.label\", \"tickets.close\"}\n",
 					},
 				},
 			},
@@ -52,7 +52,7 @@ func TestLoad_Valid(t *testing.T) {
 				Model:        harness.Model{Provider: "anthropic", Name: "claude-sonnet-5-5"},
 				Tools:        []string{"tickets.label"},
 				Limits:       harness.Limits{MaxSteps: 3, MaxToolCalls: 5},
-				Policy:       &harness.Policy{Rules: "require_approval contains \"writes need a human\" if input.effect == \"write\"\n"},
+				Policy:       &harness.Policy{Rules: "require_approval contains \"writes need a human\" if input.tool == \"tickets.label\"\n"},
 			},
 		},
 	}

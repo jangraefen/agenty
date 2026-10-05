@@ -13,4 +13,4 @@ limits:
 policy:
   files: [triage.rego, helpers.rego]
   rules: |
-    deny contains "too many writes" if input.calls.by_effect.write >= 10
+    deny contains "too many writes" if input.calls.by_tool["tickets.label"] >= 10

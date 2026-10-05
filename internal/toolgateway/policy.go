@@ -6,14 +6,6 @@ import (
 	"maps"
 )
 
-// Effect says what a tool does to the systems it reaches.
-type Effect string
-
-const (
-	EffectRead  Effect = "read"
-	EffectWrite Effect = "write"
-)
-
 // Policy decides on tool calls that are granted and resolved. A Policy can
 // only tighten: it may deny or require approval, never grant a tool.
 type Policy interface {
@@ -27,22 +19,19 @@ type Request struct {
 	RunID   string          `json:"run_id"`
 	Harness string          `json:"harness"`
 	Tool    string          `json:"tool"`
-	Effect  Effect          `json:"effect"`
 	Args    json.RawMessage `json:"args"`
 	// Calls counts the tool calls the run executed before this one.
 	Calls CallCounts `json:"calls"`
 }
 
-// CallCounts counts executed tool calls, in total, per tool and per effect.
+// CallCounts counts executed tool calls, in total and per tool.
 type CallCounts struct {
-	Total    int            `json:"total"`
-	ByTool   map[string]int `json:"by_tool"`
-	ByEffect map[Effect]int `json:"by_effect"`
+	Total  int            `json:"total"`
+	ByTool map[string]int `json:"by_tool"`
 }
 
 func (c CallCounts) clone() CallCounts {
 	c.ByTool = maps.Clone(c.ByTool)
-	c.ByEffect = maps.Clone(c.ByEffect)
 	return c
 }
 

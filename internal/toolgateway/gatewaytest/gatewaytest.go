@@ -13,9 +13,7 @@ var _ toolgateway.Tool = (*Tool)(nil)
 
 // Tool is a fake tool that returns a fixed result and counts its calls.
 type Tool struct {
-	Name string
-	// Effect defaults to read.
-	Effect toolgateway.Effect
+	Name   string
 	Result json.RawMessage
 	Err    error
 	// OnCall, if set, runs at the start of every call.
@@ -28,13 +26,8 @@ type Tool struct {
 
 // Definition describes the fake with a generic object schema.
 func (t *Tool) Definition() toolgateway.Definition {
-	effect := t.Effect
-	if effect == "" {
-		effect = toolgateway.EffectRead
-	}
 	return toolgateway.Definition{
 		Name:        t.Name,
-		Effect:      effect,
 		Description: "fake " + t.Name,
 		InputSchema: json.RawMessage(`{"type":"object"}`),
 	}

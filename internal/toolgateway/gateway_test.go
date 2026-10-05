@@ -121,7 +121,6 @@ func TestDefinitions_OnlyGrantedAndResolvedToolsSortedByName(t *testing.T) {
 	assert.Equal(t, "tickets.label", defs[0].Name)
 	assert.Equal(t, "tickets.read", defs[1].Name)
 	assert.Equal(t, "fake tickets.read", defs[1].Description)
-	assert.Equal(t, toolgateway.EffectRead, defs[1].Effect)
 	assert.JSONEq(t, `{"type":"object"}`, string(defs[1].InputSchema))
 }
 
@@ -160,7 +159,6 @@ func TestValidateTools(t *testing.T) {
 		{"nil tool", []toolgateway.Tool{read, nil}, "tool 1 is nil"},
 		{"unnamed tool", []toolgateway.Tool{&gatewaytest.Tool{}}, "tool 0 has no name"},
 		{"duplicate tool", []toolgateway.Tool{read, &gatewaytest.Tool{Name: "tickets.read"}}, `duplicate tool "tickets.read"`},
-		{"invalid effect", []toolgateway.Tool{&gatewaytest.Tool{Name: "tickets.purge", Effect: "destroy"}}, `tool "tickets.purge" has invalid effect "destroy"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

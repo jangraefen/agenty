@@ -1,3 +1,3 @@
 package agenty.tool
 
-writes contains input.tool if input.effect == "write"
+writes := {"tickets.label", "tickets.close"}

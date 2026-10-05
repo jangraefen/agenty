@@ -15,7 +15,7 @@ import (
 
 func TestCall_PolicySeesTheCallAndExecutedCounts(t *testing.T) {
 	read := &gatewaytest.Tool{Name: "tickets.read"}
-	label := &gatewaytest.Tool{Name: "tickets.label", Effect: toolgateway.EffectWrite, Err: errors.New("label service down")}
+	label := &gatewaytest.Tool{Name: "tickets.label", Err: errors.New("label service down")}
 	policy := &gatewaytest.Policy{Verdicts: map[string]toolgateway.Verdict{
 		"tickets.close": {Decision: toolgateway.Deny, Reasons: []string{"no closing"}},
 	}}
@@ -25,7 +25,7 @@ func TestCall_PolicySeesTheCallAndExecutedCounts(t *testing.T) {
 		MaxToolCalls: 100,
 		Policy:       policy,
 		Granted:      []string{"tickets.read", "tickets.label", "tickets.close"},
-		Tools:        []toolgateway.Tool{read, label, &gatewaytest.Tool{Name: "tickets.close", Effect: toolgateway.EffectWrite}},
+		Tools:        []toolgateway.Tool{read, label, &gatewaytest.Tool{Name: "tickets.close"}},
 		Audit:        &gatewaytest.Audit{},
 	})
 	require.NoError(t, err)
@@ -47,15 +47,12 @@ func TestCall_PolicySeesTheCallAndExecutedCounts(t *testing.T) {
 	assert.Equal(t, runID, first.RunID)
 	assert.Equal(t, "triage", first.Harness)
 	assert.Equal(t, "tickets.read", first.Tool)
-	assert.Equal(t, toolgateway.EffectRead, first.Effect)
 	assert.JSONEq(t, `{"id":1}`, string(first.Args))
-	assert.Equal(t, toolgateway.CallCounts{ByTool: map[string]int{}, ByEffect: map[toolgateway.Effect]int{}}, first.Calls)
+	assert.Equal(t, toolgateway.CallCounts{ByTool: map[string]int{}}, first.Calls)
 
-	assert.Equal(t, toolgateway.EffectWrite, policy.Inputs[2].Effect)
 	assert.Equal(t, toolgateway.CallCounts{
-		Total:    2,
-		ByTool:   map[string]int{"tickets.read": 1, "tickets.label": 1},
-		ByEffect: map[toolgateway.Effect]int{toolgateway.EffectRead: 1, toolgateway.EffectWrite: 1},
+		Total:  2,
+		ByTool: map[string]int{"tickets.read": 1, "tickets.label": 1},
 	}, policy.Inputs[3].Calls, "policy sees executed calls only, failed executions included")
 }
 
@@ -70,7 +67,7 @@ func TestCall_ApproverSeesTheRequest(t *testing.T) {
 		}},
 		Approver: approver,
 		Granted:  []string{"tickets.label"},
-		Tools:    []toolgateway.Tool{&gatewaytest.Tool{Name: "tickets.label", Effect: toolgateway.EffectWrite}},
+		Tools:    []toolgateway.Tool{&gatewaytest.Tool{Name: "tickets.label"}},
 		Audit:    &gatewaytest.Audit{},
 	})
 	require.NoError(t, err)
@@ -84,9 +81,8 @@ func TestCall_ApproverSeesTheRequest(t *testing.T) {
 			RunID:   runID,
 			Harness: "triage",
 			Tool:    "tickets.label",
-			Effect:  toolgateway.EffectWrite,
 			Args:    json.RawMessage(`{"label":"urgent"}`),
-			Calls:   toolgateway.CallCounts{ByTool: map[string]int{}, ByEffect: map[toolgateway.Effect]int{}},
+			Calls:   toolgateway.CallCounts{ByTool: map[string]int{}},
 		},
 		Reasons: []string{"writes need a human", "label is public"},
 	}, approver.Calls[0], "the approver sees the same request as policy")

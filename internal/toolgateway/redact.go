@@ -94,6 +94,8 @@ func (r *redactor) error(err error) error {
 	return &redactedError{msg: msg, err: err}
 }
 
+var _ error = (*redactedError)(nil) //nolint:errcheck // an interface guard, not a discarded error
+
 type redactedError struct {
 	msg string
 	err error

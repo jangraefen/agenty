@@ -18,9 +18,9 @@ import (
 func TestRun_CentralAndHarnessPolicyBothApply(t *testing.T) {
 	f := newFixture(5)
 	f.label.Effect = toolgateway.EffectWrite
-	f.harness.Policy = &harness.Policy{File: "triage.rego", FileSource: `package agenty.tool
+	f.harness.Policy = &harness.Policy{Files: []string{"triage.rego"}, FileSources: []string{`package agenty.tool
 
-deny contains "ticket 13 is off limits" if input.args.id == 13`}
+deny contains "ticket 13 is off limits" if input.args.id == 13`}}
 	approver := &gatewaytest.Approver{Approval: toolgateway.Approval{Approved: true, Approver: "alice"}}
 	cfg := f.config(model.NewScripted(
 		model.CallTools(
@@ -115,4 +115,22 @@ deny contains "labels are frozen" if input.tool == "tickets.label"`}}
 	require.NoError(t, err)
 	assert.Zero(t, f.label.Calls, "central policy still applies")
 	assert.Equal(t, 1, f.read.Calls, "nothing else is restricted")
+}
+
+func TestRun_HarnessFilesAndRulesShareOneLayer(t *testing.T) {
+	f := newFixture(5)
+	f.label.Effect = toolgateway.EffectWrite
+	f.harness.Policy = &harness.Policy{
+		Files:       []string{"helpers.rego"},
+		FileSources: []string{"package agenty.tool\n\nwrites contains input.tool if input.effect == \"write\"\n"},
+		Rules:       `deny contains "no writes from this harness" if writes[input.tool]`,
+	}
+	m := model.NewScripted(model.CallTools(call("c1", "tickets.label"), call("c2", "tickets.read")), model.Reply("done"))
+
+	_, err := f.run(t, m)
+
+	require.NoError(t, err)
+	assert.Zero(t, f.label.Calls, "the inline rule used the helper from the file")
+	assert.Equal(t, 1, f.read.Calls)
+	assert.Equal(t, "policy: no writes from this harness", f.audit.Records[0].Reason)
 }

@@ -24,17 +24,19 @@ type Harness struct {
 	Policy *Policy `yaml:"policy"`
 }
 
-// Policy is a harness policy: a Rego file, or inline rules. Exactly one is set.
+// Policy is a harness policy: Rego files, inline rules, or both. Together they
+// form one layer, so they may share rules with each other, but not with
+// central policy.
 type Policy struct {
-	// File is a Rego module in package agenty.tool, relative to the harness
+	// Files are Rego modules in package agenty.tool, relative to the harness
 	// file.
-	File string `yaml:"file"`
+	Files []string `yaml:"files"`
 	// Rules are Rego rules without a package line; package agenty.tool is
 	// implied.
 	Rules string `yaml:"rules"`
-	// FileSource is the content of File. Load fills it; it never comes from
-	// YAML.
-	FileSource string `yaml:"-"`
+	// FileSources holds the content of each of Files, in order. Load fills
+	// it; it never comes from YAML.
+	FileSources []string `yaml:"-"`
 }
 
 // Model selects the model provider and model a harness runs on.
@@ -68,7 +70,7 @@ var slug = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 var packageLine = regexp.MustCompile(`(?m)^\s*package\s`)
 
 // Load reads, parses and validates the harness file at path, and reads its
-// policy file, if any, relative to it.
+// policy files, if any, relative to it.
 func Load(path string) (*Harness, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // G304: reading the file the caller names is the purpose of Load.
 	if err != nil {
@@ -78,16 +80,16 @@ func Load(path string) (*Harness, error) {
 	if err != nil {
 		return nil, fmt.Errorf("harness %s: %w", path, err)
 	}
-	if h.Policy != nil && h.Policy.File != "" {
-		policyPath := h.Policy.File
+	for i, file := range policyFiles(h) {
+		policyPath := file
 		if !filepath.IsAbs(policyPath) {
 			policyPath = filepath.Join(filepath.Dir(path), policyPath)
 		}
 		src, err := os.ReadFile(policyPath) //nolint:gosec // G304: the harness names its own policy file.
 		if err != nil {
-			return nil, fmt.Errorf("harness %s: %w", path, &FieldError{Field: "policy.file", Msg: err.Error()})
+			return nil, fmt.Errorf("harness %s: %w", path, &FieldError{Field: fmt.Sprintf("policy.files[%d]", i), Msg: err.Error()})
 		}
-		h.Policy.FileSource = string(src)
+		h.Policy.FileSources = append(h.Policy.FileSources, string(src))
 	}
 	return h, nil
 }
@@ -156,13 +158,29 @@ func (h *Harness) Validate() error {
 	}
 	if p := h.Policy; p != nil {
 		switch {
-		case p.File == "" && p.Rules == "":
-			add("policy", "needs a file or rules")
-		case p.File != "" && p.Rules != "":
-			add("policy", "has both a file and rules; use one")
+		case len(p.Files) == 0 && p.Rules == "":
+			add("policy", "needs files or rules")
 		case packageLine.MatchString(p.Rules):
 			add("policy.rules", "must not declare a package; package agenty.tool is implied")
 		}
+		seenFiles := make(map[string]bool, len(p.Files))
+		for i, file := range p.Files {
+			field := fmt.Sprintf("policy.files[%d]", i)
+			switch {
+			case file == "":
+				add(field, "must not be empty")
+			case seenFiles[file]:
+				add(field, fmt.Sprintf("duplicate file %q", file))
+			}
+			seenFiles[file] = true
+		}
 	}
 	return errors.Join(errs...)
+}
+
+func policyFiles(h *Harness) []string {
+	if h.Policy == nil {
+		return nil
+	}
+	return h.Policy.Files
 }

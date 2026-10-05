@@ -217,9 +217,9 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 	invalid := *f.harness
 	invalid.Limits.MaxSteps = 0
 	unloaded := *f.harness
-	unloaded.Policy = &harness.Policy{File: "triage.rego"}
+	unloaded.Policy = &harness.Policy{Files: []string{"triage.rego"}}
 	broken := *f.harness
-	broken.Policy = &harness.Policy{File: "triage.rego", FileSource: "package agenty.tool\n\ndeny contains"}
+	broken.Policy = &harness.Policy{Files: []string{"triage.rego"}, FileSources: []string{"package agenty.tool\n\ndeny contains"}}
 	brokenInline := *f.harness
 	brokenInline.Policy = &harness.Policy{Rules: "deny contains"}
 	withConfig := func(change func(*agent.Config)) agent.Config {

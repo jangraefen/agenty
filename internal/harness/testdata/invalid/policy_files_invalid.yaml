@@ -3,5 +3,4 @@ instructions: x
 model: {provider: anthropic, name: m}
 limits: {max_steps: 1, max_tool_calls: 10}
 policy:
-  file: triage.rego
-  rules: deny contains "x" if true
+  files: [triage.rego, "", triage.rego]

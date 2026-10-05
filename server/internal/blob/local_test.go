@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -65,6 +66,48 @@ func TestLocalLeavesNoTemporaryFiles(t *testing.T) {
 		return err
 	}))
 	assert.Len(t, files, 1, "only the one stored object, no temporary files: %v", files)
+}
+
+// A crash during Put leaves its temporary file behind; NewLocal removes such
+// files once they are old enough that no Put can still be writing them.
+func TestNewLocalRemovesStaleTemporaryFiles(t *testing.T) {
+	root := t.TempDir()
+	_, err := blob.NewLocal(root)
+	require.NoError(t, err)
+
+	tmp := filepath.Join(root, "tmp")
+	stale := filepath.Join(tmp, "put-stale")
+	fresh := filepath.Join(tmp, "put-fresh")
+	other := filepath.Join(tmp, "other")
+	for _, f := range []string{stale, fresh, other} {
+		require.NoError(t, os.WriteFile(f, []byte("partial"), 0o600))
+	}
+	old := time.Now().Add(-48 * time.Hour)
+	for _, f := range []string{stale, other} {
+		require.NoError(t, os.Chtimes(f, old, old))
+	}
+
+	_, err = blob.NewLocal(root)
+	require.NoError(t, err)
+
+	tests := map[string]struct {
+		path string
+		kept bool
+	}{
+		"StalePut":  {stale, false},
+		"FreshPut":  {fresh, true},
+		"OtherFile": {other, true},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := os.Stat(tt.path)
+			if tt.kept {
+				assert.NoError(t, err)
+			} else {
+				assert.ErrorIs(t, err, fs.ErrNotExist)
+			}
+		})
+	}
 }
 
 func TestLocalPersistsAcrossInstances(t *testing.T) {

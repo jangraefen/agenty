@@ -122,5 +122,8 @@ func TestS3MissingBucketIsNotNotFound(t *testing.T) {
 	_, err = s.Get(ctx, "k")
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, blob.ErrNotFound, "Get")
+	_, err = s.Stat(ctx, "k")
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, blob.ErrNotFound, "Stat")
 	assert.Error(t, s.Put(ctx, "k", strings.NewReader("v"), 1), "Put")
 }

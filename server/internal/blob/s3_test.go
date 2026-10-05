@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -28,6 +29,10 @@ func (f failingS3) GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Op
 func (f failingS3) HeadObject(
 	context.Context, *s3.HeadObjectInput, ...func(*s3.Options),
 ) (*s3.HeadObjectOutput, error) {
+	return nil, f.err
+}
+
+func (f failingS3) HeadBucket(context.Context, *s3.HeadBucketInput, ...func(*s3.Options)) (*s3.HeadBucketOutput, error) {
 	return nil, f.err
 }
 
@@ -96,4 +101,65 @@ func TestS3RejectsKeysTooLongWithPrefix(t *testing.T) {
 	_, err = s.Stat(ctx, tooLong)
 	assert.ErrorIs(t, err, blob.ErrInvalidKey, "Stat")
 	assert.ErrorIs(t, s.Delete(ctx, tooLong), blob.ErrInvalidKey, "Delete")
+}
+
+// statS3 answers HeadObject and HeadBucket with fixed errors and counts the
+// HeadBucket calls.
+type statS3 struct {
+	failingS3
+	headObject  error
+	headBucket  error
+	bucketCalls *int
+}
+
+func (f statS3) HeadObject(
+	context.Context, *s3.HeadObjectInput, ...func(*s3.Options),
+) (*s3.HeadObjectOutput, error) {
+	return nil, f.headObject
+}
+
+func (f statS3) HeadBucket(context.Context, *s3.HeadBucketInput, ...func(*s3.Options)) (*s3.HeadBucketOutput, error) {
+	*f.bucketCalls++
+	if f.headBucket != nil {
+		return nil, f.headBucket
+	}
+	return &s3.HeadBucketOutput{}, nil
+}
+
+// HeadObject has no response body, so a missing bucket also reports NotFound;
+// Stat reports ErrNotFound only when the bucket exists.
+func TestS3StatDistinguishesMissingBucket(t *testing.T) {
+	errDown := errors.New("service unavailable")
+	tests := map[string]struct {
+		headObject  error
+		headBucket  error
+		notFound    bool
+		wantErr     error
+		bucketCalls int
+	}{
+		"MissingObject":    {headObject: &types.NotFound{}, notFound: true, bucketCalls: 1},
+		"MissingBucket":    {headObject: &types.NotFound{}, headBucket: &types.NotFound{}, bucketCalls: 1},
+		"BucketCheckFails": {headObject: &types.NotFound{}, headBucket: errDown, wantErr: errDown, bucketCalls: 1},
+		"OtherError":       {headObject: errDown, wantErr: errDown, bucketCalls: 0},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			calls := 0
+			client := statS3{headObject: tt.headObject, headBucket: tt.headBucket, bucketCalls: &calls}
+			s, err := blob.NewS3(client, "bucket", "")
+			require.NoError(t, err)
+
+			_, err = s.Stat(context.Background(), "k")
+			require.Error(t, err)
+			if tt.notFound {
+				assert.ErrorIs(t, err, blob.ErrNotFound)
+			} else {
+				assert.NotErrorIs(t, err, blob.ErrNotFound)
+			}
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+			}
+			assert.Equal(t, tt.bucketCalls, calls, "HeadBucket calls")
+		})
+	}
 }

@@ -10,23 +10,29 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
+	"time"
 )
 
 // Local stores objects in a directory on a local volume.
 //
 // Layout: an object lives at objects/<h[:2]>/<h>, where h is the hex SHA-256
 // of its key, and is written to tmp/ first and then renamed into place, so
-// writes are atomic. Hashing keeps file names independent of the key: no key
-// can address a path outside the root, keys that differ only in case stay
-// distinct on case-insensitive file systems, and a key and its "child"
-// ("a" and "a/b") never collide as file and directory.
+// writes are atomic; NewLocal removes temporary files that a crashed Put left
+// behind once they are a day old. Hashing keeps file names independent of the
+// key: no key can address a path outside the root, keys that differ only in
+// case stay distinct on case-insensitive file systems, and a key and its
+// "child" ("a" and "a/b") never collide as file and directory.
 type Local struct {
 	objects string
 	tmp     string
 }
 
 var _ Blob = (*Local)(nil)
+
+// tempPrefix starts the name of every temporary file in tmp/.
+const tempPrefix = "put-"
 
 // NewLocal returns a store rooted at the absolute directory root, creating it
 // if needed.
@@ -40,7 +46,34 @@ func NewLocal(root string) (*Local, error) {
 			return nil, fmt.Errorf("blob: create local root: %w", err)
 		}
 	}
+	l.removeStaleTemp(time.Now().Add(-staleTempAge))
 	return l, nil
+}
+
+// staleTempAge is how old a temporary file must be before NewLocal removes it.
+// It is far longer than any Put takes, so another process that shares the
+// volume never loses a file it is still writing.
+const staleTempAge = 24 * time.Hour
+
+// removeStaleTemp removes temporary files of Puts last modified before cutoff:
+// a Put removes its own temporary file on error, but a crash leaves it behind.
+// Removal is best effort; a file that cannot be removed is left for the next
+// start.
+func (l *Local) removeStaleTemp(cutoff time.Time) {
+	entries, err := os.ReadDir(l.tmp)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.Type().IsRegular() || !strings.HasPrefix(e.Name(), tempPrefix) {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || !info.ModTime().Before(cutoff) {
+			continue
+		}
+		_ = os.Remove(filepath.Join(l.tmp, e.Name())) // best effort, see above
+	}
 }
 
 func (l *Local) path(key string) (dir, file string, err error) {
@@ -65,7 +98,7 @@ func (l *Local) Put(ctx context.Context, key string, r io.Reader, size int64) er
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(l.tmp, "put-*")
+	tmp, err := os.CreateTemp(l.tmp, tempPrefix+"*")
 	if err != nil {
 		return fmt.Errorf("blob: put %q: %w", key, err)
 	}

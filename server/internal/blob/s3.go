@@ -18,6 +18,7 @@ type S3API interface {
 	PutObject(ctx context.Context, in *s3.PutObjectInput, opts ...func(*s3.Options)) (*s3.PutObjectOutput, error)
 	GetObject(ctx context.Context, in *s3.GetObjectInput, opts ...func(*s3.Options)) (*s3.GetObjectOutput, error)
 	HeadObject(ctx context.Context, in *s3.HeadObjectInput, opts ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
+	HeadBucket(ctx context.Context, in *s3.HeadBucketInput, opts ...func(*s3.Options)) (*s3.HeadBucketOutput, error)
 	DeleteObject(
 		ctx context.Context, in *s3.DeleteObjectInput, opts ...func(*s3.Options),
 	) (*s3.DeleteObjectOutput, error)
@@ -129,6 +130,16 @@ func (s *S3) Stat(ctx context.Context, key string) (Info, error) {
 		return Info{}, err
 	}
 	out, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: object})
+	if _, ok := errors.AsType[*types.NotFound](err); ok {
+		// HeadObject has no response body, so a missing bucket (or a wrong
+		// endpoint) also reports NotFound. Only an existing bucket makes it a
+		// missing object. S3 answers 404 rather than 403 only to callers that
+		// may list the bucket, which is what HeadBucket needs as well.
+		_, bucketErr := s.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(s.bucket)})
+		if bucketErr != nil {
+			return Info{}, fmt.Errorf("blob: stat %q: bucket %q: %w", key, s.bucket, bucketErr)
+		}
+	}
 	if err != nil {
 		return Info{}, s3Error("stat", key, err)
 	}
@@ -148,7 +159,8 @@ func (s *S3) Delete(ctx context.Context, key string) error {
 }
 
 // s3Error maps a missing object to ErrNotFound. GetObject reports NoSuchKey;
-// HeadObject has no response body and reports NotFound.
+// HeadObject has no response body and reports NotFound, which Stat maps only
+// after checking that the bucket exists.
 func s3Error(op, key string, err error) error {
 	var noSuchKey *types.NoSuchKey
 	var notFound *types.NotFound

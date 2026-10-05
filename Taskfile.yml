@@ -49,6 +49,10 @@ tasks:
         have=$(go env GOVERSION 2>/dev/null | sed 's/^go//')
         [ -n "$have" ]; report go "$have" $? "Go (toolchain from go.work is fetched automatically)" "https://go.dev/doc/install"
 
+        # The Go test targets use the race detector, which needs cgo; Go disables cgo when it finds no C compiler.
+        cc=$(go env CC 2>/dev/null); have="CGO_ENABLED=$(go env CGO_ENABLED 2>/dev/null) CC=$cc"
+        [ "${have%% *}" = CGO_ENABLED=1 ] && command -v "${cc%% *}" >/dev/null; report cgo "$have" $? "CGO_ENABLED=1 and a C compiler for go test -race" "xcode-select --install, or install gcc"
+
         have="{{.TASK_VERSION}}"; have=${have#v}
         at_least "$have" {{.TASK_MIN_VERSION}}; report task "$have" $? ">= {{.TASK_MIN_VERSION}}" "brew install go-task, or https://taskfile.dev/installation"
 

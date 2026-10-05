@@ -113,11 +113,16 @@ tasks:
           echo "ok      $image: $got, label $label, user $user"
 
   lint:
-    desc: Lint all Go modules (go mod tidy, golangci-lint with architecture rules via depguard) and web/ with Biome
+    desc: Lint all Go modules and web/ (lint:go, then lint:web)
+    cmds:
+      - task: lint:go
+      - task: lint:web
+
+  lint:go:
+    desc: Lint all Go modules (go mod tidy, golangci-lint with architecture rules via depguard)
     cmds:
       - for: { var: GO_MODULES }
         cmd: cd {{.ITEM}} && go mod tidy -diff && golangci-lint run ./...
-      - task: lint:web
 
   # Web (web/): packages pinned by pnpm-lock.yaml and installed with pnpm (never npm); tools run from node_modules.
   web:deps:
@@ -294,12 +299,17 @@ tasks:
       - pnpm run --silent licenses
 
   test:unit:
-    desc: Run unit tests
+    desc: Run unit tests (test:unit:go, then test:unit:web)
+    cmds:
+      - task: test:unit:go
+      - task: test:unit:web
+
+  test:unit:go:
+    desc: Run the Go unit tests, writing coverage/unit.out for check:coverage
     cmds:
       # Remove the previous profile first so a failed run never leaves a stale one for check:coverage.
       - mkdir -p coverage && rm -f coverage/unit.out
       - go test -count=1 -coverprofile=coverage/unit.out {{.GO_PACKAGES}}
-      - task: test:unit:web
 
   test:unit:web:
     desc: Run the web UI unit and component tests (Vitest)

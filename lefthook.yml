@@ -1,11 +1,41 @@
 # Git hooks (ARCHITECTURE §15.4); installed by `task setup`.
+
+# doublestar globs: `**` matches any number of directories, so `server/**` matches every file below server/.
+glob_matcher: doublestar
+
+# Each pre-commit command runs only when a staged file matches its globs, and the commands run in parallel.
+# CI and `task check` still run everything (`task lint`, `task test:unit`).
 pre-commit:
+  parallel: true
   commands:
-    # Architecture rules run as part of lint (depguard).
-    lint:
-      run: task lint
-    test-unit:
-      run: task test:unit
+    # Architecture rules run as part of Go lint (depguard). The Go inputs are the Go modules (code, go.mod,
+    # go.sum, embedded SQL migrations, sqlc queries, test data), the workspace, the lint configuration,
+    # api/ (generated server code and a contract test), and deploy/ (Dockerfile and compose tests).
+    lint-go:
+      glob: &go-inputs
+        - "server/**"
+        - "sandbox/**"
+        - "go.work"
+        - "go.work.sum"
+        - ".golangci.yaml"
+        - "api/**"
+        - "deploy/**"
+        - "Taskfile.yml"
+        - "lefthook.yml"
+      run: task lint:go
+    test-unit-go:
+      glob: *go-inputs
+      run: task test:unit:go
+    # One command for web/, so the two targets never run `pnpm install` concurrently. The generated
+    # TypeScript API types come from api/.
+    web:
+      glob:
+        - "web/**"
+        - "biome.json"
+        - "api/**"
+        - "Taskfile.yml"
+        - "lefthook.yml"
+      run: task lint:web test:unit:web
 
 pre-push:
   commands:

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 
 	"go.yaml.in/yaml/v3"
@@ -19,6 +20,12 @@ type Harness struct {
 	Model        Model    `yaml:"model"`
 	Tools        []string `yaml:"tools"`
 	Limits       Limits   `yaml:"limits"`
+	// Policy is an optional Rego file, relative to the harness file, that
+	// tightens central policy for this harness.
+	Policy string `yaml:"policy"`
+	// PolicySource is the content of Policy. Load fills it; it never comes
+	// from YAML.
+	PolicySource string `yaml:"-"`
 }
 
 // Model selects the model provider and model a harness runs on.
@@ -29,7 +36,10 @@ type Model struct {
 
 // Limits bound a single run of a harness.
 type Limits struct {
+	// MaxSteps bounds the model calls of a run.
 	MaxSteps int `yaml:"max_steps"`
+	// MaxToolCalls bounds the tool calls of a run, denied ones included.
+	MaxToolCalls int `yaml:"max_tool_calls"`
 }
 
 var _ error = (*FieldError)(nil)
@@ -46,7 +56,8 @@ func (e *FieldError) Error() string {
 
 var slug = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
-// Load reads, parses and validates the harness file at path.
+// Load reads, parses and validates the harness file at path, and reads its
+// policy file, if any, relative to it.
 func Load(path string) (*Harness, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // G304: reading the file the caller names is the purpose of Load.
 	if err != nil {
@@ -55,6 +66,17 @@ func Load(path string) (*Harness, error) {
 	h, err := Parse(data)
 	if err != nil {
 		return nil, fmt.Errorf("harness %s: %w", path, err)
+	}
+	if h.Policy != "" {
+		policyPath := h.Policy
+		if !filepath.IsAbs(policyPath) {
+			policyPath = filepath.Join(filepath.Dir(path), policyPath)
+		}
+		src, err := os.ReadFile(policyPath) //nolint:gosec // G304: the harness names its own policy file.
+		if err != nil {
+			return nil, fmt.Errorf("harness %s: %w", path, &FieldError{Field: "policy", Msg: err.Error()})
+		}
+		h.PolicySource = string(src)
 	}
 	return h, nil
 }
@@ -117,6 +139,9 @@ func (h *Harness) Validate() error {
 
 	if h.Limits.MaxSteps <= 0 {
 		add("limits.max_steps", "must be greater than 0")
+	}
+	if h.Limits.MaxToolCalls <= 0 {
+		add("limits.max_tool_calls", "must be greater than 0")
 	}
 	return errors.Join(errs...)
 }

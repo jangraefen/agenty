@@ -9,3 +9,5 @@ tools:
   - tickets.label
 limits:
   max_steps: 20
+  max_tool_calls: 50
+policy: triage.rego

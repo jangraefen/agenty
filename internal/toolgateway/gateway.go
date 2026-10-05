@@ -84,25 +84,38 @@ func New(cfg Config) (*Gateway, error) {
 		}
 		g.granted[name] = true
 	}
-	for i, tool := range cfg.Tools {
-		if tool == nil {
-			return nil, fmt.Errorf("toolgateway: tool %d is nil", i)
-		}
+	if err := ValidateTools(cfg.Tools); err != nil {
+		return nil, err
+	}
+	for _, tool := range cfg.Tools {
 		def := tool.Definition()
-		name := def.Name
-		if name == "" {
-			return nil, fmt.Errorf("toolgateway: tool %d has no name", i)
-		}
-		if _, dup := g.tools[name]; dup {
-			return nil, fmt.Errorf("toolgateway: duplicate tool %q", name)
-		}
-		g.tools[name] = tool
-		if g.granted[name] {
+		g.tools[def.Name] = tool
+		if g.granted[def.Name] {
 			g.defs = append(g.defs, def)
 		}
 	}
 	slices.SortFunc(g.defs, func(a, b Definition) int { return strings.Compare(a.Name, b.Name) })
 	return g, nil
+}
+
+// ValidateTools checks that every tool is non-nil and has a unique, non-empty
+// name. New applies the same check.
+func ValidateTools(tools []Tool) error {
+	seen := make(map[string]bool, len(tools))
+	for i, tool := range tools {
+		if tool == nil {
+			return fmt.Errorf("toolgateway: tool %d is nil", i)
+		}
+		name := tool.Definition().Name
+		if name == "" {
+			return fmt.Errorf("toolgateway: tool %d has no name", i)
+		}
+		if seen[name] {
+			return fmt.Errorf("toolgateway: duplicate tool %q", name)
+		}
+		seen[name] = true
+	}
+	return nil
 }
 
 // Definitions describes the tools the run may call: granted and resolved,

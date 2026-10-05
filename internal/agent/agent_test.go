@@ -114,12 +114,12 @@ func TestRun_Outcomes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := newFixture(t, tt.maxSteps)
+			f := newFixture(tt.maxSteps)
 			f.read.Err = tt.readErr
 			f.audit.FailOn = tt.failAuditOn
 			m := model.NewScripted(tt.script...)
 
-			res, err := agent.Run(context.Background(), agent.Config{Harness: f.harness, Model: m, Gateway: f.gateway, Input: "ticket 7"})
+			res, err := f.run(t, m)
 
 			if tt.wantErr == nil {
 				require.NoError(t, err)
@@ -139,10 +139,10 @@ func TestRun_Outcomes(t *testing.T) {
 }
 
 func TestRun_FirstRequestCarriesInstructionsInputAndGrantedTools(t *testing.T) {
-	f := newFixture(t, 3)
+	f := newFixture(3)
 	m := model.NewScripted(model.Reply("hello"))
 
-	_, err := agent.Run(context.Background(), agent.Config{Harness: f.harness, Model: m, Gateway: f.gateway, Input: "ticket 7"})
+	_, err := f.run(t, m)
 	require.NoError(t, err)
 
 	reqs := m.Requests()
@@ -160,12 +160,12 @@ func TestRun_FirstRequestCarriesInstructionsInputAndGrantedTools(t *testing.T) {
 }
 
 func TestRun_FeedsToolResultsBackAndKeepsTheTranscript(t *testing.T) {
-	f := newFixture(t, 3)
+	f := newFixture(3)
 	f.label.Err = errors.New("label service down")
 	toolCalls := []model.ToolCall{call("c1", "tickets.read"), call("c2", "tickets.delete"), call("c3", "tickets.label")}
 	m := model.NewScripted(model.CallTools(toolCalls...), model.Reply("done"))
 
-	res, err := agent.Run(context.Background(), agent.Config{Harness: f.harness, Model: m, Gateway: f.gateway, Input: "ticket 7"})
+	res, err := f.run(t, m)
 	require.NoError(t, err)
 
 	assert.JSONEq(t, `{"id":7}`, string(f.read.Args))
@@ -189,7 +189,7 @@ func TestRun_FeedsToolResultsBackAndKeepsTheTranscript(t *testing.T) {
 }
 
 func TestRun_CancelledContextStopsFurtherSideEffects(t *testing.T) {
-	f := newFixture(t, 3)
+	f := newFixture(3)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	f.read.OnCall = func(context.Context) { cancel() }
@@ -198,7 +198,10 @@ func TestRun_CancelledContextStopsFurtherSideEffects(t *testing.T) {
 		model.Reply("unreachable"),
 	)
 
-	res, err := agent.Run(ctx, agent.Config{Harness: f.harness, Model: m, Gateway: f.gateway, Input: "ticket 7"})
+	a, err := agent.New(f.config(m))
+	require.NoError(t, err)
+
+	res, err := a.Run(ctx, "ticket 7")
 
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Equal(t, 1, f.read.Calls)
@@ -206,31 +209,99 @@ func TestRun_CancelledContextStopsFurtherSideEffects(t *testing.T) {
 	assert.Equal(t, 1, res.Steps)
 }
 
-func TestRun_RejectsInvalidConfig(t *testing.T) {
-	f := newFixture(t, 3)
+func TestNew_RejectsInvalidConfig(t *testing.T) {
+	f := newFixture(3)
 	m := model.NewScripted(model.Reply("unused"))
 	invalid := *f.harness
 	invalid.Limits.MaxSteps = 0
+	withConfig := func(change func(*agent.Config)) agent.Config {
+		cfg := f.config(m)
+		change(&cfg)
+		return cfg
+	}
 
 	tests := []struct {
 		name    string
 		cfg     agent.Config
 		wantErr string
 	}{
-		{"nil harness", agent.Config{Model: m, Gateway: f.gateway, Input: "x"}, "harness is required"},
-		{"nil model", agent.Config{Harness: f.harness, Gateway: f.gateway, Input: "x"}, "model is required"},
-		{"nil gateway", agent.Config{Harness: f.harness, Model: m, Input: "x"}, "gateway is required"},
-		{"empty input", agent.Config{Harness: f.harness, Model: m, Gateway: f.gateway}, "input is required"},
-		{"invalid harness", agent.Config{Harness: &invalid, Model: m, Gateway: f.gateway, Input: "x"}, "limits.max_steps"},
+		{"nil harness", withConfig(func(c *agent.Config) { c.Harness = nil }), "harness is required"},
+		{"nil model", withConfig(func(c *agent.Config) { c.Model = nil }), "model is required"},
+		{"nil audit", withConfig(func(c *agent.Config) { c.Audit = nil }), "audit is required"},
+		{"invalid harness", withConfig(func(c *agent.Config) { c.Harness = &invalid }), "limits.max_steps"},
+		{"nil tool", withConfig(func(c *agent.Config) { c.Tools = append(c.Tools, nil) }), "tool 3 is nil"},
+		{"duplicate tool", withConfig(func(c *agent.Config) { c.Tools = append(c.Tools, f.read) }), `duplicate tool "tickets.read"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			res, err := agent.Run(context.Background(), tt.cfg)
+			a, err := agent.New(tt.cfg)
 			require.Error(t, err)
 			assert.ErrorContains(t, err, tt.wantErr)
-			assert.Zero(t, res)
+			assert.Nil(t, a)
 		})
 	}
 	assert.Empty(t, m.Requests(), "an invalid config never reaches the model")
+}
+
+func TestRun_RejectsEmptyInput(t *testing.T) {
+	f := newFixture(3)
+	m := model.NewScripted(model.Reply("unused"))
+	a, err := agent.New(f.config(m))
+	require.NoError(t, err)
+
+	res, err := a.Run(context.Background(), "")
+
+	assert.ErrorContains(t, err, "input is required")
+	assert.Zero(t, res)
+	assert.Empty(t, m.Requests())
 	assert.Empty(t, f.audit.Records)
+}
+
+func TestRun_EachRunHasItsOwnRunIDAndTranscript(t *testing.T) {
+	f := newFixture(3)
+	m := model.NewScripted(
+		model.CallTools(call("c1", "tickets.read")), model.Reply("first done"),
+		model.CallTools(call("c2", "tickets.read")), model.Reply("second done"),
+	)
+	a, err := agent.New(f.config(m))
+	require.NoError(t, err)
+
+	first, err := a.Run(context.Background(), "ticket 7")
+	require.NoError(t, err)
+	second, err := a.Run(context.Background(), "ticket 8")
+	require.NoError(t, err)
+
+	require.NotEmpty(t, first.RunID)
+	require.NotEmpty(t, second.RunID)
+	assert.NotEqual(t, first.RunID, second.RunID)
+	require.Len(t, f.audit.Records, 4)
+	for i, r := range f.audit.Records {
+		want := first.RunID
+		if i >= 2 {
+			want = second.RunID
+		}
+		assert.Equal(t, want, r.RunID, "record %d", i)
+	}
+
+	reqs := m.Requests()
+	require.Len(t, reqs, 4)
+	assert.Equal(t, []model.Message{{Role: model.RoleUser, Text: "ticket 8"}}, reqs[2].Messages,
+		"a new run starts with a fresh transcript")
+	assert.Len(t, second.Messages, 4)
+}
+
+func TestNew_HarnessChangesAfterNewDoNotWidenGrants(t *testing.T) {
+	f := newFixture(3)
+	m := model.NewScripted(model.CallTools(call("c1", "tickets.delete")), model.Reply("done"))
+	a, err := agent.New(f.config(m))
+	require.NoError(t, err)
+
+	f.harness.Tools[2] = "tickets.delete"
+	f.harness.Limits.MaxSteps = 1
+	_, err = a.Run(context.Background(), "ticket 7")
+
+	require.NoError(t, err, "max_steps is still the original 3")
+	assert.Zero(t, f.del.Calls)
+	require.Len(t, f.audit.Records, 1)
+	assert.Equal(t, toolgateway.Deny, f.audit.Records[0].Decision)
 }

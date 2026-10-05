@@ -1,30 +1,39 @@
 package agent_test
 
 import (
-	"context"
-	"reflect"
+	"go/ast"
+	"go/importer"
+	"go/parser"
+	"go/token"
+	"go/types"
+	"os"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jangraefen/agenty/internal/agent"
 	"github.com/jangraefen/agenty/internal/model"
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
+
+const toolgatewayPath = "github.com/jangraefen/agenty/internal/toolgateway"
 
 // TestInvariant_SideEffectsOnlyViaGateway guards trust-model guarantee 2:
 // every side effect goes through the gateway; nothing else executes tools.
 func TestInvariant_SideEffectsOnlyViaGateway(t *testing.T) {
 	t.Run("every tool execution is a gateway call", func(t *testing.T) {
-		f := newFixture(t, 5)
+		f := newFixture(5)
 		m := model.NewScripted(
 			model.CallTools(call("c1", "tickets.read"), call("c2", "tickets.delete"), call("c3", "tickets.label")),
 			model.CallTools(call("c4", "tickets.read")),
 			model.Reply("done"),
 		)
 
-		_, err := agent.Run(context.Background(), agent.Config{Harness: f.harness, Model: m, Gateway: f.gateway, Input: "ticket 7"})
+		_, err := f.run(t, m)
 		require.NoError(t, err)
 
 		decisions := recordsOf(f.audit.Records, toolgateway.EventDecision)
@@ -39,54 +48,94 @@ func TestInvariant_SideEffectsOnlyViaGateway(t *testing.T) {
 		assert.Equal(t, 3, f.toolCalls())
 	})
 
-	t.Run("agent config cannot carry a tool", func(t *testing.T) {
-		assert.Empty(t, toolHoldingFields(reflect.TypeFor[agent.Config]()),
-			"the agent must reach tools only through the gateway")
+	t.Run("agent code never calls a tool directly", func(t *testing.T) {
+		dir, err := os.Getwd()
+		require.NoError(t, err)
+		paths, err := filepath.Glob(filepath.Join(dir, "*.go"))
+		require.NoError(t, err)
+		sources := map[string]string{}
+		for _, p := range paths {
+			if strings.HasSuffix(p, "_test.go") {
+				continue
+			}
+			src, err := os.ReadFile(p)
+			require.NoError(t, err)
+			sources[p] = string(src)
+		}
+		require.NotEmpty(t, sources)
+
+		assert.Empty(t, directToolUses(t, sources),
+			"tools may only be handed to the gateway, never called by the agent")
 	})
 
-	t.Run("checker detects tool-holding fields", func(t *testing.T) {
-		type leaky struct {
-			Direct  toolgateway.Tool
-			List    []toolgateway.Tool
-			Any     any
-			Nested  struct{ ByName map[string]toolgateway.Tool }
-			Safe    model.Model
-			private toolgateway.Tool
-		}
-		_ = leaky{}.private
-		assert.Equal(t, []string{"Direct", "List", "Any", "Nested.ByName"}, toolHoldingFields(reflect.TypeFor[leaky]()))
+	t.Run("checker detects direct tool use", func(t *testing.T) {
+		dir, err := os.Getwd()
+		require.NoError(t, err)
+		src := `package leak
+
+import (
+	"context"
+
+	"` + toolgatewayPath + `"
+)
+
+func bypass(ctx context.Context, tools []toolgateway.Tool, gw *toolgateway.Gateway) {
+	_, _ = gw.Call(ctx, toolgateway.ToolCall{})
+	_ = tools[0].Definition()
+	call := tools[0].Call
+	_, _ = call(ctx, nil)
+}
+`
+		uses := directToolUses(t, map[string]string{filepath.Join(dir, "leak.go"): src})
+		assert.Equal(t, []string{"leak.go:11: Definition", "leak.go:12: Call"}, uses)
 	})
 }
 
-// toolHoldingFields lists the exported fields of t, recursing into exported
-// struct fields, whose values could hold a toolgateway.Tool.
-func toolHoldingFields(t reflect.Type) []string {
-	toolType := reflect.TypeFor[toolgateway.Tool]()
-	var found []string
-	var walk func(t reflect.Type, prefix string)
-	walk = func(t reflect.Type, prefix string) {
-		for i := range t.NumField() {
-			field := t.Field(i)
-			if !field.IsExported() {
-				continue
-			}
-			ft := field.Type
-			for ft.Kind() == reflect.Pointer || ft.Kind() == reflect.Slice || ft.Kind() == reflect.Array || ft.Kind() == reflect.Map {
-				ft = ft.Elem()
-			}
-			name := prefix + field.Name
-			switch {
-			case ft.Kind() == reflect.Interface && toolType.Implements(ft):
-				found = append(found, name)
-			case ft.Kind() != reflect.Interface && (ft.Implements(toolType) || reflect.PointerTo(ft).Implements(toolType)):
-				found = append(found, name)
-			case ft.Kind() == reflect.Struct:
-				walk(ft, name+".")
-			}
+// Source importing type-checks dependencies from scratch; share one importer
+// (and the file set it is bound to) so dependencies are checked only once.
+var (
+	checkFset     = token.NewFileSet()
+	checkImporter = importer.ForCompiler(checkFset, "source", nil)
+)
+
+// directToolUses type-checks the given sources as one package and lists every
+// selection of a toolgateway.Tool method, as "file:line: method".
+func directToolUses(t *testing.T, sources map[string]string) []string {
+	t.Helper()
+	fset := checkFset
+	var files []*ast.File
+	for path, src := range sources {
+		f, err := parser.ParseFile(fset, path, src, 0)
+		require.NoError(t, err)
+		files = append(files, f)
+	}
+	info := &types.Info{Selections: map[*ast.SelectorExpr]*types.Selection{}}
+	conf := types.Config{Importer: checkImporter}
+	pkg, err := conf.Check(files[0].Name.Name, fset, files, info)
+	require.NoError(t, err)
+
+	var tool *types.Interface
+	for _, imp := range pkg.Imports() {
+		if imp.Path() == toolgatewayPath {
+			tool = imp.Scope().Lookup("Tool").Type().Underlying().(*types.Interface)
 		}
 	}
-	walk(t, "")
-	return found
+	require.NotNil(t, tool, "package under check must import toolgateway")
+
+	var uses []string
+	for expr, sel := range info.Selections {
+		if sel.Kind() == types.FieldVal {
+			continue
+		}
+		recv := sel.Recv()
+		if !types.Implements(recv, tool) && !types.Implements(types.NewPointer(recv), tool) {
+			continue
+		}
+		pos := fset.Position(expr.Sel.Pos())
+		uses = append(uses, filepath.Base(pos.Filename)+":"+strconv.Itoa(pos.Line)+": "+sel.Obj().Name())
+	}
+	slices.Sort(uses)
+	return uses
 }
 
 // TestInvariant_ModelIsNotTrusted guards trust-model guarantee 1: whatever
@@ -106,10 +155,10 @@ func TestInvariant_ModelIsNotTrusted(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := newFixture(t, 3)
+			f := newFixture(3)
 			m := model.NewScripted(model.CallTools(call("c1", tt.call)), model.Reply("understood"))
 
-			res, err := agent.Run(context.Background(), agent.Config{Harness: f.harness, Model: m, Gateway: f.gateway, Input: "ticket 7"})
+			res, err := f.run(t, m)
 
 			require.NoError(t, err, "a refused call does not end the run")
 			assert.Equal(t, "understood", res.Output)

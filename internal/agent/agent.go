@@ -1,11 +1,15 @@
-// Package agent runs the agent loop of a harness. The loop owns no tools: every
-// tool call the model makes goes through the run's tool gateway.
+// Package agent runs harnesses. An Agent holds a harness and its wiring; each
+// Run gets a fresh run ID and its own tool gateway, built from the harness
+// grants. The agent never calls a tool itself: every tool call the model makes
+// goes through that gateway.
 package agent
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/jangraefen/agenty/internal/harness"
 	"github.com/jangraefen/agenty/internal/model"
@@ -16,41 +20,89 @@ import (
 // step the harness allows.
 var ErrMaxSteps = errors.New("max steps reached")
 
-// Config is one run of a harness.
+// Config wires a harness to a model, tools and an audit log.
 type Config struct {
 	Harness *harness.Harness
 	Model   model.Model
-	// Gateway is the only way the run reaches tools. It must be built for
-	// this run from the harness grants.
-	Gateway *toolgateway.Gateway
-	// Input is the first user message.
-	Input string
+	// Tools are the executors available to runs. Only those the harness
+	// grants are reachable, and only through the run's gateway.
+	Tools []toolgateway.Tool
+	Audit toolgateway.Audit
+}
+
+// Agent runs one harness. It holds no run state, so it can run many times.
+type Agent struct {
+	harness harness.Harness
+	model   model.Model
+	tools   []toolgateway.Tool
+	audit   toolgateway.Audit
 }
 
 // Result is the outcome of a run. On error it holds what happened up to the
 // failure.
 type Result struct {
+	RunID    string
 	Output   string
 	Steps    int
 	Messages []model.Message
 }
 
-// Run executes the agent loop. Each step is one model call. Tool calls go
-// through the gateway; denials and tool errors are reported back to the model,
-// while model errors, audit failures and cancellation end the run. If the model
-// still asks for tools on the last allowed step, those calls are not executed
-// and Run returns ErrMaxSteps.
-func Run(ctx context.Context, cfg Config) (Result, error) {
-	if err := cfg.validate(); err != nil {
-		return Result{}, err
+// New validates cfg and returns an Agent. The harness is copied, so later
+// changes to it do not affect the agent.
+func New(cfg Config) (*Agent, error) {
+	switch {
+	case cfg.Harness == nil:
+		return nil, errors.New("agent: harness is required")
+	case cfg.Model == nil:
+		return nil, errors.New("agent: model is required")
+	case cfg.Audit == nil:
+		return nil, errors.New("agent: audit is required")
 	}
-	h := cfg.Harness
-	tools := cfg.Gateway.Definitions()
-	res := Result{Messages: []model.Message{{Role: model.RoleUser, Text: cfg.Input}}}
+	if err := cfg.Harness.Validate(); err != nil {
+		return nil, fmt.Errorf("agent: invalid harness: %w", err)
+	}
+	if err := toolgateway.ValidateTools(cfg.Tools); err != nil {
+		return nil, fmt.Errorf("agent: %w", err)
+	}
+	h := *cfg.Harness
+	h.Tools = slices.Clone(h.Tools)
+	return &Agent{
+		harness: h,
+		model:   cfg.Model,
+		tools:   slices.Clone(cfg.Tools),
+		audit:   cfg.Audit,
+	}, nil
+}
 
-	for step := 1; step <= h.Limits.MaxSteps; step++ {
-		msg, err := cfg.Model.Generate(ctx, model.Request{
-			System:   h.Instructions,
+// Run executes the agent loop for input. Each step is one model call. Tool
+// calls go through the run's gateway; denials and tool errors are reported
+// back to the model, while model errors, audit failures and cancellation end
+// the run. If the model still asks for tools on the last allowed step, those
+// calls are not executed and Run returns ErrMaxSteps.
+func (a *Agent) Run(ctx context.Context, input string) (Result, error) {
+	if input == "" {
+		return Result{}, errors.New("agent: input is required")
+	}
+	res := Result{
+		RunID:    rand.Text(),
+		Messages: []model.Message{{Role: model.RoleUser, Text: input}},
+	}
+	gw, err := toolgateway.New(toolgateway.Config{
+		RunID:   res.RunID,
+		Granted: a.harness.Tools,
+		Tools:   a.tools,
+		Audit:   a.audit,
+	})
+	if err != nil {
+		// New has validated every input; this is a programming error.
+		return res, fmt.Errorf("agent: gateway: %w", err)
+	}
+	tools := gw.Definitions()
+	maxSteps := a.harness.Limits.MaxSteps
+
+	for step := 1; step <= maxSteps; step++ {
+		msg, err := a.model.Generate(ctx, model.Request{
+			System:   a.harness.Instructions,
 			Messages: res.Messages,
 			Tools:    tools,
 		})
@@ -65,16 +117,16 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 			res.Output = msg.Text
 			return res, nil
 		}
-		if step == h.Limits.MaxSteps {
+		if step == maxSteps {
 			break
 		}
-		results, err := callTools(ctx, cfg.Gateway, msg.ToolCalls)
+		results, err := callTools(ctx, gw, msg.ToolCalls)
 		if err != nil {
 			return res, fmt.Errorf("agent: step %d: %w", step, err)
 		}
 		res.Messages = append(res.Messages, model.Message{Role: model.RoleUser, ToolResults: results})
 	}
-	return res, fmt.Errorf("agent: %w (%d)", ErrMaxSteps, h.Limits.MaxSteps)
+	return res, fmt.Errorf("agent: %w (%d)", ErrMaxSteps, maxSteps)
 }
 
 // callTools runs calls in order through the gateway. Denials and tool errors
@@ -97,21 +149,4 @@ func callTools(ctx context.Context, gw *toolgateway.Gateway, calls []model.ToolC
 		results = append(results, result)
 	}
 	return results, nil
-}
-
-func (cfg Config) validate() error {
-	switch {
-	case cfg.Harness == nil:
-		return errors.New("agent: harness is required")
-	case cfg.Model == nil:
-		return errors.New("agent: model is required")
-	case cfg.Gateway == nil:
-		return errors.New("agent: gateway is required")
-	case cfg.Input == "":
-		return errors.New("agent: input is required")
-	}
-	if err := cfg.Harness.Validate(); err != nil {
-		return fmt.Errorf("agent: invalid harness: %w", err)
-	}
-	return nil
 }

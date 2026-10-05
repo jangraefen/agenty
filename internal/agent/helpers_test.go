@@ -1,11 +1,13 @@
 package agent_test
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/jangraefen/agenty/internal/agent"
 	"github.com/jangraefen/agenty/internal/harness"
 	"github.com/jangraefen/agenty/internal/model"
 	"github.com/jangraefen/agenty/internal/toolgateway"
@@ -14,10 +16,9 @@ import (
 
 const instructions = "Triage the ticket."
 
-// fixture is one run's wiring: a harness, its gateway and the fakes behind it.
+// fixture is an agent's wiring: a harness, an audit recorder and fake tools.
 type fixture struct {
 	harness *harness.Harness
-	gateway *toolgateway.Gateway
 	audit   *gatewaytest.Audit
 	read    *gatewaytest.Tool
 	label   *gatewaytest.Tool
@@ -26,9 +27,8 @@ type fixture struct {
 
 // newFixture grants tickets.read, tickets.label and tickets.ghost (which no
 // tool resolves). tickets.delete is registered but not granted.
-func newFixture(t *testing.T, maxSteps int) *fixture {
-	t.Helper()
-	f := &fixture{
+func newFixture(maxSteps int) *fixture {
+	return &fixture{
 		harness: &harness.Harness{
 			Name:         "triage",
 			Instructions: instructions,
@@ -41,15 +41,24 @@ func newFixture(t *testing.T, maxSteps int) *fixture {
 		label: &gatewaytest.Tool{Name: "tickets.label", Result: json.RawMessage(`{"ok":true}`)},
 		del:   &gatewaytest.Tool{Name: "tickets.delete", Result: json.RawMessage(`{"ok":true}`)},
 	}
-	gw, err := toolgateway.New(toolgateway.Config{
-		RunID:   "run-1",
-		Granted: f.harness.Tools,
+}
+
+// config wires the fixture into an agent config for m.
+func (f *fixture) config(m model.Model) agent.Config {
+	return agent.Config{
+		Harness: f.harness,
+		Model:   m,
 		Tools:   []toolgateway.Tool{f.read, f.label, f.del},
 		Audit:   f.audit,
-	})
+	}
+}
+
+// run builds an agent for m and runs it once on a fixed input.
+func (f *fixture) run(t *testing.T, m model.Model) (agent.Result, error) {
+	t.Helper()
+	a, err := agent.New(f.config(m))
 	require.NoError(t, err)
-	f.gateway = gw
-	return f
+	return a.Run(context.Background(), "ticket 7")
 }
 
 func (f *fixture) toolCalls() int {

@@ -134,3 +134,28 @@ func TestCall_RecordsCarryTheRunID(t *testing.T) {
 		assert.Equal(t, "run-42", r.RunID)
 	}
 }
+
+func TestValidateTools(t *testing.T) {
+	read := &gatewaytest.Tool{Name: "tickets.read"}
+	tests := []struct {
+		name    string
+		tools   []toolgateway.Tool
+		wantErr string
+	}{
+		{"valid", []toolgateway.Tool{read, &gatewaytest.Tool{Name: "tickets.label"}}, ""},
+		{"none", nil, ""},
+		{"nil tool", []toolgateway.Tool{read, nil}, "tool 1 is nil"},
+		{"unnamed tool", []toolgateway.Tool{&gatewaytest.Tool{}}, "tool 0 has no name"},
+		{"duplicate tool", []toolgateway.Tool{read, &gatewaytest.Tool{Name: "tickets.read"}}, `duplicate tool "tickets.read"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := toolgateway.ValidateTools(tt.tools)
+			if tt.wantErr == "" {
+				assert.NoError(t, err)
+				return
+			}
+			assert.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}

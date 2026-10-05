@@ -1,4 +1,4 @@
-// Package logging builds the server's log/slog logger: charmbracelet/log as
+// Package logging builds the server's log/slog logger: charm.land/log/v2 as
 // the output handler (text, JSON, or logfmt) behind a redacting handler that
 // removes registered secret values from every record (ARCHITECTURE §3
 // invariant 6, §12.2).
@@ -10,7 +10,7 @@ import (
 	"io"
 	"log/slog"
 
-	charmlog "github.com/charmbracelet/log"
+	charmlog "charm.land/log/v2"
 )
 
 // Format selects the output format of the log.

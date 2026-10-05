@@ -1,0 +1,8 @@
+name: inline
+instructions: Label tickets.
+model: {provider: anthropic, name: claude-sonnet-5-5}
+tools: [tickets.label]
+limits: {max_steps: 3, max_tool_calls: 5}
+policy:
+  rules: |
+    require_approval contains "writes need a human" if input.tool == "tickets.label"

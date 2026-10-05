@@ -21,9 +21,9 @@ The bet is that governance can live in one deterministic place — the path ever
 ## Core concepts
 
 - **Harness** — a declarative definition (YAML) of an agent: instructions, model, granted tools, limits, and expected output. Model-driven, not a flowchart: the builder describes the situation and the limits; the agent decides the steps. The definition does not depend on any agent framework.
-- **Tool** — a typed capability the agent may call, backed by an MCP server. Each tool carries metadata such as its effect (`read` / `write`).
+- **Tool** — a typed capability the agent may call, backed by an MCP server.
 - **Tool Gateway** — the single path for every side effect. For each call it resolves the tool, checks that it is granted, evaluates policy, executes, and records the outcome.
-- **Policy** — rules evaluated before every tool call, producing `allow`, `deny`, or `require_approval`. Builders can tighten central policy, never loosen it.
+- **Policy** — rules evaluated before every tool call, producing `allow`, `deny`, or `require_approval`. Builders can tighten central policy, never loosen it. Policy only has `deny` and `require_approval` rules, and central and harness policy are evaluated as separate layers, so no layer can change another's rules.
 - **Run** — one execution of a harness: the unit of tracing and audit.
 
 ## Trust model (the parts that matter from day one)

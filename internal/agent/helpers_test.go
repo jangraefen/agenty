@@ -34,7 +34,7 @@ func newFixture(maxSteps int) *fixture {
 			Instructions: instructions,
 			Model:        harness.Model{Provider: "scripted", Name: "scripted"},
 			Tools:        []string{"tickets.read", "tickets.label", "tickets.ghost"},
-			Limits:       harness.Limits{MaxSteps: maxSteps},
+			Limits:       harness.Limits{MaxSteps: maxSteps, MaxToolCalls: 50},
 		},
 		audit: &gatewaytest.Audit{},
 		read:  &gatewaytest.Tool{Name: "tickets.read", Result: json.RawMessage(`{"title":"Printer on fire"}`)},
@@ -56,7 +56,7 @@ func (f *fixture) config(m model.Model) agent.Config {
 // run builds an agent for m and runs it once on a fixed input.
 func (f *fixture) run(t *testing.T, m model.Model) (agent.Result, error) {
 	t.Helper()
-	a, err := agent.New(f.config(m))
+	a, err := agent.New(context.Background(), f.config(m))
 	require.NoError(t, err)
 	return a.Run(context.Background(), "ticket 7")
 }

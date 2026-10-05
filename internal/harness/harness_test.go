@@ -2,6 +2,7 @@ package harness_test
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -22,7 +23,7 @@ func TestLoad_Valid(t *testing.T) {
 				Name:         "minimal",
 				Instructions: "Answer the question.",
 				Model:        harness.Model{Provider: "anthropic", Name: "claude-sonnet-5-5"},
-				Limits:       harness.Limits{MaxSteps: 1},
+				Limits:       harness.Limits{MaxSteps: 1, MaxToolCalls: 5},
 			},
 		},
 		{
@@ -32,7 +33,26 @@ func TestLoad_Valid(t *testing.T) {
 				Instructions: "Read the ticket and label it.\n",
 				Model:        harness.Model{Provider: "anthropic", Name: "claude-sonnet-5-5"},
 				Tools:        []string{"tickets.read", "tickets.label"},
-				Limits:       harness.Limits{MaxSteps: 20},
+				Limits:       harness.Limits{MaxSteps: 20, MaxToolCalls: 50},
+				Policy: &harness.Policy{
+					Files: []string{"triage.rego", "helpers.rego"},
+					Rules: "deny contains \"too many writes\" if input.calls.by_tool[\"tickets.label\"] >= 10\n",
+					FileSources: []string{
+						"package agenty.tool\n\nrequire_approval contains \"labels need a human\" if input.tool == \"tickets.label\"\n",
+						"package agenty.tool\n\nwrites := {\"tickets.label\", \"tickets.close\"}\n",
+					},
+				},
+			},
+		},
+		{
+			file: "inline_policy.yaml",
+			want: harness.Harness{
+				Name:         "inline",
+				Instructions: "Label tickets.",
+				Model:        harness.Model{Provider: "anthropic", Name: "claude-sonnet-5-5"},
+				Tools:        []string{"tickets.label"},
+				Limits:       harness.Limits{MaxSteps: 3, MaxToolCalls: 5},
+				Policy:       &harness.Policy{Rules: "require_approval contains \"writes need a human\" if input.tool == \"tickets.label\"\n"},
 			},
 		},
 	}
@@ -57,10 +77,16 @@ func TestLoad_InvalidFields(t *testing.T) {
 		{"missing_model_name.yaml", []string{"model.name"}},
 		{"missing_max_steps.yaml", []string{"limits.max_steps"}},
 		{"negative_max_steps.yaml", []string{"limits.max_steps"}},
+		{"missing_max_tool_calls.yaml", []string{"limits.max_tool_calls"}},
+		{"zero_max_tool_calls.yaml", []string{"limits.max_tool_calls"}},
+		{"missing_policy_file.yaml", []string{"policy.files[1]"}},
+		{"policy_files_invalid.yaml", []string{"policy.files[1]", "policy.files[2]"}},
+		{"policy_empty.yaml", []string{"policy"}},
+		{"policy_rules_with_package.yaml", []string{"policy.rules"}},
 		{"duplicate_tool.yaml", []string{"tools[1]"}},
 		{"empty_tool.yaml", []string{"tools[1]"}},
-		{"many_errors.yaml", []string{"name", "instructions", "model.provider", "model.name", "limits.max_steps"}},
-		{"empty.yaml", []string{"name", "instructions", "model.provider", "model.name", "limits.max_steps"}},
+		{"many_errors.yaml", []string{"name", "instructions", "model.provider", "model.name", "limits.max_steps", "limits.max_tool_calls"}},
+		{"empty.yaml", []string{"name", "instructions", "model.provider", "model.name", "limits.max_steps", "limits.max_tool_calls"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.file, func(t *testing.T) {
@@ -95,7 +121,7 @@ func TestLoad_InvalidDocument(t *testing.T) {
 }
 
 func TestParse_MultipleDocumentsRejected(t *testing.T) {
-	doc := "name: a\ninstructions: x\nmodel: {provider: p, name: m}\nlimits: {max_steps: 1}\n---\nname: b\n"
+	doc := "name: a\ninstructions: x\nmodel: {provider: p, name: m}\nlimits: {max_steps: 1, max_tool_calls: 1}\n---\nname: b\n"
 	got, err := harness.Parse([]byte(doc))
 	require.Error(t, err)
 	assert.Nil(t, got)
@@ -130,4 +156,32 @@ func fieldsOf(err error) []string {
 		walk(err)
 	}
 	return fields
+}
+
+func TestParse_KeepsPolicyPathWithoutReadingIt(t *testing.T) {
+	doc := "name: a\ninstructions: x\nmodel: {provider: p, name: m}\nlimits: {max_steps: 1, max_tool_calls: 1}\npolicy: {files: [extra.rego]}\n"
+	got, err := harness.Parse([]byte(doc))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"extra.rego"}, got.Policy.Files)
+	assert.Empty(t, got.Policy.FileSources, "only Load knows where the harness file lives")
+}
+
+func TestParse_PolicyFileSourcesCannotComeFromYAML(t *testing.T) {
+	doc := "name: a\ninstructions: x\nmodel: {provider: p, name: m}\nlimits: {max_steps: 1, max_tool_calls: 1}\npolicy: {files: [x.rego], filesources: [y]}\n"
+	_, err := harness.Parse([]byte(doc))
+	require.ErrorContains(t, err, "filesources")
+}
+
+func TestLoad_AbsolutePolicyPath(t *testing.T) {
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "elsewhere.rego")
+	require.NoError(t, os.WriteFile(policyPath, []byte("package agenty.tool\n"), 0o600))
+	harnessPath := filepath.Join(t.TempDir(), "h.yaml")
+	doc := "name: a\ninstructions: x\nmodel: {provider: p, name: m}\nlimits: {max_steps: 1, max_tool_calls: 1}\npolicy: {files: [" + policyPath + "]}\n"
+	require.NoError(t, os.WriteFile(harnessPath, []byte(doc), 0o600))
+
+	got, err := harness.Load(harnessPath)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"package agenty.tool\n"}, got.Policy.FileSources)
 }

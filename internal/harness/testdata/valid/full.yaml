@@ -9,3 +9,8 @@ tools:
   - tickets.label
 limits:
   max_steps: 20
+  max_tool_calls: 50
+policy:
+  files: [triage.rego, helpers.rego]
+  rules: |
+    deny contains "too many writes" if input.calls.by_tool["tickets.label"] >= 10

@@ -13,6 +13,7 @@ import (
 
 	"github.com/jangraefen/agenty/internal/harness"
 	"github.com/jangraefen/agenty/internal/model"
+	"github.com/jangraefen/agenty/internal/policy"
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
@@ -27,15 +28,23 @@ type Config struct {
 	// Tools are the executors available to runs. Only those the harness
 	// grants are reachable, and only through the run's gateway.
 	Tools []toolgateway.Tool
-	Audit toolgateway.Audit
+	// Policy is central policy. It applies to every run, and the harness
+	// policy, if any, can only tighten it.
+	Policy []policy.Module
+	// Approver answers calls that policy marks as requiring approval. Without
+	// one, such calls are denied.
+	Approver toolgateway.Approver
+	Audit    toolgateway.Audit
 }
 
 // Agent runs one harness. It holds no run state, so it can run many times.
 type Agent struct {
-	harness harness.Harness
-	model   model.Model
-	tools   []toolgateway.Tool
-	audit   toolgateway.Audit
+	harness  harness.Harness
+	model    model.Model
+	tools    []toolgateway.Tool
+	policy   *policy.Engine
+	approver toolgateway.Approver
+	audit    toolgateway.Audit
 }
 
 // Result is the outcome of a run. On error it holds what happened up to the
@@ -47,9 +56,10 @@ type Result struct {
 	Messages []model.Message
 }
 
-// New validates cfg and returns an Agent. The harness is copied, so later
-// changes to it do not affect the agent.
-func New(cfg Config) (*Agent, error) {
+// New validates cfg, compiles central and harness policy as separate layers,
+// and returns an Agent. The harness is copied, so later changes to it do not
+// affect the agent. A harness that names a policy must come with its source.
+func New(ctx context.Context, cfg Config) (*Agent, error) {
 	switch {
 	case cfg.Harness == nil:
 		return nil, errors.New("agent: harness is required")
@@ -64,13 +74,33 @@ func New(cfg Config) (*Agent, error) {
 	if err := toolgateway.ValidateTools(cfg.Tools); err != nil {
 		return nil, fmt.Errorf("agent: %w", err)
 	}
+	layers := []policy.Layer{{Name: "central", Modules: cfg.Policy}}
+	if p := cfg.Harness.Policy; p != nil {
+		var modules []policy.Module
+		for i, file := range p.Files {
+			if i >= len(p.FileSources) {
+				return nil, fmt.Errorf("agent: harness policy %q was not loaded", file)
+			}
+			modules = append(modules, policy.Module{Name: file, Source: p.FileSources[i]})
+		}
+		if p.Rules != "" {
+			modules = append(modules, policy.RulesModule(cfg.Harness.Name+" (inline policy)", p.Rules))
+		}
+		layers = append(layers, policy.Layer{Name: "harness", Modules: modules})
+	}
+	engine, err := policy.New(ctx, layers...)
+	if err != nil {
+		return nil, fmt.Errorf("agent: %w", err)
+	}
 	h := *cfg.Harness
 	h.Tools = slices.Clone(h.Tools)
 	return &Agent{
-		harness: h,
-		model:   cfg.Model,
-		tools:   slices.Clone(cfg.Tools),
-		audit:   cfg.Audit,
+		harness:  h,
+		model:    cfg.Model,
+		tools:    slices.Clone(cfg.Tools),
+		policy:   engine,
+		approver: cfg.Approver,
+		audit:    cfg.Audit,
 	}, nil
 }
 
@@ -88,10 +118,14 @@ func (a *Agent) Run(ctx context.Context, input string) (Result, error) {
 		Messages: []model.Message{{Role: model.RoleUser, Text: input}},
 	}
 	gw, err := toolgateway.New(toolgateway.Config{
-		RunID:   res.RunID,
-		Granted: a.harness.Tools,
-		Tools:   a.tools,
-		Audit:   a.audit,
+		RunID:        res.RunID,
+		Harness:      a.harness.Name,
+		Granted:      a.harness.Tools,
+		Tools:        a.tools,
+		MaxToolCalls: a.harness.Limits.MaxToolCalls,
+		Policy:       a.policy,
+		Approver:     a.approver,
+		Audit:        a.audit,
 	})
 	if err != nil {
 		// New has validated every input; this is a programming error.

@@ -5,3 +5,4 @@ model:
   name: claude-sonnet-5-5
 limits:
   max_steps: 1
+  max_tool_calls: 5

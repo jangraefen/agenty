@@ -72,3 +72,48 @@ func WithoutCallIDs(records []toolgateway.Record) []toolgateway.Record {
 	}
 	return out
 }
+
+var _ toolgateway.Policy = (*Policy)(nil)
+
+// Policy is a fake policy. It returns the verdict configured for the tool,
+// allows tools without one, and records every input.
+type Policy struct {
+	Verdicts map[string]toolgateway.Verdict
+	Err      error
+
+	Inputs []toolgateway.Request
+}
+
+// Evaluate records in and returns the configured verdict or error.
+func (p *Policy) Evaluate(_ context.Context, in toolgateway.Request) (toolgateway.Verdict, error) {
+	p.Inputs = append(p.Inputs, in)
+	if p.Err != nil {
+		return toolgateway.Verdict{}, p.Err
+	}
+	if v, ok := p.Verdicts[in.Tool]; ok {
+		return v, nil
+	}
+	return toolgateway.Verdict{Decision: toolgateway.Allow}, nil
+}
+
+var _ toolgateway.Approver = (*Approver)(nil)
+
+// Approver is a fake approver that answers every request the same way.
+type Approver struct {
+	Approval toolgateway.Approval
+	Err      error
+
+	Calls []ApprovalCall
+}
+
+// ApprovalCall is one request an Approver received.
+type ApprovalCall struct {
+	Request toolgateway.Request
+	Reasons []string
+}
+
+// Approve records the call and returns the configured approval or error.
+func (a *Approver) Approve(_ context.Context, req toolgateway.Request, reasons []string) (toolgateway.Approval, error) {
+	a.Calls = append(a.Calls, ApprovalCall{Request: req, Reasons: reasons})
+	return a.Approval, a.Err
+}

@@ -169,7 +169,7 @@ func TestReadyFailsWhenTheDatabaseIsUnreachable(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	assert.Error(t, Ready(ctx, pool, m), "Ready after the pool is closed")
+	assert.ErrorContains(t, Ready(ctx, pool, m), "database unreachable", "Ready after the pool is closed")
 }
 
 func TestEmbeddedMigrationsApplyWithoutDatabaseLogic(t *testing.T) {

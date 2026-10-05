@@ -40,6 +40,7 @@ func TestUnreachableDatabaseFailsWithoutLeakingThePassword(t *testing.T) {
 	require.Error(t, readyErr, "Ready")
 	assert.NotContains(t, upErr.Error(), "hunter2", "Up error leaks the password")
 	assert.NotContains(t, readyErr.Error(), "hunter2", "Ready error leaks the password")
+	assert.ErrorContains(t, readyErr, "database unreachable", "Ready reason")
 }
 
 func TestNewMigratorRejectsInvalidMigrations(t *testing.T) {

@@ -19,7 +19,6 @@ import (
 	"github.com/pressly/goose/v3"
 	"github.com/pressly/goose/v3/lock"
 
-	"github.com/jangraefen/agenty/server/internal/database/dbgen"
 	"github.com/jangraefen/agenty/server/internal/database/migrations"
 )
 
@@ -114,7 +113,9 @@ const readyTimeout = 2 * time.Second
 func Ready(ctx context.Context, pool *pgxpool.Pool, m *Migrator) error {
 	ctx, cancel := context.WithTimeout(ctx, readyTimeout)
 	defer cancel()
-	if _, err := dbgen.New(pool).Ping(ctx); err != nil {
+	// A ping of its own keeps "unreachable" apart from a failure to read the
+	// migration history, which needs a connection too.
+	if err := pool.Ping(ctx); err != nil {
 		return fmt.Errorf("database unreachable: %w", err)
 	}
 	pending, err := m.provider.HasPending(ctx)

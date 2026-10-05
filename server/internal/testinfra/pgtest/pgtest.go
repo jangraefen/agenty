@@ -122,8 +122,10 @@ func (s *Server) Terminate(ctx context.Context) error {
 	return nil
 }
 
-// NewDatabase creates an empty database with the vector extension, returns
-// its connection string, and drops it when t and its subtests finish.
+// NewDatabase creates an empty database, returns its connection string, and
+// drops it when t and its subtests finish. It creates no extensions: pgvector
+// is available on the server, but only the migrations create it, as in
+// production.
 func (s *Server) NewDatabase(t testing.TB) string {
 	t.Helper()
 	name := "test_" + strings.ToLower(rand.Text()[:16])
@@ -137,7 +139,6 @@ func (s *Server) NewDatabase(t testing.TB) string {
 	t.Cleanup(func() {
 		s.exec(t, "DROP DATABASE "+ident+" WITH (FORCE)")
 	})
-	execOn(t, dsn, "CREATE EXTENSION vector")
 	return dsn
 }
 

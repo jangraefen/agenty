@@ -41,11 +41,23 @@ func TestServerRunsPinnedPostgresMajor(t *testing.T) {
 	assert.Equal(t, pgtest.PostgresMajor, major, "PostgreSQL major")
 }
 
-func TestNewDatabaseHasPgvector(t *testing.T) {
+// NewDatabase must not pre-create extensions: test databases hold only what
+// the migrations create, so a migration that needs pgvector has to create it.
+func TestNewDatabaseOffersButDoesNotCreatePgvector(t *testing.T) {
 	conn := connect(t, pg.NewDatabase(t))
 
+	var available, installed bool
+	err := conn.QueryRow(t.Context(),
+		"SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'vector'), "+
+			"EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector')").Scan(&available, &installed)
+	require.NoError(t, err, "lookup extension")
+	assert.True(t, available, "pgvector is not available on the server")
+	assert.False(t, installed, "pgvector is pre-created in a new test database")
+
+	_, err = conn.Exec(t.Context(), "CREATE EXTENSION IF NOT EXISTS vector")
+	require.NoError(t, err, "create extension")
 	var distance float64
-	err := conn.QueryRow(t.Context(), "SELECT '[1,2,3]'::vector <-> '[1,2,5]'::vector").Scan(&distance)
+	err = conn.QueryRow(t.Context(), "SELECT '[1,2,3]'::vector <-> '[1,2,5]'::vector").Scan(&distance)
 	require.NoError(t, err, "vector query")
 	assert.Equal(t, 2.0, distance, "L2 distance")
 }

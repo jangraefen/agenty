@@ -52,7 +52,7 @@ func TestHealthzReportsActiveRoles(t *testing.T) {
 	assert.Equal(t, "application/json; charset=utf-8", rec.Header().Get("Content-Type"), "Content-Type")
 	body := decode[httpapi.Health](t, rec)
 	assert.Equal(t, httpapi.HealthStatusOk, body.Status, "status")
-	assert.Equal(t, []string{roleAPI, "scheduler"}, body.Roles, "roles")
+	assert.Equal(t, []httpapi.HealthRoles{httpapi.HealthRolesApi, httpapi.HealthRolesScheduler}, body.Roles, "roles")
 }
 
 func TestHealthzReportsEmptyRolesAsArray(t *testing.T) {
@@ -71,7 +71,7 @@ func TestHealthzDoesNotShareRolesWithCaller(t *testing.T) {
 
 	rec := do(t, h, http.MethodGet, "/healthz")
 
-	assert.Equal(t, []string{roleAPI}, decode[httpapi.Health](t, rec).Roles, "roles")
+	assert.Equal(t, []httpapi.HealthRoles{httpapi.HealthRolesApi}, decode[httpapi.Health](t, rec).Roles, "roles")
 }
 
 func TestReadyzReportsReadyWithoutChecks(t *testing.T) {
@@ -129,6 +129,19 @@ func TestUnknownRouteIsProblem(t *testing.T) {
 	assertProblem(t, rec, http.StatusNotFound, "/no/such/path")
 }
 
+func TestTrailingSlashIsProblemNotRedirect(t *testing.T) {
+	h := httpapi.NewRouter(httpapi.Options{Roles: []string{roleAPI}})
+
+	for _, target := range []string{"/healthz/", "/readyz/"} {
+		t.Run(target, func(t *testing.T) {
+			rec := do(t, h, http.MethodGet, target)
+
+			assertProblem(t, rec, http.StatusNotFound, target)
+			assert.Empty(t, rec.Header().Get("Location"), "Location")
+		})
+	}
+}
+
 func TestWrongMethodIsProblem(t *testing.T) {
 	h := httpapi.NewRouter(httpapi.Options{Roles: []string{roleAPI}})
 
@@ -150,6 +163,23 @@ func TestPanicIsProblemWithoutInternals(t *testing.T) {
 
 	p := assertProblem(t, rec, http.StatusInternalServerError, "/boom")
 	assert.NotEqual(t, "secret internal detail", p.Detail, "problem detail leaks the panic value")
+}
+
+func TestPanicAfterResponseStartedKeepsResponse(t *testing.T) {
+	h := httpapi.NewRouter(httpapi.Options{
+		Roles: []string{roleAPI},
+		Routes: func(r gin.IRouter) {
+			r.GET("/partial", func(c *gin.Context) {
+				c.String(http.StatusOK, "partial")
+				panic("too late")
+			})
+		},
+	})
+
+	rec := do(t, h, http.MethodGet, "/partial")
+
+	assert.Equal(t, http.StatusOK, rec.Code, "status already sent")
+	assert.Equal(t, "partial", rec.Body.String(), "no problem appended to a started response")
 }
 
 func TestWriteProblemUsesGivenStatusAndDetail(t *testing.T) {

@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jangraefen/agenty/server/internal/httpapi"
+	"github.com/jangraefen/agenty/server/internal/roles"
 )
 
 // contractPath is the OpenAPI contract the server implements (ARCHITECTURE §13.1).
@@ -157,8 +158,19 @@ func TestServerServesOnlyContractRoutes(t *testing.T) {
 func TestGeneratedEnumsValidateValues(t *testing.T) {
 	assert.True(t, httpapi.HealthStatusOk.Valid(), "HealthStatusOk")
 	assert.False(t, httpapi.HealthStatus("degraded").Valid(), "unknown health status")
+	assert.False(t, httpapi.HealthRoles("gateway").Valid(), "unknown role")
 	assert.True(t, httpapi.ReadinessStatusReady.Valid(), "ReadinessStatusReady")
 	assert.False(t, httpapi.ReadinessStatus("starting").Valid(), "unknown readiness status")
+}
+
+// TestHealthRolesMatchProcessRoles checks that the roles the contract
+// declares for /healthz are exactly the roles the process can run.
+func TestHealthRolesMatchProcessRoles(t *testing.T) {
+	declared := []string{string(httpapi.HealthRolesApi), string(httpapi.HealthRolesWorker), string(httpapi.HealthRolesScheduler)}
+	assert.ElementsMatch(t, roles.Strings(roles.All()), declared, "declared roles")
+	for _, r := range roles.All() {
+		assert.True(t, httpapi.HealthRoles(r).Valid(), "role %q is not declared in the contract", r)
+	}
 }
 
 // TestContractParsingIgnoresPathItemKeys checks that keys a path item may carry

@@ -7,6 +7,27 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Defines values for HealthRoles.
+const (
+	HealthRolesApi       HealthRoles = "api"
+	HealthRolesScheduler HealthRoles = "scheduler"
+	HealthRolesWorker    HealthRoles = "worker"
+)
+
+// Valid indicates whether the value is a known member of the HealthRoles enum.
+func (e HealthRoles) Valid() bool {
+	switch e {
+	case HealthRolesApi:
+		return true
+	case HealthRolesScheduler:
+		return true
+	case HealthRolesWorker:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthStatus.
 const (
 	HealthStatusOk HealthStatus = "ok"
@@ -40,9 +61,12 @@ func (e ReadinessStatus) Valid() bool {
 // Health defines model for Health.
 type Health struct {
 	// Roles The roles this process runs (`api`, `worker`, `scheduler`), in canonical order.
-	Roles  []string     `json:"roles"`
-	Status HealthStatus `json:"status"`
+	Roles  []HealthRoles `json:"roles"`
+	Status HealthStatus  `json:"status"`
 }
+
+// HealthRoles defines model for Health.Roles.
+type HealthRoles string
 
 // HealthStatus defines model for Health.Status.
 type HealthStatus string

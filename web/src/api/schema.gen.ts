@@ -49,7 +49,7 @@ export interface components {
             /** @enum {string} */
             status: "ok";
             /** @description The roles this process runs (`api`, `worker`, `scheduler`), in canonical order. */
-            roles: string[];
+            roles: ("api" | "worker" | "scheduler")[];
         };
         Readiness: {
             /** @enum {string} */

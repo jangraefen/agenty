@@ -6,9 +6,9 @@ package httpapi
 
 import (
 	"context"
-	"io"
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"sync"
 
 	"github.com/gin-gonic/gin"
@@ -36,6 +36,9 @@ func NewRouter(opts Options) http.Handler {
 	releaseMode()
 	r := gin.New()
 	r.HandleMethodNotAllowed = true
+	// A trailing-slash variant of a route is not a resource: answer it with
+	// the 404 problem instead of Gin's default HTML redirect.
+	r.RedirectTrailingSlash = false
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -43,9 +46,16 @@ func NewRouter(opts Options) http.Handler {
 	// The request logger runs outside recovery, so it records the 500 that
 	// recovery writes after a panic.
 	r.Use(RequestLogger(logger, "/healthz", "/readyz"))
-	r.Use(gin.CustomRecoveryWithWriter(io.Discard, func(c *gin.Context, err any) {
+	// A nil writer stops Gin from formatting its own copy of the panic; the
+	// handler logs it with the stack through the (redacting) logger.
+	r.Use(gin.CustomRecoveryWithWriter(nil, func(c *gin.Context, err any) {
 		logger.ErrorContext(c.Request.Context(), "panic while handling request",
-			"method", c.Request.Method, "path", c.Request.URL.Path, "panic", err)
+			"method", c.Request.Method, "path", c.Request.URL.Path, "panic", err, "stack", string(debug.Stack()))
+		if c.Writer.Written() {
+			// The status line is already sent; a problem body would corrupt it.
+			c.Abort()
+			return
+		}
 		WriteProblem(c, http.StatusInternalServerError, "The server encountered an unexpected error.")
 	}))
 	r.NoRoute(func(c *gin.Context) {
@@ -55,7 +65,11 @@ func NewRouter(opts Options) http.Handler {
 		WriteProblem(c, http.StatusMethodNotAllowed, "The resource does not support this method.")
 	})
 
-	RegisterHandlersWithOptions(r, &server{roles: append([]string{}, opts.Roles...), ready: opts.Ready, logger: logger},
+	healthRoles := make([]HealthRoles, len(opts.Roles))
+	for i, role := range opts.Roles {
+		healthRoles[i] = HealthRoles(role)
+	}
+	RegisterHandlersWithOptions(r, &server{roles: healthRoles, ready: opts.Ready, logger: logger},
 		GinServerOptions{ErrorHandler: parameterProblem})
 	if opts.Routes != nil {
 		opts.Routes(r)
@@ -71,7 +85,7 @@ func parameterProblem(c *gin.Context, _ error, status int) {
 
 // server implements the operations of the contract in api/openapi.yaml.
 type server struct {
-	roles  []string
+	roles  []HealthRoles
 	ready  func(ctx context.Context) error
 	logger *slog.Logger
 }

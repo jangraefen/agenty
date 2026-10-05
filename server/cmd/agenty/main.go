@@ -205,6 +205,7 @@ func setUpRoles(ctx context.Context, cfg config.Server, logger *slog.Logger, sel
 				ln:      ln,
 				handler: httpapi.NewRouter(httpapi.Options{Roles: roles.Strings(selected), Ready: ready, Logger: logger}),
 				cfg:     cfg,
+				logger:  logger,
 			}
 		case roles.Worker, roles.Scheduler:
 			// No behavior yet; the role is active and stops cleanly. It needs
@@ -263,8 +264,9 @@ type apiComponent struct {
 	ln      net.Listener
 	handler http.Handler
 	cfg     config.Server
+	logger  *slog.Logger
 }
 
 func (a apiComponent) Run(ctx context.Context) error {
-	return httpapi.Serve(ctx, a.ln, a.handler, a.cfg.ShutdownTimeout)
+	return httpapi.Serve(ctx, a.ln, a.handler, a.logger, a.cfg.ShutdownTimeout)
 }

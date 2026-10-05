@@ -71,6 +71,7 @@ components:
           type: array
           items:
             type: string
+            enum: [api, worker, scheduler]
     Readiness:
       type: object
       additionalProperties: false

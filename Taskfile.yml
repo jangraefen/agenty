@@ -337,7 +337,7 @@ tasks:
         vars: { TIER: e2e }
 
   test:ui:
-    desc: Run web component and browser tests
+    desc: Run browser tests (Playwright) and accessibility checks (axe-core)
     cmds:
       - echo "test:ui - no tests yet"
 

@@ -9,9 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"regexp"
+	"runtime/debug"
+	"slices"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -19,7 +22,15 @@ import (
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
-const clientVersion = "0.0.0"
+// clientVersion is the version Agenty reports to MCP servers, which the
+// protocol requires during the handshake. It comes from the build: the module
+// version of a released build, "(devel)" for a local one.
+func clientVersion() string {
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
+		return info.Main.Version
+	}
+	return "(devel)"
+}
 
 var serverName = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
@@ -30,10 +41,11 @@ type Server struct {
 	Name    string
 	Command string
 	Args    []string
-	// Env is the environment of the server process, as "KEY=value" entries.
-	// Only PATH is inherited from Agenty's own environment, so Agenty's
-	// credentials never reach a server unless configured here.
-	Env []string
+	// Env is the environment of the server process. Only PATH is inherited
+	// from Agenty's own environment, so Agenty's credentials never reach a
+	// server unless configured here. A PATH set here replaces the inherited
+	// one.
+	Env map[string]string
 }
 
 // Session is a connection to one MCP server.
@@ -50,17 +62,30 @@ func Connect(ctx context.Context, srv Server) (*Session, error) {
 	if srv.Command == "" {
 		return nil, fmt.Errorf("mcptool: server %s: command is required", srv.Name)
 	}
+	return connect(ctx, srv.Name, &mcp.CommandTransport{Command: command(srv)})
+}
+
+// command builds the server process. It inherits only PATH, because servers
+// are often scripts that start an interpreter by name, such as npx starting
+// node, and that lookup happens inside the server process.
+//
+// TODO: run servers in a sandbox. Today a server runs with Agenty's user, files
+// and network; only its environment is restricted.
+func command(srv Server) *exec.Cmd {
 	cmd := exec.Command(srv.Command, srv.Args...) //nolint:gosec // G204: the operator configures which server to run.
 	// Later entries win, so a configured PATH replaces the inherited one.
-	cmd.Env = append([]string{"PATH=" + os.Getenv("PATH")}, srv.Env...)
-	return connect(ctx, srv.Name, &mcp.CommandTransport{Command: cmd})
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
+	for _, key := range slices.Sorted(maps.Keys(srv.Env)) {
+		cmd.Env = append(cmd.Env, key+"="+srv.Env[key])
+	}
+	return cmd
 }
 
 func connect(ctx context.Context, name string, t mcp.Transport) (*Session, error) {
 	if err := validateName(name); err != nil {
 		return nil, err
 	}
-	client := mcp.NewClient(&mcp.Implementation{Name: "agenty", Version: clientVersion}, nil)
+	client := mcp.NewClient(&mcp.Implementation{Name: "agenty", Version: clientVersion()}, nil)
 	session, err := client.Connect(ctx, t, nil)
 	if err != nil {
 		return nil, fmt.Errorf("mcptool: connect to %s: %w", name, err)
@@ -83,7 +108,10 @@ func (s *Session) Tools(ctx context.Context) ([]toolgateway.Tool, error) {
 		if err != nil {
 			return nil, fmt.Errorf("mcptool: %s: list tools: %w", s.name, err)
 		}
-		schema, _ := json.Marshal(t.InputSchema) // decoded from JSON, so it always marshals
+		schema, err := json.Marshal(t.InputSchema)
+		if err != nil {
+			return nil, fmt.Errorf("mcptool: %s: tool %s: input schema: %w", s.name, t.Name, err)
+		}
 		tools = append(tools, &tool{
 			session: s.session,
 			remote:  t.Name,
@@ -138,10 +166,16 @@ func (t *tool) Call(ctx context.Context, args json.RawMessage) (json.RawMessage,
 		return nil, errors.New(text)
 	}
 	if res.StructuredContent != nil {
-		out, _ := json.Marshal(res.StructuredContent) // decoded from JSON, so it always marshals
+		out, err := json.Marshal(res.StructuredContent)
+		if err != nil {
+			return nil, fmt.Errorf("mcptool: %s: structured content: %w", t.def.Name, err)
+		}
 		return out, nil
 	}
-	out, _ := json.Marshal(text) // a string always marshals
+	out, err := json.Marshal(text)
+	if err != nil {
+		return nil, fmt.Errorf("mcptool: %s: text content: %w", t.def.Name, err)
+	}
 	return out, nil
 }
 

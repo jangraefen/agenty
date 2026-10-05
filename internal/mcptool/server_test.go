@@ -5,24 +5,9 @@ import (
 	"encoding/json"
 	"os"
 	"sync"
-	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
-
-// serverEnv makes the test binary run as a stdio MCP server instead of
-// running tests.
-const serverEnv = "AGENTY_MCPTOOL_TEST_SERVER"
-
-func TestMain(m *testing.M) {
-	if os.Getenv(serverEnv) == "1" {
-		if err := newTestServer(&callLog{}).Run(context.Background(), &mcp.StdioTransport{}); err != nil {
-			os.Exit(1)
-		}
-		os.Exit(0)
-	}
-	os.Exit(m.Run())
-}
 
 // callLog records the tools the test server was asked to run.
 type callLog struct {

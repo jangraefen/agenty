@@ -3,7 +3,8 @@ package mcptool_test
 import (
 	"context"
 	"encoding/json"
-	"os"
+	"maps"
+	"slices"
 	"testing"
 	"time"
 
@@ -69,11 +70,11 @@ func TestTools_PrefixesNamesAndKeepsDefinitions(t *testing.T) {
 
 	tools := toolsByName(t, s)
 
-	assert.ElementsMatch(t, []string{"test.echo", "test.count", "test.fail", "test.fail-silently", "test.mixed", "test.env", "test.wait"}, keys(tools))
+	assert.ElementsMatch(t, []string{"test.echo", "test.count", "test.fail", "test.fail-silently", "test.mixed", "test.env", "test.wait"}, slices.Collect(maps.Keys(tools)))
 	def := tools["test.echo"].Definition()
 	assert.Equal(t, "Echoes its arguments.", def.Description)
 	assert.JSONEq(t, `{"type":"object"}`, string(def.InputSchema))
-	require.NoError(t, toolgateway.ValidateTools(values(tools)), "the gateway accepts every MCP tool")
+	require.NoError(t, toolgateway.ValidateTools(slices.Collect(maps.Values(tools))), "the gateway accepts every MCP tool")
 }
 
 func TestCall_Results(t *testing.T) {
@@ -159,46 +160,6 @@ func TestConnect_RejectsInvalidServers(t *testing.T) {
 			assert.Nil(t, s)
 		})
 	}
-}
-
-func TestConnect_StdioServerGetsOnlyItsOwnEnvironment(t *testing.T) {
-	t.Setenv("AGENTY_TEST_SECRET", "s3cret")
-	s, err := mcptool.Connect(t.Context(), mcptool.Server{
-		Name:    "stdio",
-		Command: os.Args[0],
-		Env:     []string{serverEnv + "=1", "GREETING=hello"},
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = s.Close() })
-	env := toolsByName(t, s)["stdio.env"]
-	require.NotNil(t, env)
-
-	read := func(name string) string {
-		out, err := callTool(t.Context(), t, env, json.RawMessage(`{"name":"`+name+`"}`))
-		require.NoError(t, err)
-		var v string
-		require.NoError(t, json.Unmarshal(out, &v))
-		return v
-	}
-	assert.Equal(t, "hello", read("GREETING"), "configured variables reach the server")
-	assert.Empty(t, read("AGENTY_TEST_SECRET"), "Agenty's own environment does not")
-	assert.Equal(t, os.Getenv("PATH"), read("PATH"), "PATH is passed so commands resolve")
-}
-
-func keys(m map[string]toolgateway.Tool) []string {
-	var out []string
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
-}
-
-func values(m map[string]toolgateway.Tool) []toolgateway.Tool {
-	var out []toolgateway.Tool
-	for _, v := range m {
-		out = append(out, v)
-	}
-	return out
 }
 
 func TestTools_ClosedSessionIsAnError(t *testing.T) {

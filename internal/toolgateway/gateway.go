@@ -79,6 +79,11 @@ type Config struct {
 	Approver Approver
 	// Audit records every decision, approval and result. It is required.
 	Audit Audit
+	// Secrets are credential values, at least 8 characters long, that must
+	// never reach the model or the audit log. The gateway replaces them with
+	// "[redacted]" in tool results, tool errors, denial reasons and audit
+	// records. Tools still receive their arguments unchanged.
+	Secrets []string
 }
 
 // Gateway checks, executes and records tool calls.
@@ -92,6 +97,7 @@ type Gateway struct {
 	policy       Policy
 	approver     Approver
 	audit        Audit
+	redact       *redactor
 
 	mu       sync.Mutex
 	attempts int
@@ -131,6 +137,11 @@ func New(cfg Config) (*Gateway, error) {
 	if err := ValidateTools(cfg.Tools); err != nil {
 		return nil, err
 	}
+	redact, err := newRedactor(cfg.Secrets)
+	if err != nil {
+		return nil, err
+	}
+	g.redact = redact
 	for _, tool := range cfg.Tools {
 		def := tool.Definition()
 		g.tools[def.Name] = tool
@@ -185,7 +196,7 @@ func (g *Gateway) Call(ctx context.Context, call ToolCall) (json.RawMessage, err
 
 	auditErr := g.record(ctx, rec)
 	if rec.Decision == Deny {
-		return nil, errors.Join(denied(call.Name, rec.Reason), auditErr)
+		return nil, errors.Join(denied(call.Name, g.redact.string(rec.Reason)), auditErr)
 	}
 	if auditErr != nil {
 		return nil, auditErr
@@ -203,7 +214,7 @@ func (g *Gateway) Call(ctx context.Context, call ToolCall) (json.RawMessage, err
 		}
 		auditErr := g.record(ctx, rec)
 		if rec.Decision == Deny {
-			return nil, errors.Join(denied(call.Name, rec.Reason), auditErr)
+			return nil, errors.Join(denied(call.Name, g.redact.string(rec.Reason)), auditErr)
 		}
 		if auditErr != nil {
 			return nil, auditErr
@@ -212,6 +223,7 @@ func (g *Gateway) Call(ctx context.Context, call ToolCall) (json.RawMessage, err
 
 	g.countExecuted(call.Name)
 	result, toolErr := tool.Call(ctx, call.Args)
+	result, toolErr = g.redact.json(result), g.redact.error(toolErr)
 
 	rec.Event, rec.Result = EventResult, result
 	if toolErr != nil {
@@ -285,7 +297,10 @@ func (g *Gateway) countExecuted(name string) {
 	g.executed.ByTool[name]++
 }
 
+// record writes rec to the audit log, with secrets redacted.
 func (g *Gateway) record(ctx context.Context, rec Record) error {
+	rec.Args, rec.Result = g.redact.json(rec.Args), g.redact.json(rec.Result)
+	rec.Reason, rec.Err, rec.Approver = g.redact.string(rec.Reason), g.redact.string(rec.Err), g.redact.string(rec.Approver)
 	if err := g.audit.Record(ctx, rec); err != nil {
 		return fmt.Errorf("%w: %s %s: %w", ErrAudit, rec.Event, rec.Tool, err)
 	}

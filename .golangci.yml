@@ -44,6 +44,11 @@ linters:
       require-specific: true
   exclusions:
     rules:
+      # Tests of secret handling need fake credentials; G101 still guards
+      # production code.
+      - path: _test\.go$
+        linters: [gosec]
+        text: G101
       - path: internal/toolgateway/[^/]+\.go$
         linters: [forbidigo]
         text: execute tools only through the tool gateway

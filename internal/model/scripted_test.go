@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jangraefen/agenty/internal/model"
+	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
 func TestScripted_ReplaysStepsInOrder(t *testing.T) {
@@ -67,7 +68,7 @@ func TestScripted_RecordsRequestCopies(t *testing.T) {
 	req := model.Request{
 		System:   "be brief",
 		Messages: msgs,
-		Tools:    []model.ToolDefinition{{Name: "tickets.read"}},
+		Tools:    []toolgateway.Definition{{Name: "tickets.read"}},
 	}
 
 	_, err := m.Generate(context.Background(), req)

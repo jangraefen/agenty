@@ -5,6 +5,8 @@ package model
 import (
 	"context"
 	"encoding/json"
+
+	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
 // Model generates the next assistant message for a conversation.
@@ -16,7 +18,8 @@ type Model interface {
 type Request struct {
 	System   string
 	Messages []Message
-	Tools    []ToolDefinition
+	// Tools are the tools the model may call, as offered by the gateway.
+	Tools []toolgateway.Definition
 }
 
 // Role says who wrote a message.
@@ -48,12 +51,4 @@ type ToolResult struct {
 	CallID  string
 	Content string
 	IsError bool
-}
-
-// ToolDefinition describes a tool the model may call.
-type ToolDefinition struct {
-	Name        string
-	Description string
-	// InputSchema is the JSON Schema of the tool arguments.
-	InputSchema json.RawMessage
 }

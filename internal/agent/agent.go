@@ -45,7 +45,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		return Result{}, err
 	}
 	h := cfg.Harness
-	tools := toolDefinitions(cfg.Gateway)
+	tools := cfg.Gateway.Definitions()
 	res := Result{Messages: []model.Message{{Role: model.RoleUser, Text: cfg.Input}}}
 
 	for step := 1; step <= h.Limits.MaxSteps; step++ {
@@ -97,14 +97,6 @@ func callTools(ctx context.Context, gw *toolgateway.Gateway, calls []model.ToolC
 		results = append(results, result)
 	}
 	return results, nil
-}
-
-func toolDefinitions(gw *toolgateway.Gateway) []model.ToolDefinition {
-	var defs []model.ToolDefinition
-	for _, d := range gw.Definitions() {
-		defs = append(defs, model.ToolDefinition{Name: d.Name, Description: d.Description, InputSchema: d.InputSchema})
-	}
-	return defs
 }
 
 func (cfg Config) validate() error {

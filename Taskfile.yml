@@ -298,7 +298,8 @@ tasks:
     cmds:
       # Remove the previous profile first so a failed run never leaves a stale one for check:coverage.
       - mkdir -p coverage && rm -f coverage/unit.out
-      - go test -count=1 -coverprofile=coverage/unit.out {{.GO_PACKAGES}}
+      # -race needs cgo and makes the coverage mode atomic, which covergate merges like set.
+      - go test -count=1 -race -coverprofile=coverage/unit.out {{.GO_PACKAGES}}
       - task: test:unit:web
 
   test:unit:web:
@@ -451,7 +452,9 @@ tasks:
             export DOCKER_HOST="${DOCKER_HOST:-$(docker context inspect --format '{{"{{"}}.Endpoints.docker.Host{{"}}"}}' 2>/dev/null)}"
             export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE="${TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE:-/var/run/docker.sock}"
           fi
-          go test -count=1 -tags {{.TIER}} {{if .COVER}}-coverprofile=coverage/{{.TIER}}.out {{end}}{{if .RUN}}-run '^{{.RUN}}$'{{end}} {{.GO_PACKAGES}}
+          # Build tags only add files, so a tagged tier also compiles every unit test; -short skips the
+          # expensive unit-only ones (they guard on testing.Short), which test:unit already runs in full.
+          go test -count=1 -race -short -tags {{.TIER}} {{if .COVER}}-coverprofile=coverage/{{.TIER}}.out {{end}}{{if .RUN}}-run '^{{.RUN}}$'{{end}} {{.GO_PACKAGES}}
         else
           echo "{{if .RUN}}test:milestone:{{.MILESTONE}}{{else}}test:{{.TIER}}{{end}} - no tests yet"
         fi

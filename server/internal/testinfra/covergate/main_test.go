@@ -89,6 +89,18 @@ func TestProfilesAreMergedAcrossTiers(t *testing.T) {
 	assert.Contains(t, stdout, "100.0%")
 }
 
+func TestAtomicProfilesFromTheRaceDetectorAreMerged(t *testing.T) {
+	// go test -race forces covermode atomic, whose counts exceed 1; a block counts as covered when any
+	// tier hit it, whatever the mode of each profile.
+	unit := "mode: atomic\n" + mod + "/a/a.go:1.1,2.1 5 42\n" + mod + "/a/a.go:3.1,4.1 5 0\n"
+	module := "mode: atomic\n" + mod + "/a/a.go:1.1,2.1 5 0\n" + mod + "/a/a.go:3.1,4.1 5 7\n"
+
+	code, stdout, stderr := gate(t, "default: 100\n", unit, module)
+
+	require.Equal(t, 0, code, "exit code (stdout: %q, stderr: %q)", stdout, stderr)
+	assert.Contains(t, stdout, "100.0%")
+}
+
 func TestBlocksRepeatedWithinOneProfileCountOnce(t *testing.T) {
 	// A concatenated profile may repeat a block; it must not inflate the statement count.
 	code, stdout, _ := gate(t, "default: 50\n", profile(

@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -82,52 +82,83 @@ func (f *fakeComponent) Run(ctx context.Context) error {
 }
 
 func TestRunStartsEveryComponentAndStopsOnCancel(t *testing.T) {
-	a, b := newFake(nil), newFake(nil)
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
+	synctest.Test(t, func(t *testing.T) {
+		a, b := newFake(nil), newFake(nil)
+		ctx, cancel := context.WithCancel(t.Context())
+		var (
+			err      error
+			returned bool
+		)
 
-	go func() { done <- roles.Run(ctx, map[roles.Role]roles.Component{roles.API: a, roles.Worker: b}) }()
-	<-a.started
-	<-b.started
-	cancel()
+		go func() {
+			err = roles.Run(ctx, map[roles.Role]roles.Component{roles.API: a, roles.Worker: b})
+			returned = true
+		}()
+		synctest.Wait()
 
-	select {
-	case err := <-done:
+		require.False(t, returned, "Run returned before cancel")
+		assert.True(t, isClosed(a.started), "api component not started")
+		assert.True(t, isClosed(b.started), "worker component not started")
+
+		cancel()
+		synctest.Wait()
+
+		require.True(t, returned, "Run did not return after cancel")
 		assert.NoError(t, err, "Run")
-	case <-time.After(5 * time.Second):
-		require.Fail(t, "Run did not return after cancel")
-	}
+	})
 }
 
 func TestRunStopsAllComponentsWhenOneFails(t *testing.T) {
-	boom := errors.New("boom")
-	failing, idle := newFake(boom), newFake(nil)
-	done := make(chan error, 1)
+	synctest.Test(t, func(t *testing.T) {
+		boom := errors.New("boom")
+		failing, idle := newFake(boom), newFake(nil)
+		var (
+			err      error
+			returned bool
+		)
 
-	go func() {
-		done <- roles.Run(context.Background(), map[roles.Role]roles.Component{roles.API: failing, roles.Worker: idle})
-	}()
+		go func() {
+			err = roles.Run(t.Context(), map[roles.Role]roles.Component{roles.API: failing, roles.Worker: idle})
+			returned = true
+		}()
+		synctest.Wait()
 
-	select {
-	case err := <-done:
+		require.True(t, returned, "Run did not return after a component failed")
 		require.ErrorIs(t, err, boom, "Run")
 		assert.ErrorContains(t, err, "api", "error does not name the failing role")
-	case <-time.After(5 * time.Second):
-		require.Fail(t, "Run did not return after a component failed")
-	}
+	})
 }
 
 func TestIdleRunsUntilCanceled(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		var (
+			err      error
+			returned bool
+		)
 
-	go func() { done <- roles.Idle().Run(ctx) }()
+		go func() {
+			err = roles.Idle().Run(ctx)
+			returned = true
+		}()
+		synctest.Wait()
+
+		require.False(t, returned, "Idle returned before cancel")
+
+		cancel()
+		synctest.Wait()
+
+		require.True(t, returned, "Idle did not return after cancel")
+		assert.NoError(t, err, "Idle.Run")
+	})
+}
+
+// isClosed reports whether ch is closed without blocking.
+func isClosed(ch <-chan struct{}) bool {
 	select {
-	case <-done:
-		require.Fail(t, "Idle returned before cancel")
-	case <-time.After(20 * time.Millisecond):
+	case <-ch:
+		return true
+	default:
+		return false
 	}
-	cancel()
-
-	assert.NoError(t, <-done, "Idle.Run")
 }

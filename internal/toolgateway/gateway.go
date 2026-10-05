@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 )
 
 // ErrDenied is returned for every call the gateway refuses to execute.
@@ -21,8 +23,16 @@ var ErrAudit = errors.New("audit record failed")
 
 // Tool executes one typed capability. Only the gateway calls it.
 type Tool interface {
-	Name() string
+	Definition() Definition
 	Call(ctx context.Context, args json.RawMessage) (json.RawMessage, error)
+}
+
+// Definition describes a tool to the model.
+type Definition struct {
+	Name        string
+	Description string
+	// InputSchema is the JSON Schema of the tool arguments.
+	InputSchema json.RawMessage
 }
 
 // ToolCall is a request, usually from the model, to call a tool.
@@ -33,6 +43,9 @@ type ToolCall struct {
 
 // Config configures a Gateway.
 type Config struct {
+	// RunID identifies the run the gateway serves. It is required and is
+	// carried by every audit record.
+	RunID string
 	// Granted names the tools the harness may call. Anything else is denied.
 	Granted []string
 	// Tools are the executors the gateway can resolve calls to.
@@ -43,18 +56,24 @@ type Config struct {
 
 // Gateway checks, executes and records tool calls.
 type Gateway struct {
+	runID   string
 	granted map[string]bool
 	tools   map[string]Tool
+	defs    []Definition
 	audit   Audit
 }
 
 // New returns a Gateway for cfg. The grants are copied, so later changes to
 // cfg do not affect the gateway.
 func New(cfg Config) (*Gateway, error) {
+	if cfg.RunID == "" {
+		return nil, errors.New("toolgateway: run id is required")
+	}
 	if cfg.Audit == nil {
 		return nil, errors.New("toolgateway: audit is required")
 	}
 	g := &Gateway{
+		runID:   cfg.RunID,
 		granted: make(map[string]bool, len(cfg.Granted)),
 		tools:   make(map[string]Tool, len(cfg.Tools)),
 		audit:   cfg.Audit,
@@ -65,20 +84,44 @@ func New(cfg Config) (*Gateway, error) {
 		}
 		g.granted[name] = true
 	}
-	for i, tool := range cfg.Tools {
-		if tool == nil {
-			return nil, fmt.Errorf("toolgateway: tool %d is nil", i)
-		}
-		name := tool.Name()
-		if name == "" {
-			return nil, fmt.Errorf("toolgateway: tool %d has no name", i)
-		}
-		if _, dup := g.tools[name]; dup {
-			return nil, fmt.Errorf("toolgateway: duplicate tool %q", name)
-		}
-		g.tools[name] = tool
+	if err := ValidateTools(cfg.Tools); err != nil {
+		return nil, err
 	}
+	for _, tool := range cfg.Tools {
+		def := tool.Definition()
+		g.tools[def.Name] = tool
+		if g.granted[def.Name] {
+			g.defs = append(g.defs, def)
+		}
+	}
+	slices.SortFunc(g.defs, func(a, b Definition) int { return strings.Compare(a.Name, b.Name) })
 	return g, nil
+}
+
+// ValidateTools checks that every tool is non-nil and has a unique, non-empty
+// name. New applies the same check.
+func ValidateTools(tools []Tool) error {
+	seen := make(map[string]bool, len(tools))
+	for i, tool := range tools {
+		if tool == nil {
+			return fmt.Errorf("toolgateway: tool %d is nil", i)
+		}
+		name := tool.Definition().Name
+		if name == "" {
+			return fmt.Errorf("toolgateway: tool %d has no name", i)
+		}
+		if seen[name] {
+			return fmt.Errorf("toolgateway: duplicate tool %q", name)
+		}
+		seen[name] = true
+	}
+	return nil
+}
+
+// Definitions describes the tools the run may call: granted and resolved,
+// sorted by name.
+func (g *Gateway) Definitions() []Definition {
+	return slices.Clone(g.defs)
 }
 
 // Call runs one tool call through the gateway. A denied call returns an
@@ -87,6 +130,7 @@ func New(cfg Config) (*Gateway, error) {
 // with that error.
 func (g *Gateway) Call(ctx context.Context, call ToolCall) (json.RawMessage, error) {
 	rec := Record{
+		RunID:  g.runID,
 		CallID: rand.Text(),
 		Event:  EventDecision,
 		Tool:   call.Name,

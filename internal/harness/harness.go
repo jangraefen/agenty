@@ -48,7 +48,7 @@ var slug = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
 // Load reads, parses and validates the harness file at path.
 func Load(path string) (*Harness, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // G304: reading the file the caller names is the purpose of Load.
 	if err != nil {
 		return nil, fmt.Errorf("load harness: %w", err)
 	}

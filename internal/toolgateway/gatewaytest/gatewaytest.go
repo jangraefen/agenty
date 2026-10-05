@@ -13,7 +13,9 @@ var _ toolgateway.Tool = (*Tool)(nil)
 
 // Tool is a fake tool that returns a fixed result and counts its calls.
 type Tool struct {
-	Name   string
+	Name string
+	// Effect defaults to read.
+	Effect toolgateway.Effect
 	Result json.RawMessage
 	Err    error
 	// OnCall, if set, runs at the start of every call.
@@ -26,8 +28,13 @@ type Tool struct {
 
 // Definition describes the fake with a generic object schema.
 func (t *Tool) Definition() toolgateway.Definition {
+	effect := t.Effect
+	if effect == "" {
+		effect = toolgateway.EffectRead
+	}
 	return toolgateway.Definition{
 		Name:        t.Name,
+		Effect:      effect,
 		Description: "fake " + t.Name,
 		InputSchema: json.RawMessage(`{"type":"object"}`),
 	}
@@ -71,4 +78,43 @@ func WithoutCallIDs(records []toolgateway.Record) []toolgateway.Record {
 		out = append(out, r)
 	}
 	return out
+}
+
+var _ toolgateway.Policy = (*Policy)(nil)
+
+// Policy is a fake policy. It returns the verdict configured for the tool,
+// allows tools without one, and records every input.
+type Policy struct {
+	Verdicts map[string]toolgateway.Verdict
+	Err      error
+
+	Inputs []toolgateway.PolicyInput
+}
+
+// Evaluate records in and returns the configured verdict or error.
+func (p *Policy) Evaluate(_ context.Context, in toolgateway.PolicyInput) (toolgateway.Verdict, error) {
+	p.Inputs = append(p.Inputs, in)
+	if p.Err != nil {
+		return toolgateway.Verdict{}, p.Err
+	}
+	if v, ok := p.Verdicts[in.Tool]; ok {
+		return v, nil
+	}
+	return toolgateway.Verdict{Decision: toolgateway.Allow}, nil
+}
+
+var _ toolgateway.Approver = (*Approver)(nil)
+
+// Approver is a fake approver that answers every request the same way.
+type Approver struct {
+	Approval toolgateway.Approval
+	Err      error
+
+	Requests []toolgateway.ApprovalRequest
+}
+
+// Approve records req and returns the configured approval or error.
+func (a *Approver) Approve(_ context.Context, req toolgateway.ApprovalRequest) (toolgateway.Approval, error) {
+	a.Requests = append(a.Requests, req)
+	return a.Approval, a.Err
 }

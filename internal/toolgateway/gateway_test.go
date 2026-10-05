@@ -20,11 +20,13 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 		wantErr string
 	}{
 		{"missing run id", toolgateway.Config{Audit: &gatewaytest.Audit{}}, "run id is required"},
-		{"nil audit", toolgateway.Config{RunID: runID, Tools: []toolgateway.Tool{read}}, "audit is required"},
-		{"nil tool", toolgateway.Config{RunID: runID, Tools: []toolgateway.Tool{nil}, Audit: &gatewaytest.Audit{}}, "tool 0 is nil"},
-		{"unnamed tool", toolgateway.Config{RunID: runID, Tools: []toolgateway.Tool{&gatewaytest.Tool{}}, Audit: &gatewaytest.Audit{}}, "tool 0 has no name"},
-		{"duplicate tool", toolgateway.Config{RunID: runID, Tools: []toolgateway.Tool{read, &gatewaytest.Tool{Name: "tickets.read"}}, Audit: &gatewaytest.Audit{}}, `duplicate tool "tickets.read"`},
-		{"empty grant", toolgateway.Config{RunID: runID, Granted: []string{""}, Audit: &gatewaytest.Audit{}}, "grant 0 is empty"},
+		{"missing policy", toolgateway.Config{RunID: runID, MaxToolCalls: 100, Audit: &gatewaytest.Audit{}}, "policy is required"},
+		{"zero tool call limit", toolgateway.Config{RunID: runID, Policy: &gatewaytest.Policy{}, Audit: &gatewaytest.Audit{}}, "max tool calls must be greater than 0"},
+		{"nil audit", toolgateway.Config{RunID: runID, MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Tools: []toolgateway.Tool{read}}, "audit is required"},
+		{"nil tool", toolgateway.Config{RunID: runID, MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Tools: []toolgateway.Tool{nil}, Audit: &gatewaytest.Audit{}}, "tool 0 is nil"},
+		{"unnamed tool", toolgateway.Config{RunID: runID, MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Tools: []toolgateway.Tool{&gatewaytest.Tool{}}, Audit: &gatewaytest.Audit{}}, "tool 0 has no name"},
+		{"duplicate tool", toolgateway.Config{RunID: runID, MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Tools: []toolgateway.Tool{read, &gatewaytest.Tool{Name: "tickets.read"}}, Audit: &gatewaytest.Audit{}}, `duplicate tool "tickets.read"`},
+		{"empty grant", toolgateway.Config{RunID: runID, MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Granted: []string{""}, Audit: &gatewaytest.Audit{}}, "grant 0 is empty"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -39,10 +41,12 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 func TestCall_PassesArgsAndReturnsResult(t *testing.T) {
 	read := &gatewaytest.Tool{Name: "tickets.read", Result: json.RawMessage(`{"title":"Printer on fire"}`)}
 	gw, err := toolgateway.New(toolgateway.Config{
-		RunID:   runID,
-		Granted: []string{"tickets.read"},
-		Tools:   []toolgateway.Tool{read},
-		Audit:   &gatewaytest.Audit{},
+		RunID:        runID,
+		MaxToolCalls: 100,
+		Policy:       &gatewaytest.Policy{},
+		Granted:      []string{"tickets.read"},
+		Tools:        []toolgateway.Tool{read},
+		Audit:        &gatewaytest.Audit{},
 	})
 	require.NoError(t, err)
 
@@ -59,10 +63,12 @@ func TestCall_GrantsAreFixedAtConstruction(t *testing.T) {
 	del := &gatewaytest.Tool{Name: "tickets.delete"}
 	granted := []string{"tickets.read"}
 	gw, err := toolgateway.New(toolgateway.Config{
-		RunID:   runID,
-		Granted: granted,
-		Tools:   []toolgateway.Tool{read, del},
-		Audit:   &gatewaytest.Audit{},
+		RunID:        runID,
+		MaxToolCalls: 100,
+		Policy:       &gatewaytest.Policy{},
+		Granted:      granted,
+		Tools:        []toolgateway.Tool{read, del},
+		Audit:        &gatewaytest.Audit{},
 	})
 	require.NoError(t, err)
 
@@ -76,10 +82,12 @@ func TestCall_GrantsAreFixedAtConstruction(t *testing.T) {
 func TestCall_EachCallGetsItsOwnCallID(t *testing.T) {
 	audit := &gatewaytest.Audit{}
 	gw, err := toolgateway.New(toolgateway.Config{
-		RunID:   runID,
-		Granted: []string{"tickets.read"},
-		Tools:   []toolgateway.Tool{&gatewaytest.Tool{Name: "tickets.read"}},
-		Audit:   audit,
+		RunID:        runID,
+		MaxToolCalls: 100,
+		Policy:       &gatewaytest.Policy{},
+		Granted:      []string{"tickets.read"},
+		Tools:        []toolgateway.Tool{&gatewaytest.Tool{Name: "tickets.read"}},
+		Audit:        audit,
 	})
 	require.NoError(t, err)
 
@@ -94,8 +102,10 @@ func TestCall_EachCallGetsItsOwnCallID(t *testing.T) {
 
 func TestDefinitions_OnlyGrantedAndResolvedToolsSortedByName(t *testing.T) {
 	gw, err := toolgateway.New(toolgateway.Config{
-		RunID:   runID,
-		Granted: []string{"tickets.read", "tickets.label", "tickets.ghost"},
+		RunID:        runID,
+		MaxToolCalls: 100,
+		Policy:       &gatewaytest.Policy{},
+		Granted:      []string{"tickets.read", "tickets.label", "tickets.ghost"},
 		Tools: []toolgateway.Tool{
 			&gatewaytest.Tool{Name: "tickets.read"},
 			&gatewaytest.Tool{Name: "tickets.delete"},
@@ -111,16 +121,19 @@ func TestDefinitions_OnlyGrantedAndResolvedToolsSortedByName(t *testing.T) {
 	assert.Equal(t, "tickets.label", defs[0].Name)
 	assert.Equal(t, "tickets.read", defs[1].Name)
 	assert.Equal(t, "fake tickets.read", defs[1].Description)
+	assert.Equal(t, toolgateway.EffectRead, defs[1].Effect)
 	assert.JSONEq(t, `{"type":"object"}`, string(defs[1].InputSchema))
 }
 
 func TestCall_RecordsCarryTheRunID(t *testing.T) {
 	audit := &gatewaytest.Audit{}
 	gw, err := toolgateway.New(toolgateway.Config{
-		RunID:   "run-42",
-		Granted: []string{"tickets.read"},
-		Tools:   []toolgateway.Tool{&gatewaytest.Tool{Name: "tickets.read"}},
-		Audit:   audit,
+		RunID:        "run-42",
+		MaxToolCalls: 100,
+		Policy:       &gatewaytest.Policy{},
+		Granted:      []string{"tickets.read"},
+		Tools:        []toolgateway.Tool{&gatewaytest.Tool{Name: "tickets.read"}},
+		Audit:        audit,
 	})
 	require.NoError(t, err)
 
@@ -147,6 +160,7 @@ func TestValidateTools(t *testing.T) {
 		{"nil tool", []toolgateway.Tool{read, nil}, "tool 1 is nil"},
 		{"unnamed tool", []toolgateway.Tool{&gatewaytest.Tool{}}, "tool 0 has no name"},
 		{"duplicate tool", []toolgateway.Tool{read, &gatewaytest.Tool{Name: "tickets.read"}}, `duplicate tool "tickets.read"`},
+		{"invalid effect", []toolgateway.Tool{&gatewaytest.Tool{Name: "tickets.purge", Effect: "destroy"}}, `tool "tickets.purge" has invalid effect "destroy"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -11,19 +11,25 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jangraefen/agenty/internal/dotenv"
 	"github.com/jangraefen/agenty/internal/model"
 	"github.com/jangraefen/agenty/internal/model/anthropic"
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
 // TestSmoke_RealAPI checks the adapter against the real API: a tool call, its
-// result, and a final answer. It is never part of gating runs; it runs only
-// with AGENTY_ANTHROPIC_SMOKE=1 and ANTHROPIC_API_KEY set. AGENTY_ANTHROPIC_MODEL
-// picks the model.
+// result, and a final answer. It is never part of gating runs: it runs only
+// with AGENTY_ANTHROPIC_SMOKE=1 set in the real environment. Only then is the
+// .env file at the module root loaded, which may provide ANTHROPIC_API_KEY and
+// AGENTY_ANTHROPIC_MODEL.
 func TestSmoke_RealAPI(t *testing.T) {
+	if os.Getenv("AGENTY_ANTHROPIC_SMOKE") != "1" {
+		t.Skip("set AGENTY_ANTHROPIC_SMOKE=1 to run against the real API")
+	}
+	require.NoError(t, dotenv.LoadModuleRoot())
 	key := os.Getenv("ANTHROPIC_API_KEY")
-	if os.Getenv("AGENTY_ANTHROPIC_SMOKE") != "1" || key == "" {
-		t.Skip("set AGENTY_ANTHROPIC_SMOKE=1 and ANTHROPIC_API_KEY to run against the real API")
+	if key == "" {
+		t.Skip("set ANTHROPIC_API_KEY, in the environment or in .env, to run against the real API")
 	}
 	m, err := anthropic.New(anthropic.Config{
 		APIKey:    key,

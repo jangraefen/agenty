@@ -4,6 +4,7 @@ go 1.27
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.78.0
+	github.com/joho/godotenv v1.5.1
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/open-policy-agent/opa v1.21.1
 	github.com/stretchr/testify v1.12.1

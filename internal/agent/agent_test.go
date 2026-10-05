@@ -235,8 +235,7 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			a, err := agent.New(tt.cfg)
-			require.Error(t, err)
-			assert.ErrorContains(t, err, tt.wantErr)
+			require.ErrorContains(t, err, tt.wantErr)
 			assert.Nil(t, a)
 		})
 	}
@@ -251,7 +250,7 @@ func TestRun_RejectsEmptyInput(t *testing.T) {
 
 	res, err := a.Run(context.Background(), "")
 
-	assert.ErrorContains(t, err, "input is required")
+	require.ErrorContains(t, err, "input is required")
 	assert.Zero(t, res)
 	assert.Empty(t, m.Requests())
 	assert.Empty(t, f.audit.Records)

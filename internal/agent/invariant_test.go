@@ -1,16 +1,6 @@
 package agent_test
 
 import (
-	"go/ast"
-	"go/importer"
-	"go/parser"
-	"go/token"
-	"go/types"
-	"os"
-	"path/filepath"
-	"slices"
-	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -20,10 +10,10 @@ import (
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
-const toolgatewayPath = "github.com/jangraefen/agenty/internal/toolgateway"
-
 // TestInvariant_SideEffectsOnlyViaGateway guards trust-model guarantee 2:
 // every side effect goes through the gateway; nothing else executes tools.
+// This test checks it at run time; the forbidigo rule in .golangci.yml checks
+// it statically: outside internal/toolgateway, no code may call Tool.Call.
 func TestInvariant_SideEffectsOnlyViaGateway(t *testing.T) {
 	t.Run("every tool execution is a gateway call", func(t *testing.T) {
 		f := newFixture(5)
@@ -47,95 +37,6 @@ func TestInvariant_SideEffectsOnlyViaGateway(t *testing.T) {
 		assert.Zero(t, f.del.Calls)
 		assert.Equal(t, 3, f.toolCalls())
 	})
-
-	t.Run("agent code never calls a tool directly", func(t *testing.T) {
-		dir, err := os.Getwd()
-		require.NoError(t, err)
-		paths, err := filepath.Glob(filepath.Join(dir, "*.go"))
-		require.NoError(t, err)
-		sources := map[string]string{}
-		for _, p := range paths {
-			if strings.HasSuffix(p, "_test.go") {
-				continue
-			}
-			src, err := os.ReadFile(p)
-			require.NoError(t, err)
-			sources[p] = string(src)
-		}
-		require.NotEmpty(t, sources)
-
-		assert.Empty(t, directToolUses(t, sources),
-			"tools may only be handed to the gateway, never called by the agent")
-	})
-
-	t.Run("checker detects direct tool use", func(t *testing.T) {
-		dir, err := os.Getwd()
-		require.NoError(t, err)
-		src := `package leak
-
-import (
-	"context"
-
-	"` + toolgatewayPath + `"
-)
-
-func bypass(ctx context.Context, tools []toolgateway.Tool, gw *toolgateway.Gateway) {
-	_, _ = gw.Call(ctx, toolgateway.ToolCall{})
-	_ = tools[0].Definition()
-	call := tools[0].Call
-	_, _ = call(ctx, nil)
-}
-`
-		uses := directToolUses(t, map[string]string{filepath.Join(dir, "leak.go"): src})
-		assert.Equal(t, []string{"leak.go:11: Definition", "leak.go:12: Call"}, uses)
-	})
-}
-
-// Source importing type-checks dependencies from scratch; share one importer
-// (and the file set it is bound to) so dependencies are checked only once.
-var (
-	checkFset     = token.NewFileSet()
-	checkImporter = importer.ForCompiler(checkFset, "source", nil)
-)
-
-// directToolUses type-checks the given sources as one package and lists every
-// selection of a toolgateway.Tool method, as "file:line: method".
-func directToolUses(t *testing.T, sources map[string]string) []string {
-	t.Helper()
-	fset := checkFset
-	var files []*ast.File
-	for path, src := range sources {
-		f, err := parser.ParseFile(fset, path, src, 0)
-		require.NoError(t, err)
-		files = append(files, f)
-	}
-	info := &types.Info{Selections: map[*ast.SelectorExpr]*types.Selection{}}
-	conf := types.Config{Importer: checkImporter}
-	pkg, err := conf.Check(files[0].Name.Name, fset, files, info)
-	require.NoError(t, err)
-
-	var tool *types.Interface
-	for _, imp := range pkg.Imports() {
-		if imp.Path() == toolgatewayPath {
-			tool = imp.Scope().Lookup("Tool").Type().Underlying().(*types.Interface)
-		}
-	}
-	require.NotNil(t, tool, "package under check must import toolgateway")
-
-	var uses []string
-	for expr, sel := range info.Selections {
-		if sel.Kind() == types.FieldVal {
-			continue
-		}
-		recv := sel.Recv()
-		if !types.Implements(recv, tool) && !types.Implements(types.NewPointer(recv), tool) {
-			continue
-		}
-		pos := fset.Position(expr.Sel.Pos())
-		uses = append(uses, filepath.Base(pos.Filename)+":"+strconv.Itoa(pos.Line)+": "+sel.Obj().Name())
-	}
-	slices.Sort(uses)
-	return uses
 }
 
 // TestInvariant_ModelIsNotTrusted guards trust-model guarantee 1: whatever

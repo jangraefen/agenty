@@ -69,7 +69,7 @@ func TestCall_GrantsAreFixedAtConstruction(t *testing.T) {
 	granted[0] = "tickets.delete"
 	_, err = gw.Call(context.Background(), toolgateway.ToolCall{Name: "tickets.delete"})
 
-	assert.ErrorIs(t, err, toolgateway.ErrDenied)
+	require.ErrorIs(t, err, toolgateway.ErrDenied)
 	assert.Zero(t, del.Calls)
 }
 

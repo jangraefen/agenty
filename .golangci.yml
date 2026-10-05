@@ -1,0 +1,44 @@
+version: "2"
+
+linters:
+  # standard: errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+  enable:
+    - errorlint # wrapped errors are compared with errors.Is/As
+    - forbidigo # trust-model rules, below
+    - gosec # security-sensitive patterns
+    - misspell
+    - nolintlint # every //nolint names its linter and says why
+    - testifylint # testify usage, e.g. require vs assert
+    - unconvert
+  settings:
+    forbidigo:
+      analyze-types: true
+      forbid:
+        # Trust model guarantee 2: every side effect goes through the gateway.
+        # Only internal/toolgateway may execute a tool.
+        - pattern: ^toolgateway\.Tool\.Call$
+          msg: execute tools only through the tool gateway (trust model guarantee 2)
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+  exclusions:
+    rules:
+      - path: internal/toolgateway/[^/]+\.go$
+        linters: [forbidigo]
+        text: execute tools only through the tool gateway
+
+issues:
+  # Show every finding; the defaults hide repeats and all but one per line.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  uniq-by-line: false
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/jangraefen/agenty

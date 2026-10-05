@@ -44,7 +44,7 @@ func TestInvariant_DefaultDeny(t *testing.T) {
 			result, err := gw.Call(context.Background(), toolgateway.ToolCall{Name: tt.call})
 
 			require.ErrorIs(t, err, toolgateway.ErrDenied)
-			assert.ErrorContains(t, err, tt.reason)
+			require.ErrorContains(t, err, tt.reason)
 			assert.Nil(t, result)
 			assert.Zero(t, read.Calls, "denied call must not execute any tool")
 			assert.Zero(t, del.Calls, "denied call must not execute any tool")
@@ -147,7 +147,7 @@ func TestInvariant_EveryCallAudited(t *testing.T) {
 				require.NoError(t, err)
 			}
 			for _, target := range tt.wantErrIs {
-				assert.ErrorIs(t, err, target)
+				require.ErrorIs(t, err, target)
 			}
 			assert.Equal(t, tt.wantResult, result)
 			assert.Equal(t, tt.wantCalls, read.Calls+del.Calls)

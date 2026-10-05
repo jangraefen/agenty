@@ -87,9 +87,8 @@ func TestLoad_InvalidDocument(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.file, func(t *testing.T) {
 			got, err := harness.Load(filepath.Join("testdata", "invalid", tt.file))
-			require.Error(t, err)
+			require.ErrorContains(t, err, tt.wantContains)
 			assert.Nil(t, got)
-			assert.ErrorContains(t, err, tt.wantContains)
 			assert.Empty(t, fieldsOf(err), "document errors are not field errors")
 		})
 	}
@@ -113,7 +112,7 @@ func fieldsOf(err error) []string {
 	var fields []string
 	var walk func(error)
 	walk = func(e error) {
-		if fe, ok := e.(*harness.FieldError); ok {
+		if fe, ok := e.(*harness.FieldError); ok { //nolint:errorlint // the walk needs the exact node; errors.As would match wrappers too
 			fields = append(fields, fe.Field)
 			return
 		}

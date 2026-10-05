@@ -45,6 +45,7 @@ These choices carry over from earlier exploration and are settled:
 - **MCP** as the way tools are reached.
 - **`log/slog`** for logging, with `charmbracelet/log` as handler.
 - **testify** for Go test assertions.
+- **golangci-lint** for static checks, including trust-model rules (e.g. only the Tool Gateway may execute a tool).
 
 ## Testing
 

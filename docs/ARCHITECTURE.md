@@ -58,9 +58,9 @@ Each decision lists what was chosen, why, and what was rejected. All decided 202
 | D19 | **Logging via `log/slog` API with `charmbracelet/log` as handler.** | Maintainer preference; slog keeps libraries consistent and the handler swappable. | Raw charm logger API throughout; zap/zerolog. |
 | D20 | **Testing: five tiers, coverage and mutation gates, run through Task locally and in CI.** | AI-written code needs strong, honest tests; one set of commands for both environments. | Separate CI-only scripts. |
 | D21 | **Cron parsing with `gronx`**. | Maintained, MIT. | `robfig/cron` (inactive since mid-2024). |
+| D22 | **Biome** for TypeScript linting and formatting (decided 2026-10-05). | One fast tool for lint and format; configuration already in the repository. | ESLint + Prettier. |
 | D23 | **CI on GitHub Actions with a pull-request workflow; squash merge only** (decided 2026-10-05). | Repository is public, so standard runners are free; required checks keep `main` green; squash merge gives one conventional commit per PR. | Local-only gates; rebase or merge commits. |
 | D24 | **Gin** as the HTTP framework for the public API (decided 2026-10-05). | Maintainer preference; mature and widely used; `oapi-codegen` generates Gin server code; supports streaming for server-sent events. | Standard library `net/http` routing; Echo; Chi. |
-| D22 | **Biome** for TypeScript linting and formatting (decided 2026-10-05). | One fast tool for lint and format; configuration already in the repository. | ESLint + Prettier. |
 | D25 | **pnpm, never npm,** as the package manager for `web/` and any Node tooling (decided 2026-10-05). | Maintainer decision; strict `node_modules` layout, content-addressable store, dependency build scripts blocked by default. | npm. |
 | D26 | **testify** for Go test assertions: `assert`, `require`, `mock`, and `suite` (decided 2026-10-05). | Readable assertions and informative failure diffs for AI-written tests; `require` for preconditions where a test cannot continue, `assert` for independent checks. | Standard library `testing` only (hand-written `if … { t.Fatalf }` checks). |
 
@@ -439,11 +439,11 @@ Most code is AI-written; tests are the primary correctness guarantee. Developmen
 
 | Tier | Scope | Tools |
 |---|---|---|
-| Unit | Functions and types | Go `testing` with testify; Vitest |
+| Unit | Functions and types; web components | Go `testing` with testify; Vitest with Testing Library |
 | Module | One package/component in isolation with hand-written fakes or `testify/mock` at boundaries; `server` against real Postgres with fake sandbox and fake model; `agenty-sandbox` via its protocol against real Docker + `runsc` | testcontainers-go, testify |
 | Integration | All components in Docker Compose: server, sandbox, Postgres, fake OpenAI-compatible model server, mock MCP servers (remote and local), Dex as test IdP | Go test harness |
 | E2E | Both reference scenarios (VISION §9) end to end via the public API | Same stack, scripted model |
-| UI | Components (Vitest + Testing Library); browser flows against the integration stack (build harness, chat, approve, inspect trace); accessibility | Playwright, axe-core |
+| UI | Browser flows against the integration stack (build harness, chat, approve, inspect trace); accessibility | Playwright, axe-core |
 
 ### 15.2 Deterministic models
 

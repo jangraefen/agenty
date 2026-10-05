@@ -28,6 +28,27 @@ func TestRunRejectsUnknownFlag(t *testing.T) {
 	assert.NotZero(t, stderr.Len(), "stderr is empty, want an error message")
 }
 
+func TestRunPrintsUsageOnHelp(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "short flag", args: []string{"-h"}},
+		{name: "long flag", args: []string{"--help"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+
+			code := run(tt.args, &stdout, &stderr)
+
+			assert.Equal(t, 0, code, "exit code")
+			assert.Contains(t, stderr.String(), "Usage", "stderr must contain usage text")
+			assert.Empty(t, stdout.String(), "stdout")
+		})
+	}
+}
+
 func TestRunWithoutArgumentsPrintsUsage(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 

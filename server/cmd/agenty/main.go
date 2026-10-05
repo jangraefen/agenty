@@ -43,9 +43,26 @@ func run(args []string, stdout, stderr io.Writer) int {
 		// Restore the default signal behavior so that a second signal
 		// terminates the process while the graceful shutdown waits.
 		stop()
-		slog.InfoContext(context.WithoutCancel(ctx), "shutting down gracefully; send the signal again to force exit")
+		// ctx is also canceled by the deferred stop when runContext returns
+		// without a signal, for example after --version or a failure.
+		if sig, ok := shutdownSignal(ctx); ok {
+			slog.InfoContext(context.WithoutCancel(ctx), "shutting down gracefully; send the signal again to force exit", "signal", sig)
+		}
 	}()
-	return runContext(ctx, args, stdout, stderr, options{})
+	return runContext(ctx, args, stdout, stderr, options{setDefaultLogger: slog.SetDefault})
+}
+
+// shutdownSignal reports the name of the signal that canceled ctx, a context
+// from signal.NotifyContext. ok is false when ctx was canceled by its stop
+// function instead.
+func shutdownSignal(ctx context.Context) (sig string, ok bool) {
+	cause := context.Cause(ctx)
+	// The signal cause matches context.Canceled under errors.Is, so only the
+	// identity comparison tells the plain cancellation by stop apart.
+	if cause == nil || cause == context.Canceled {
+		return "", false
+	}
+	return strings.TrimSuffix(cause.Error(), " signal received"), true
 }
 
 // options adjust runContext for tests.
@@ -56,6 +73,10 @@ type options struct {
 	onStarted func(net.Addr)
 	// migrations, if set, replaces the migrations embedded in the binary.
 	migrations fs.FS
+	// setDefaultLogger, if set, is called with the server logger before the
+	// roles start. run sets it to slog.SetDefault; tests leave it nil so that
+	// they do not replace the process-wide default logger.
+	setDefaultLogger func(*slog.Logger)
 }
 
 // runContext is run with an explicit lifetime: the server stops when ctx is
@@ -73,6 +94,9 @@ func runContext(ctx context.Context, args []string, stdout, stderr io.Writer, op
 		"comma-separated roles to start: any of api, worker, scheduler")
 
 	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 	if *showVersion {
@@ -105,7 +129,9 @@ func runContext(ctx context.Context, args []string, stdout, stderr io.Writer, op
 	}
 	// Libraries and the standard log package log through the redacting
 	// logger, too.
-	slog.SetDefault(logger)
+	if opts.setDefaultLogger != nil {
+		opts.setDefaultLogger(logger)
+	}
 	if err := serve(ctx, cfg, logger, selected, opts); err != nil {
 		logger.ErrorContext(context.WithoutCancel(ctx), "agenty failed", "error", err)
 		return 1

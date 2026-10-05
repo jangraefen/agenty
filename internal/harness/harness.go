@@ -38,6 +38,8 @@ type FieldError struct {
 	Msg   string
 }
 
+var _ error = (*FieldError)(nil)
+
 func (e *FieldError) Error() string {
 	return fmt.Sprintf("field %q: %s", e.Field, e.Msg)
 }

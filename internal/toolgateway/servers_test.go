@@ -133,7 +133,13 @@ func TestNew_ValidatesBeforeStartingServers(t *testing.T) {
 	}{
 		{"invalid config", func(cfg *toolgateway.Config) { cfg.Policy = nil }, "policy is required"},
 		{"nil server", func(cfg *toolgateway.Config) { cfg.Servers["tickets"] = nil }, "server tickets is nil"},
-		{"invalid server name", func(cfg *toolgateway.Config) { cfg.Servers["my_tickets"] = &gatewaytest.Server{} }, `server name "my_tickets" must be`},
+		{"underscore in a server name", func(cfg *toolgateway.Config) { cfg.Servers["my_tickets"] = &gatewaytest.Server{} }, `server name "my_tickets" must be`},
+		{"empty server name", func(cfg *toolgateway.Config) { cfg.Servers[""] = &gatewaytest.Server{} }, `server name "" must be`},
+		{"server name with a dot", func(cfg *toolgateway.Config) { cfg.Servers["tickets.v2"] = &gatewaytest.Server{} }, `server name "tickets.v2" must be`},
+		{"uppercase server name", func(cfg *toolgateway.Config) { cfg.Servers["Tickets"] = &gatewaytest.Server{} }, `server name "Tickets" must be`},
+		{"double hyphen", func(cfg *toolgateway.Config) { cfg.Servers["a--b"] = &gatewaytest.Server{} }, `server name "a--b" must be`},
+		{"leading hyphen", func(cfg *toolgateway.Config) { cfg.Servers["-tickets"] = &gatewaytest.Server{} }, `server name "-tickets" must be`},
+		{"trailing hyphen", func(cfg *toolgateway.Config) { cfg.Servers["tickets-"] = &gatewaytest.Server{} }, `server name "tickets-" must be`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

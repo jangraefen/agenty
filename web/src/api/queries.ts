@@ -53,3 +53,33 @@ export function runsQuery(api: Api, workspace: string, filters: RunFilters) {
         : false,
   });
 }
+
+export function runQuery(api: Api, workspace: string, id: string) {
+  return queryOptions({
+    queryKey: ["workspaces", workspace, "run", id],
+    queryFn: () =>
+      unwrap(
+        api.GET("/v1/workspaces/{workspace}/runs/{id}", { params: { path: { workspace, id } } }),
+      ),
+  });
+}
+
+export function transcriptQuery(api: Api, workspace: string, id: string) {
+  return queryOptions({
+    queryKey: ["workspaces", workspace, "run", id, "transcript"],
+    queryFn: () =>
+      unwrap(
+        api.GET("/v1/workspaces/{workspace}/runs/{id}/transcript", {
+          params: { path: { workspace, id } },
+        }),
+      ),
+  });
+}
+
+export function approvalsQuery(api: Api, workspace: string) {
+  return queryOptions({
+    queryKey: ["workspaces", workspace, "approvals"],
+    queryFn: () =>
+      unwrap(api.GET("/v1/workspaces/{workspace}/approvals", { params: { path: { workspace } } })),
+  });
+}

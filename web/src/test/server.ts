@@ -20,3 +20,43 @@ export function meHandler(me: Schemas["Me"]) {
     return HttpResponse.json(me);
   });
 }
+
+// A server-sent event stream that tests write to as the run goes.
+export function liveEventStream() {
+  const encoder = new TextEncoder();
+  let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+  const body = new ReadableStream<Uint8Array>({
+    start(c) {
+      controller = c;
+    },
+  });
+  function stream(): ReadableStreamDefaultController<Uint8Array> {
+    if (controller === undefined) {
+      throw new Error("the stream has not started");
+    }
+    return controller;
+  }
+  return {
+    response: () => new HttpResponse(body, { headers: { "Content-Type": "text/event-stream" } }),
+    send(event: string, data: unknown) {
+      stream().enqueue(encoder.encode(`event:${event}\ndata:${JSON.stringify(data)}\n\n`));
+    },
+    close() {
+      stream().close();
+    },
+    fail() {
+      stream().error(new TypeError("network error"));
+    },
+  };
+}
+
+// A finished run's event stream: these events, then the end.
+export function eventStream(events: { event: string; data: unknown }[]) {
+  const live = liveEventStream();
+  const response = live.response();
+  for (const { event, data } of events) {
+    live.send(event, data);
+  }
+  live.close();
+  return response;
+}

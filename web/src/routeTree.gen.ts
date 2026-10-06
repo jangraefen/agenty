@@ -14,7 +14,8 @@ import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
 import { Route as AuthedWWorkspaceRouteImport } from './routes/_authed/w/$workspace'
 import { Route as AuthedWWorkspaceIndexRouteImport } from './routes/_authed/w/$workspace/index'
-import { Route as AuthedWWorkspaceRunsRouteImport } from './routes/_authed/w/$workspace/runs'
+import { Route as AuthedWWorkspaceRunsIndexRouteImport } from './routes/_authed/w/$workspace/runs/index'
+import { Route as AuthedWWorkspaceRunsRunIdRouteImport } from './routes/_authed/w/$workspace/runs/$runId'
 
 const AuthedRoute = AuthedRouteImport.update({
   id: '/_authed',
@@ -40,24 +41,33 @@ const AuthedWWorkspaceIndexRoute = AuthedWWorkspaceIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AuthedWWorkspaceRoute,
 } as any)
-const AuthedWWorkspaceRunsRoute = AuthedWWorkspaceRunsRouteImport.update({
-  id: '/runs',
-  path: '/runs',
-  getParentRoute: () => AuthedWWorkspaceRoute,
-} as any)
+const AuthedWWorkspaceRunsIndexRoute =
+  AuthedWWorkspaceRunsIndexRouteImport.update({
+    id: '/runs/',
+    path: '/runs/',
+    getParentRoute: () => AuthedWWorkspaceRoute,
+  } as any)
+const AuthedWWorkspaceRunsRunIdRoute =
+  AuthedWWorkspaceRunsRunIdRouteImport.update({
+    id: '/runs/$runId',
+    path: '/runs/$runId',
+    getParentRoute: () => AuthedWWorkspaceRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AuthedIndexRoute
   '/sign-in': typeof SignInRoute
   '/w/$workspace': typeof AuthedWWorkspaceRouteWithChildren
-  '/w/$workspace/runs': typeof AuthedWWorkspaceRunsRoute
   '/w/$workspace/': typeof AuthedWWorkspaceIndexRoute
+  '/w/$workspace/runs/$runId': typeof AuthedWWorkspaceRunsRunIdRoute
+  '/w/$workspace/runs/': typeof AuthedWWorkspaceRunsIndexRoute
 }
 export interface FileRoutesByTo {
   '/sign-in': typeof SignInRoute
   '/': typeof AuthedIndexRoute
-  '/w/$workspace/runs': typeof AuthedWWorkspaceRunsRoute
   '/w/$workspace': typeof AuthedWWorkspaceIndexRoute
+  '/w/$workspace/runs/$runId': typeof AuthedWWorkspaceRunsRunIdRoute
+  '/w/$workspace/runs': typeof AuthedWWorkspaceRunsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -65,23 +75,35 @@ export interface FileRoutesById {
   '/sign-in': typeof SignInRoute
   '/_authed/': typeof AuthedIndexRoute
   '/_authed/w/$workspace': typeof AuthedWWorkspaceRouteWithChildren
-  '/_authed/w/$workspace/runs': typeof AuthedWWorkspaceRunsRoute
   '/_authed/w/$workspace/': typeof AuthedWWorkspaceIndexRoute
+  '/_authed/w/$workspace/runs/$runId': typeof AuthedWWorkspaceRunsRunIdRoute
+  '/_authed/w/$workspace/runs/': typeof AuthedWWorkspaceRunsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/sign-in' | '/w/$workspace' | '/w/$workspace/runs' | '/w/$workspace/'
+    | '/'
+    | '/sign-in'
+    | '/w/$workspace'
+    | '/w/$workspace/'
+    | '/w/$workspace/runs/$runId'
+    | '/w/$workspace/runs/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/sign-in' | '/' | '/w/$workspace/runs' | '/w/$workspace'
+  to:
+    | '/sign-in'
+    | '/'
+    | '/w/$workspace'
+    | '/w/$workspace/runs/$runId'
+    | '/w/$workspace/runs'
   id:
     | '__root__'
     | '/_authed'
     | '/sign-in'
     | '/_authed/'
     | '/_authed/w/$workspace'
-    | '/_authed/w/$workspace/runs'
     | '/_authed/w/$workspace/'
+    | '/_authed/w/$workspace/runs/$runId'
+    | '/_authed/w/$workspace/runs/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -126,24 +148,33 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedWWorkspaceIndexRouteImport
       parentRoute: typeof AuthedWWorkspaceRoute
     }
-    '/_authed/w/$workspace/runs': {
-      id: '/_authed/w/$workspace/runs'
+    '/_authed/w/$workspace/runs/': {
+      id: '/_authed/w/$workspace/runs/'
       path: '/runs'
-      fullPath: '/w/$workspace/runs'
-      preLoaderRoute: typeof AuthedWWorkspaceRunsRouteImport
+      fullPath: '/w/$workspace/runs/'
+      preLoaderRoute: typeof AuthedWWorkspaceRunsIndexRouteImport
+      parentRoute: typeof AuthedWWorkspaceRoute
+    }
+    '/_authed/w/$workspace/runs/$runId': {
+      id: '/_authed/w/$workspace/runs/$runId'
+      path: '/runs/$runId'
+      fullPath: '/w/$workspace/runs/$runId'
+      preLoaderRoute: typeof AuthedWWorkspaceRunsRunIdRouteImport
       parentRoute: typeof AuthedWWorkspaceRoute
     }
   }
 }
 
 interface AuthedWWorkspaceRouteChildren {
-  AuthedWWorkspaceRunsRoute: typeof AuthedWWorkspaceRunsRoute
   AuthedWWorkspaceIndexRoute: typeof AuthedWWorkspaceIndexRoute
+  AuthedWWorkspaceRunsRunIdRoute: typeof AuthedWWorkspaceRunsRunIdRoute
+  AuthedWWorkspaceRunsIndexRoute: typeof AuthedWWorkspaceRunsIndexRoute
 }
 
 const AuthedWWorkspaceRouteChildren: AuthedWWorkspaceRouteChildren = {
-  AuthedWWorkspaceRunsRoute: AuthedWWorkspaceRunsRoute,
   AuthedWWorkspaceIndexRoute: AuthedWWorkspaceIndexRoute,
+  AuthedWWorkspaceRunsRunIdRoute: AuthedWWorkspaceRunsRunIdRoute,
+  AuthedWWorkspaceRunsIndexRoute: AuthedWWorkspaceRunsIndexRoute,
 }
 
 const AuthedWWorkspaceRouteWithChildren =

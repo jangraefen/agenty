@@ -56,6 +56,10 @@ describe("the runs page", () => {
     expect(first).toHaveTextContent("ana");
     expect(first).toHaveTextContent("sort the inbox");
     expect(second).toHaveTextContent("triage v5");
+    expect(within(first).getByRole("link", { name: "notes v3" })).toHaveAttribute(
+      "href",
+      "/w/notes/runs/run-2",
+    );
     expect(second).toHaveTextContent("failed");
     expect(within(second).getByText(/./, { selector: "time" })).toHaveAttribute(
       "dateTime",

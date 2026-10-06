@@ -4,13 +4,13 @@ import { type FormEvent, useId, useState } from "react";
 import { ApiError, unwrap } from "@/api/client";
 import { harnessQuery } from "@/api/queries";
 import type { components } from "@/api/schema";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { formatTime } from "@/lib/format";
 import { harnessYaml } from "@/lib/harness-yaml";
 
 type HarnessVersion = components["schemas"]["HarnessVersion"];
 
-export const Route = createFileRoute("/_authed/w/$workspace/harnesses/$name")({
+export const Route = createFileRoute("/_authed/w/$workspace/harnesses/$name/")({
   component: HarnessPage,
 });
 
@@ -69,6 +69,13 @@ function HarnessDetails({ stored }: { stored: HarnessVersion }) {
           className="ml-auto text-sm underline"
         >
           Runs of this harness
+        </Link>
+        <Link
+          to="/w/$workspace/harnesses/$name/edit"
+          params={{ workspace, name: harness.name }}
+          className={buttonVariants({ variant: "outline", size: "sm" })}
+        >
+          Edit
         </Link>
       </header>
 

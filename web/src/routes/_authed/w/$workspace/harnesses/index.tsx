@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { harnessesQuery } from "@/api/queries";
+import { buttonVariants } from "@/components/ui/button";
 import { formatTime } from "@/lib/format";
 
 export const Route = createFileRoute("/_authed/w/$workspace/harnesses/")({
@@ -14,7 +15,12 @@ function Harnesses() {
 
   return (
     <section>
-      <h1 className="text-xl font-semibold">Harnesses</h1>
+      <div className="flex items-center gap-4">
+        <h1 className="mr-auto text-xl font-semibold">Harnesses</h1>
+        <Link to="/w/$workspace/new-harness" params={{ workspace }} className={buttonVariants()}>
+          New harness
+        </Link>
+      </div>
       {harnesses.isPending && <p className="mt-6 text-muted-foreground">Loading harnesses…</p>}
       {harnesses.isError && (
         <p role="alert" className="mt-6 text-destructive">
@@ -23,7 +29,7 @@ function Harnesses() {
       )}
       {harnesses.data?.length === 0 && (
         <p className="mt-6 text-muted-foreground">
-          No harnesses yet. Apply one with <code>agenty apply</code>.
+          No harnesses yet. Create one, or apply a harness file with <code>agenty apply</code>.
         </p>
       )}
       {harnesses.data !== undefined && harnesses.data.length > 0 && (

@@ -1,24 +1,7 @@
 import { expect, test } from "@playwright/test";
-import { api, token } from "../playwright.config";
+import { token } from "../playwright.config";
 
-// A harness without tools; its runs fail, as the model key is a dummy.
-const harness = {
-  name: "smoke",
-  instructions: "Answer briefly.",
-  model: { provider: "anthropic", name: "claude-haiku-4-5" },
-  tools: [],
-  limits: { max_steps: 2, max_tool_calls: 1 },
-};
-
-test.beforeAll(async ({ request }) => {
-  const response = await request.put(`${api}/v1/workspaces/smoke/harnesses/smoke`, {
-    headers: { Authorization: `Bearer ${token}` },
-    data: harness,
-  });
-  expect(response.ok()).toBe(true);
-});
-
-test("signs in, starts a run, follows it to its end, and signs out", async ({ page }) => {
+test("signs in, makes a harness, runs it to its end, and signs out", async ({ page }) => {
   const problems: string[] = [];
   page.on("console", (message) => {
     if (message.type() === "error" || message.type() === "warning") {
@@ -39,9 +22,17 @@ test("signs in, starts a run, follows it to its end, and signs out", async ({ pa
   await expect(page).toHaveURL(/\/w\/smoke\/runs$/);
   expect(page.url()).not.toContain(token);
 
+  // A harness without tools, made with the form; its runs fail, as the
+  // model provider is a closed port.
   const pages = page.getByRole("navigation", { name: "Pages" });
   await pages.getByRole("link", { name: "Harnesses" }).click();
-  await page.getByRole("link", { name: "smoke", exact: true }).click();
+  await page.getByRole("link", { name: "New harness" }).click();
+  await page.getByLabel("Name", { exact: true }).fill("smoke");
+  await page.getByLabel("Instructions").fill("Answer briefly.");
+  await page.getByLabel("Model").fill("claude-haiku-4-5");
+  await page.getByLabel("Steps at most").fill("2");
+  await page.getByRole("button", { name: "Create harness" }).click();
+  await expect(page).toHaveURL(/\/w\/smoke\/harnesses\/smoke$/);
   await expect(page.getByRole("figure", { name: "As YAML" })).toContainText("name: smoke");
 
   await page.getByLabel("Input").fill("Say hello.");

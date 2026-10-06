@@ -15,10 +15,12 @@ import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
 import { Route as AuthedWWorkspaceRouteImport } from './routes/_authed/w/$workspace'
 import { Route as AuthedWWorkspaceIndexRouteImport } from './routes/_authed/w/$workspace/index'
 import { Route as AuthedWWorkspaceApprovalsRouteImport } from './routes/_authed/w/$workspace/approvals'
+import { Route as AuthedWWorkspaceNewHarnessRouteImport } from './routes/_authed/w/$workspace/new-harness'
 import { Route as AuthedWWorkspaceHarnessesIndexRouteImport } from './routes/_authed/w/$workspace/harnesses/index'
-import { Route as AuthedWWorkspaceHarnessesNameRouteImport } from './routes/_authed/w/$workspace/harnesses/$name'
 import { Route as AuthedWWorkspaceRunsIndexRouteImport } from './routes/_authed/w/$workspace/runs/index'
 import { Route as AuthedWWorkspaceRunsRunIdRouteImport } from './routes/_authed/w/$workspace/runs/$runId'
+import { Route as AuthedWWorkspaceHarnessesNameIndexRouteImport } from './routes/_authed/w/$workspace/harnesses/$name/index'
+import { Route as AuthedWWorkspaceHarnessesNameEditRouteImport } from './routes/_authed/w/$workspace/harnesses/$name/edit'
 
 const AuthedRoute = AuthedRouteImport.update({
   id: '/_authed',
@@ -50,16 +52,16 @@ const AuthedWWorkspaceApprovalsRoute =
     path: '/approvals',
     getParentRoute: () => AuthedWWorkspaceRoute,
   } as any)
+const AuthedWWorkspaceNewHarnessRoute =
+  AuthedWWorkspaceNewHarnessRouteImport.update({
+    id: '/new-harness',
+    path: '/new-harness',
+    getParentRoute: () => AuthedWWorkspaceRoute,
+  } as any)
 const AuthedWWorkspaceHarnessesIndexRoute =
   AuthedWWorkspaceHarnessesIndexRouteImport.update({
     id: '/harnesses/',
     path: '/harnesses/',
-    getParentRoute: () => AuthedWWorkspaceRoute,
-  } as any)
-const AuthedWWorkspaceHarnessesNameRoute =
-  AuthedWWorkspaceHarnessesNameRouteImport.update({
-    id: '/harnesses/$name',
-    path: '/harnesses/$name',
     getParentRoute: () => AuthedWWorkspaceRoute,
   } as any)
 const AuthedWWorkspaceRunsIndexRoute =
@@ -74,27 +76,43 @@ const AuthedWWorkspaceRunsRunIdRoute =
     path: '/runs/$runId',
     getParentRoute: () => AuthedWWorkspaceRoute,
   } as any)
+const AuthedWWorkspaceHarnessesNameIndexRoute =
+  AuthedWWorkspaceHarnessesNameIndexRouteImport.update({
+    id: '/harnesses/$name/',
+    path: '/harnesses/$name/',
+    getParentRoute: () => AuthedWWorkspaceRoute,
+  } as any)
+const AuthedWWorkspaceHarnessesNameEditRoute =
+  AuthedWWorkspaceHarnessesNameEditRouteImport.update({
+    id: '/harnesses/$name/edit',
+    path: '/harnesses/$name/edit',
+    getParentRoute: () => AuthedWWorkspaceRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AuthedIndexRoute
   '/sign-in': typeof SignInRoute
   '/w/$workspace': typeof AuthedWWorkspaceRouteWithChildren
   '/w/$workspace/approvals': typeof AuthedWWorkspaceApprovalsRoute
+  '/w/$workspace/new-harness': typeof AuthedWWorkspaceNewHarnessRoute
   '/w/$workspace/': typeof AuthedWWorkspaceIndexRoute
-  '/w/$workspace/harnesses/$name': typeof AuthedWWorkspaceHarnessesNameRoute
   '/w/$workspace/runs/$runId': typeof AuthedWWorkspaceRunsRunIdRoute
   '/w/$workspace/harnesses/': typeof AuthedWWorkspaceHarnessesIndexRoute
   '/w/$workspace/runs/': typeof AuthedWWorkspaceRunsIndexRoute
+  '/w/$workspace/harnesses/$name/edit': typeof AuthedWWorkspaceHarnessesNameEditRoute
+  '/w/$workspace/harnesses/$name/': typeof AuthedWWorkspaceHarnessesNameIndexRoute
 }
 export interface FileRoutesByTo {
   '/sign-in': typeof SignInRoute
   '/': typeof AuthedIndexRoute
   '/w/$workspace/approvals': typeof AuthedWWorkspaceApprovalsRoute
+  '/w/$workspace/new-harness': typeof AuthedWWorkspaceNewHarnessRoute
   '/w/$workspace': typeof AuthedWWorkspaceIndexRoute
-  '/w/$workspace/harnesses/$name': typeof AuthedWWorkspaceHarnessesNameRoute
   '/w/$workspace/runs/$runId': typeof AuthedWWorkspaceRunsRunIdRoute
   '/w/$workspace/harnesses': typeof AuthedWWorkspaceHarnessesIndexRoute
   '/w/$workspace/runs': typeof AuthedWWorkspaceRunsIndexRoute
+  '/w/$workspace/harnesses/$name/edit': typeof AuthedWWorkspaceHarnessesNameEditRoute
+  '/w/$workspace/harnesses/$name': typeof AuthedWWorkspaceHarnessesNameIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -103,11 +121,13 @@ export interface FileRoutesById {
   '/_authed/': typeof AuthedIndexRoute
   '/_authed/w/$workspace': typeof AuthedWWorkspaceRouteWithChildren
   '/_authed/w/$workspace/approvals': typeof AuthedWWorkspaceApprovalsRoute
+  '/_authed/w/$workspace/new-harness': typeof AuthedWWorkspaceNewHarnessRoute
   '/_authed/w/$workspace/': typeof AuthedWWorkspaceIndexRoute
-  '/_authed/w/$workspace/harnesses/$name': typeof AuthedWWorkspaceHarnessesNameRoute
   '/_authed/w/$workspace/runs/$runId': typeof AuthedWWorkspaceRunsRunIdRoute
   '/_authed/w/$workspace/harnesses/': typeof AuthedWWorkspaceHarnessesIndexRoute
   '/_authed/w/$workspace/runs/': typeof AuthedWWorkspaceRunsIndexRoute
+  '/_authed/w/$workspace/harnesses/$name/edit': typeof AuthedWWorkspaceHarnessesNameEditRoute
+  '/_authed/w/$workspace/harnesses/$name/': typeof AuthedWWorkspaceHarnessesNameIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -116,21 +136,25 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/w/$workspace'
     | '/w/$workspace/approvals'
+    | '/w/$workspace/new-harness'
     | '/w/$workspace/'
-    | '/w/$workspace/harnesses/$name'
     | '/w/$workspace/runs/$runId'
     | '/w/$workspace/harnesses/'
     | '/w/$workspace/runs/'
+    | '/w/$workspace/harnesses/$name/edit'
+    | '/w/$workspace/harnesses/$name/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/sign-in'
     | '/'
     | '/w/$workspace/approvals'
+    | '/w/$workspace/new-harness'
     | '/w/$workspace'
-    | '/w/$workspace/harnesses/$name'
     | '/w/$workspace/runs/$runId'
     | '/w/$workspace/harnesses'
     | '/w/$workspace/runs'
+    | '/w/$workspace/harnesses/$name/edit'
+    | '/w/$workspace/harnesses/$name'
   id:
     | '__root__'
     | '/_authed'
@@ -138,11 +162,13 @@ export interface FileRouteTypes {
     | '/_authed/'
     | '/_authed/w/$workspace'
     | '/_authed/w/$workspace/approvals'
+    | '/_authed/w/$workspace/new-harness'
     | '/_authed/w/$workspace/'
-    | '/_authed/w/$workspace/harnesses/$name'
     | '/_authed/w/$workspace/runs/$runId'
     | '/_authed/w/$workspace/harnesses/'
     | '/_authed/w/$workspace/runs/'
+    | '/_authed/w/$workspace/harnesses/$name/edit'
+    | '/_authed/w/$workspace/harnesses/$name/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -194,18 +220,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedWWorkspaceApprovalsRouteImport
       parentRoute: typeof AuthedWWorkspaceRoute
     }
+    '/_authed/w/$workspace/new-harness': {
+      id: '/_authed/w/$workspace/new-harness'
+      path: '/new-harness'
+      fullPath: '/w/$workspace/new-harness'
+      preLoaderRoute: typeof AuthedWWorkspaceNewHarnessRouteImport
+      parentRoute: typeof AuthedWWorkspaceRoute
+    }
     '/_authed/w/$workspace/harnesses/': {
       id: '/_authed/w/$workspace/harnesses/'
       path: '/harnesses'
       fullPath: '/w/$workspace/harnesses/'
       preLoaderRoute: typeof AuthedWWorkspaceHarnessesIndexRouteImport
-      parentRoute: typeof AuthedWWorkspaceRoute
-    }
-    '/_authed/w/$workspace/harnesses/$name': {
-      id: '/_authed/w/$workspace/harnesses/$name'
-      path: '/harnesses/$name'
-      fullPath: '/w/$workspace/harnesses/$name'
-      preLoaderRoute: typeof AuthedWWorkspaceHarnessesNameRouteImport
       parentRoute: typeof AuthedWWorkspaceRoute
     }
     '/_authed/w/$workspace/runs/': {
@@ -222,25 +248,45 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedWWorkspaceRunsRunIdRouteImport
       parentRoute: typeof AuthedWWorkspaceRoute
     }
+    '/_authed/w/$workspace/harnesses/$name/': {
+      id: '/_authed/w/$workspace/harnesses/$name/'
+      path: '/harnesses/$name'
+      fullPath: '/w/$workspace/harnesses/$name/'
+      preLoaderRoute: typeof AuthedWWorkspaceHarnessesNameIndexRouteImport
+      parentRoute: typeof AuthedWWorkspaceRoute
+    }
+    '/_authed/w/$workspace/harnesses/$name/edit': {
+      id: '/_authed/w/$workspace/harnesses/$name/edit'
+      path: '/harnesses/$name/edit'
+      fullPath: '/w/$workspace/harnesses/$name/edit'
+      preLoaderRoute: typeof AuthedWWorkspaceHarnessesNameEditRouteImport
+      parentRoute: typeof AuthedWWorkspaceRoute
+    }
   }
 }
 
 interface AuthedWWorkspaceRouteChildren {
   AuthedWWorkspaceApprovalsRoute: typeof AuthedWWorkspaceApprovalsRoute
+  AuthedWWorkspaceNewHarnessRoute: typeof AuthedWWorkspaceNewHarnessRoute
   AuthedWWorkspaceIndexRoute: typeof AuthedWWorkspaceIndexRoute
-  AuthedWWorkspaceHarnessesNameRoute: typeof AuthedWWorkspaceHarnessesNameRoute
   AuthedWWorkspaceRunsRunIdRoute: typeof AuthedWWorkspaceRunsRunIdRoute
   AuthedWWorkspaceHarnessesIndexRoute: typeof AuthedWWorkspaceHarnessesIndexRoute
   AuthedWWorkspaceRunsIndexRoute: typeof AuthedWWorkspaceRunsIndexRoute
+  AuthedWWorkspaceHarnessesNameEditRoute: typeof AuthedWWorkspaceHarnessesNameEditRoute
+  AuthedWWorkspaceHarnessesNameIndexRoute: typeof AuthedWWorkspaceHarnessesNameIndexRoute
 }
 
 const AuthedWWorkspaceRouteChildren: AuthedWWorkspaceRouteChildren = {
   AuthedWWorkspaceApprovalsRoute: AuthedWWorkspaceApprovalsRoute,
+  AuthedWWorkspaceNewHarnessRoute: AuthedWWorkspaceNewHarnessRoute,
   AuthedWWorkspaceIndexRoute: AuthedWWorkspaceIndexRoute,
-  AuthedWWorkspaceHarnessesNameRoute: AuthedWWorkspaceHarnessesNameRoute,
   AuthedWWorkspaceRunsRunIdRoute: AuthedWWorkspaceRunsRunIdRoute,
   AuthedWWorkspaceHarnessesIndexRoute: AuthedWWorkspaceHarnessesIndexRoute,
   AuthedWWorkspaceRunsIndexRoute: AuthedWWorkspaceRunsIndexRoute,
+  AuthedWWorkspaceHarnessesNameEditRoute:
+    AuthedWWorkspaceHarnessesNameEditRoute,
+  AuthedWWorkspaceHarnessesNameIndexRoute:
+    AuthedWWorkspaceHarnessesNameIndexRoute,
 }
 
 const AuthedWWorkspaceRouteWithChildren =

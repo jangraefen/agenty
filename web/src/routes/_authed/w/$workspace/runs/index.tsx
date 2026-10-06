@@ -51,14 +51,18 @@ function Runs() {
   const shown = pages.reduce((count, page) => count + page.runs.length, 0);
 
   // After loading more, the focus moves to the first run of the page loaded,
-  // as the button may be gone. A page that is empty or fails leaves it.
+  // as the button may be gone; after an empty page, to the table. A page
+  // that fails leaves it on the button.
   const table = useRef<HTMLTableElement>(null);
   const [focusRun, setFocusRun] = useState<string | null>(null);
   useEffect(() => {
     if (focusRun === null) {
       return;
     }
-    table.current?.querySelector<HTMLElement>(`tr[data-run="${CSS.escape(focusRun)}"] a`)?.focus();
+    const row = table.current?.querySelector<HTMLElement>(
+      `tr[data-run="${CSS.escape(focusRun)}"] a`,
+    );
+    (row ?? table.current)?.focus();
     setFocusRun(null);
   }, [focusRun]);
 
@@ -68,7 +72,8 @@ function Runs() {
     }
     const result = await runs.fetchNextPage();
     if (result.isSuccess) {
-      setFocusRun(result.data.pages.at(-1)?.runs[0]?.id ?? null);
+      // An empty page has no run to focus, and the table takes the focus.
+      setFocusRun(result.data.pages.at(-1)?.runs[0]?.id ?? "");
     }
   }
   const filtered = filters.harness !== undefined || filters.status !== undefined;
@@ -139,7 +144,12 @@ function Runs() {
         </p>
       )}
       {shown > 0 && (
-        <table ref={table} className="mt-6 w-full text-left text-sm" aria-busy={runs.isFetching}>
+        <table
+          ref={table}
+          tabIndex={-1}
+          className="mt-6 w-full text-left text-sm outline-none"
+          aria-busy={runs.isFetching}
+        >
           <caption className="sr-only">Runs</caption>
           <thead className="border-b text-muted-foreground">
             <tr>

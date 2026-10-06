@@ -187,6 +187,22 @@ describe("the runs page", () => {
     });
   });
 
+  test("an empty last page moves the focus to the table", async () => {
+    server.use(
+      runsHandler({
+        "": { runs: [run({ id: "run-3" })], next: "run-3" },
+        "run-3": { runs: [] },
+      }),
+    );
+    const { user } = renderApp("/w/notes/runs", TOKEN);
+
+    await user.click(await screen.findByRole("button", { name: "Load more" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("table", { name: "Runs" })).toHaveFocus();
+    });
+  });
+
   test("keeps the focus on Load more while it loads and when it fails", async () => {
     let release: (() => void) | null = null;
     server.use(

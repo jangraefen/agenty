@@ -1,0 +1,10 @@
+# Dependencies may not run install scripts unless listed here. msw's only
+# copies its browser worker, which the Node tests do not use.
+allowBuilds:
+  msw: false
+
+peerDependencyRules:
+  allowedVersions:
+    # openapi-typescript asks for TypeScript 5 but works with 6, the last
+    # TypeScript with the JavaScript API it generates code with.
+    openapi-typescript>typescript: "6"

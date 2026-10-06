@@ -1,5 +1,5 @@
 import { useForm } from "@tanstack/react-form";
-import { type ReactNode, useId } from "react";
+import { type ReactNode, useId, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -82,12 +82,19 @@ export function HarnessForm({
   onSubmit: (values: HarnessValues) => Promise<void>;
 }) {
   const id = useId();
+  const formElement = useRef<HTMLFormElement>(null);
   const form = useForm({
     defaultValues: initial,
     // Submitting checks every field, also when one is already known to be
     // invalid; the form is sent only when all are valid.
     canSubmitWhenInvalid: true,
     onSubmit: ({ value }) => onSubmit(value),
+    // Once the errors show, the focus goes to the first field to fix.
+    onSubmitInvalid: () => {
+      setTimeout(() => {
+        formElement.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+      });
+    },
   });
 
   // A field's error shows once it was left or a submit was tried.
@@ -99,6 +106,7 @@ export function HarnessForm({
   return (
     <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,24rem)]">
       <form
+        ref={formElement}
         noValidate
         className="grid gap-4"
         onSubmit={(event) => {
@@ -295,6 +303,10 @@ export function HarnessForm({
                         <form.Field
                           name={`policy[${index}].name`}
                           validators={{
+                            // A name is a duplicate or not by the others too.
+                            onChangeListenTo: policy.state.value
+                              .map((_, other) => `policy[${other}].name` as const)
+                              .filter((_, other) => other !== index),
                             onChange: ({ fieldApi }) =>
                               validateModuleName(fieldApi.form.getFieldValue("policy"), index),
                             onSubmit: ({ fieldApi }) =>

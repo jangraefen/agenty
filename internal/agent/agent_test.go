@@ -363,3 +363,37 @@ func TestClose_ReportsServersThatDoNotStop(t *testing.T) {
 
 	require.ErrorIs(t, a.Close(), assert.AnError)
 }
+
+func TestStart_IDIsKnownBeforeExecuting(t *testing.T) {
+	f := newFixture(3)
+	m := modeltest.NewScripted(modeltest.CallTools(call("c1", "tickets_read")), modeltest.Reply("done"))
+	a, err := agent.New(context.Background(), f.config(m))
+	require.NoError(t, err)
+
+	run := a.Start()
+	id := run.ID()
+	require.NotEmpty(t, id)
+	assert.Empty(t, f.audit.Records, "starting a run records nothing")
+	res, err := run.Execute(context.Background(), "ticket 7")
+
+	require.NoError(t, err)
+	assert.Equal(t, id, res.RunID)
+	for _, r := range f.audit.Records {
+		assert.Equal(t, id, r.RunID)
+	}
+}
+
+func TestExecute_OnlyOnce(t *testing.T) {
+	f := newFixture(3)
+	m := modeltest.NewScripted(modeltest.Reply("done"), modeltest.Reply("again"))
+	a, err := agent.New(context.Background(), f.config(m))
+	require.NoError(t, err)
+	run := a.Start()
+	_, err = run.Execute(context.Background(), "ticket 7")
+	require.NoError(t, err)
+
+	_, err = run.Execute(context.Background(), "ticket 7")
+
+	require.ErrorContains(t, err, "run already executed", "a run's call counts and ID are not reused")
+	assert.Len(t, m.Requests(), 1)
+}

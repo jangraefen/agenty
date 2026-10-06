@@ -387,9 +387,9 @@ func TestMain_Usage(t *testing.T) {
 		wantCode int
 		wantOut  string
 	}{
-		{"no command", nil, 2, "usage: agenty run"},
+		{"no command", nil, 2, "usage: agenty <command>"},
 		{"unknown command", []string{"walk"}, 2, `unknown command "walk"`},
-		{"help", []string{"help"}, 0, "usage: agenty run"},
+		{"help", []string{"help"}, 0, "serve   serves the HTTP API"},
 		{"run help", []string{"run", "-h"}, 0, "-harness"},
 		{"unknown flag", []string{"run", "--nope"}, 2, "flag provided but not defined"},
 		{"no harness", []string{"run", "tidy"}, 2, "--harness is required"},

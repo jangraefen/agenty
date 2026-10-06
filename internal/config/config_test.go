@@ -21,6 +21,7 @@ func TestLoad_Valid(t *testing.T) {
 		MaxTokens: 4096,
 		BaseURL:   "http://localhost:8080",
 	}, got.Provider.Anthropic)
+	assert.Equal(t, &config.Database{URL: config.Value{Env: "DATABASE_URL"}}, got.Database)
 	assert.Equal(t, map[string]config.MCPServer{
 		"tickets": {
 			Command: "tickets-mcp",
@@ -37,6 +38,7 @@ func TestLoad_Valid(t *testing.T) {
 
 	minimal, err := config.Load(filepath.Join("testdata", "minimal.yaml"))
 	require.NoError(t, err)
+	assert.Nil(t, minimal.Database, "only the server needs a database")
 	assert.Empty(t, minimal.MCPServers)
 	assert.Empty(t, minimal.Policy)
 }
@@ -76,6 +78,7 @@ func TestLoad_InvalidFields(t *testing.T) {
 		{"api key with neither", "provider: {anthropic: {api_key: {}, max_tokens: 1}}", []string{"provider.anthropic.api_key"}},
 		{"mcp server without command", "provider: {anthropic: {api_key: {env: K}, max_tokens: 1}}\nmcp_servers: {tickets: {}}", []string{"mcp_servers.tickets.command"}},
 		{"mcp server env value with neither", "provider: {anthropic: {api_key: {env: K}, max_tokens: 1}}\nmcp_servers: {tickets: {command: x, env: {TOKEN: {}}}}", []string{"mcp_servers.tickets.env.TOKEN"}},
+		{"database url with neither", "provider: {anthropic: {api_key: {env: K}, max_tokens: 1}}\ndatabase: {url: {}}", []string{"database.url"}},
 		{"empty policy file name", "provider: {anthropic: {api_key: {env: K}, max_tokens: 1}}\npolicy: {files: [\"\"]}", []string{"policy.files[0]"}},
 		{"missing policy file", "provider: {anthropic: {api_key: {env: K}, max_tokens: 1}}\npolicy: {files: [nope.rego]}", []string{"policy.files[0]"}},
 	}
@@ -125,14 +128,15 @@ func TestLoad_InvalidDocuments(t *testing.T) {
 func TestResolve_ReadsTheEnvironmentAndRedactsItsSecrets(t *testing.T) {
 	cfg, err := config.Load(filepath.Join("testdata", "full.yaml"))
 	require.NoError(t, err)
-	env := map[string]string{"ANTHROPIC_API_KEY": "sk-ant-key-0123456789", "TICKETS_TOKEN": "tickets-token-0123"}
+	env := map[string]string{"ANTHROPIC_API_KEY": "sk-ant-key-0123456789", "TICKETS_TOKEN": "tickets-token-0123", "DATABASE_URL": "postgres://agenty:db-password-0123@localhost/agenty"}
 
 	got, err := cfg.Resolve(func(k string) (string, bool) { v, ok := env[k]; return v, ok })
 
 	require.NoError(t, err)
 	assert.Equal(t, "sk-ant-key-0123456789", got.AnthropicAPIKey)
+	assert.Equal(t, "postgres://agenty:db-password-0123@localhost/agenty", got.DatabaseURL)
 	assert.Equal(t, map[string]map[string]string{"tickets": {"TICKETS_TOKEN": "tickets-token-0123", "LOG_LEVEL": "info"}}, got.MCPServerEnv)
-	assert.Equal(t, "[redacted] [redacted] info", got.Redactor.String("sk-ant-key-0123456789 tickets-token-0123 info"),
+	assert.Equal(t, "[redacted] [redacted] [redacted] info", got.Redactor.String("sk-ant-key-0123456789 tickets-token-0123 postgres://agenty:db-password-0123@localhost/agenty info"),
 		"everything read from the environment is a secret; plain values are not")
 }
 
@@ -145,9 +149,9 @@ func TestResolve_Errors(t *testing.T) {
 		wantField string
 		wantErr   string
 	}{
-		{"missing variable", map[string]string{"TICKETS_TOKEN": "tickets-token-0123"}, "provider.anthropic.api_key", "ANTHROPIC_API_KEY is not set"},
-		{"empty variable", map[string]string{"ANTHROPIC_API_KEY": "", "TICKETS_TOKEN": "tickets-token-0123"}, "provider.anthropic.api_key", "ANTHROPIC_API_KEY is not set"},
-		{"secret too short to redact", map[string]string{"ANTHROPIC_API_KEY": "sk-ant-key-0123456789", "TICKETS_TOKEN": "short"}, "mcp_servers.tickets.env.TICKETS_TOKEN", "shorter than 8 characters"},
+		{"missing variable", map[string]string{"TICKETS_TOKEN": "tickets-token-0123", "DATABASE_URL": "postgres://agenty:db-password-0123@localhost/agenty"}, "provider.anthropic.api_key", "ANTHROPIC_API_KEY is not set"},
+		{"empty variable", map[string]string{"ANTHROPIC_API_KEY": "", "TICKETS_TOKEN": "tickets-token-0123", "DATABASE_URL": "postgres://agenty:db-password-0123@localhost/agenty"}, "provider.anthropic.api_key", "ANTHROPIC_API_KEY is not set"},
+		{"secret too short to redact", map[string]string{"ANTHROPIC_API_KEY": "sk-ant-key-0123456789", "TICKETS_TOKEN": "short", "DATABASE_URL": "postgres://agenty:db-password-0123@localhost/agenty"}, "mcp_servers.tickets.env.TICKETS_TOKEN", "shorter than 8 characters"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -41,6 +41,11 @@ func TestNew_RejectsInvalidLayers(t *testing.T) {
 		{"wrong package", policy.Layer{Name: "central", Modules: []policy.Module{{Name: "other.rego", Source: "package something.else\n"}}}, `other.rego: package must be agenty.tool, not something.else`},
 		{"rego v0 syntax", layer("central", `deny[msg] { msg := "x" }`), "central.rego"},
 		{"compile error", layer("central", `deny contains msg if { msg := no_such_function(1) }`), "no_such_function"},
+		{"unnamed module", policy.Layer{Name: "harness", Modules: []policy.Module{{Source: "package agenty.tool\n"}}}, "harness: module 0 has no name"},
+		{"modules sharing a name", policy.Layer{Name: "harness", Modules: []policy.Module{
+			{Name: "rules", Source: "package agenty.tool\n"},
+			{Name: "rules", Source: "package agenty.tool\n"},
+		}}, `harness: modules 0 and 1 are both named "rules"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

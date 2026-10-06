@@ -27,6 +27,26 @@ describe("signing in", () => {
     expect(history.location.href).not.toContain(TOKEN);
   });
 
+  test("signing in asks the server who the user is once", async () => {
+    let asked = 0;
+    server.use(
+      http.get(`${apiUrl}/v1/me`, () => {
+        asked += 1;
+        return HttpResponse.json({ user: "demo", workspaces: ["notes"] });
+      }),
+      http.get(`${apiUrl}/v1/workspaces/notes/runs`, () => HttpResponse.json({ runs: [] })),
+      http.get(`${apiUrl}/v1/workspaces/notes/harnesses`, () => HttpResponse.json([])),
+      http.get(`${apiUrl}/v1/workspaces/notes/approvals`, () => HttpResponse.json([])),
+    );
+    const { user } = renderApp("/sign-in", null);
+
+    await user.type(await screen.findByLabelText("Token"), TOKEN);
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    await screen.findByText("No runs yet.");
+
+    expect(asked).toBe(1);
+  });
+
   test("the token field hides what is typed", async () => {
     renderApp("/sign-in", null);
 

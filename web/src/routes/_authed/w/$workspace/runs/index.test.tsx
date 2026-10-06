@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { beforeEach, describe, expect, test } from "vitest";
 import { apiUrl } from "@/config";
@@ -185,6 +185,36 @@ describe("the runs page", () => {
     await waitFor(() => {
       expect(screen.getByRole("link", { name: "notes v9" })).toHaveFocus();
     });
+  });
+
+  test("keeps the focus on Load more while it loads and when it fails", async () => {
+    let release: (() => void) | null = null;
+    server.use(
+      http.get(runsUrl, async ({ request }) => {
+        if (!new URL(request.url).searchParams.has("before")) {
+          return HttpResponse.json({ runs: [run({ id: "run-3" })], next: "run-3" });
+        }
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return HttpResponse.json({ error: "boom" }, { status: 500 });
+      }),
+    );
+    const { user } = renderApp("/w/notes/runs", TOKEN);
+
+    const button = await screen.findByRole("button", { name: "Load more" });
+    await user.click(button);
+    await waitFor(() => {
+      expect(release).not.toBeNull();
+    });
+
+    // Busy, but not disabled, which would drop the focus.
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    expect(button).toBeEnabled();
+    act(() => release?.());
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("boom");
+    expect(button).toHaveFocus();
   });
 
   test("filters by a harness whose name is all digits", async () => {

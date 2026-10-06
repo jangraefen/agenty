@@ -27,13 +27,15 @@ test("signs in, makes a harness, runs it to its end, and signs out", async ({ pa
   const pages = page.getByRole("navigation", { name: "Pages" });
   await pages.getByRole("link", { name: "Harnesses" }).click();
   await page.getByRole("link", { name: "New harness" }).click();
-  await page.getByLabel("Name", { exact: true }).fill("smoke");
+  // A name of its own, so the test also runs against a database it ran on.
+  const name = `smoke-${Date.now().toString(36)}`;
+  await page.getByLabel("Name", { exact: true }).fill(name);
   await page.getByLabel("Instructions").fill("Answer briefly.");
   await page.getByLabel("Model").fill("claude-haiku-4-5");
   await page.getByLabel("Steps at most").fill("2");
   await page.getByRole("button", { name: "Create harness" }).click();
-  await expect(page).toHaveURL(/\/w\/smoke\/harnesses\/smoke$/);
-  await expect(page.getByRole("figure", { name: "As YAML" })).toContainText("name: smoke");
+  await expect(page).toHaveURL(new RegExp(`/w/smoke/harnesses/${name}$`));
+  await expect(page.getByRole("figure", { name: "As YAML" })).toContainText(`name: ${name}`);
 
   await page.getByLabel("Input").fill("Say hello.");
   await page.getByRole("button", { name: "Start run" }).click();

@@ -147,7 +147,7 @@ function Runs() {
         <table
           ref={table}
           tabIndex={-1}
-          className="mt-6 w-full text-left text-sm outline-none"
+          className="mt-6 w-full text-left text-sm outline-offset-4 focus-visible:outline-2 focus-visible:outline-ring"
           aria-busy={runs.isFetching}
         >
           <caption className="sr-only">Runs</caption>

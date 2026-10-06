@@ -91,6 +91,44 @@ describe("the new harness form", () => {
     expect(puts).toEqual([]);
   });
 
+  test("a failed submit moves the focus to the first field to fix", async () => {
+    harnessServer();
+    const { user } = renderApp("/w/notes/new-harness", TOKEN);
+
+    await user.type(await screen.findByLabelText("Name"), "triage");
+    await user.click(screen.getByRole("button", { name: "Create harness" }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Instructions")).toHaveFocus();
+    });
+  });
+
+  test("fixing a duplicate module name clears the other module's error", async () => {
+    harnessServer();
+    const { user } = renderApp("/w/notes/new-harness", TOKEN);
+
+    await user.click(await screen.findByRole("button", { name: "Add policy module" }));
+    await user.click(screen.getByRole("button", { name: "Add policy module" }));
+    const [first, second] = screen.getAllByRole("group", { name: /Policy module/ }) as [
+      HTMLElement,
+      HTMLElement,
+    ];
+    await user.type(within(first).getByLabelText("Module name"), "a");
+    await user.type(within(second).getByLabelText("Module name"), "a");
+    expect(within(first).getByLabelText("Module name")).toHaveAccessibleDescription(
+      /Another module has this name/,
+    );
+
+    await user.type(within(second).getByLabelText("Module name"), "b");
+
+    await waitFor(() => {
+      expect(within(first).getByLabelText("Module name")).not.toHaveAttribute(
+        "aria-invalid",
+        "true",
+      );
+    });
+  });
+
   test("refuses a name another harness has", async () => {
     const puts = harnessServer([storedHarness({ name: "notes" })]);
     const { user } = renderApp("/w/notes/new-harness", TOKEN);

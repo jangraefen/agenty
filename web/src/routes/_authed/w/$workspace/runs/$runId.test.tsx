@@ -1,4 +1,5 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { focusManager } from "@tanstack/react-query";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { beforeEach, describe, expect, test } from "vitest";
 import { apiUrl } from "@/config";
@@ -97,6 +98,68 @@ describe("the run page", () => {
     expect(screen.getByText("succeeded")).toBeInTheDocument();
     expect(within(activity).getAllByRole("listitem")).toHaveLength(2);
     expect(authorization).toBe(`Bearer ${TOKEN}`);
+  });
+
+  test("a run response older than the run's end does not undo it", async () => {
+    const live = liveEventStream();
+    let hold = false;
+    let release: (() => void) | null = null;
+    server.use(
+      http.get(`${base}/runs/run-1`, async () => {
+        if (hold) {
+          // A response the server produced before the run ended, arriving late.
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        }
+        return HttpResponse.json(runningRun);
+      }),
+      http.get(`${base}/runs/run-1/events`, () => live.response()),
+    );
+    renderApp(path, TOKEN);
+    await screen.findByText("running");
+
+    hold = true;
+    act(() => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
+    await waitFor(() => {
+      expect(release).not.toBeNull();
+    });
+    live.send("finished", run());
+    live.close();
+    await screen.findByText("succeeded");
+    await act(async () => {
+      release?.();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    });
+
+    expect(screen.getByText("succeeded")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancel run" })).not.toBeInTheDocument();
+  });
+
+  test("keeps showing the run when refreshing it fails", async () => {
+    let fail = false;
+    server.use(
+      http.get(`${base}/runs/run-1`, () =>
+        fail ? HttpResponse.json({ error: "boom" }, { status: 500 }) : HttpResponse.json(run()),
+      ),
+      http.get(`${base}/runs/run-1/events`, () =>
+        eventStream([{ event: "finished", data: run() }]),
+      ),
+    );
+    renderApp(path, TOKEN);
+    await screen.findByRole("heading", { name: "notes v3" });
+
+    fail = true;
+    act(() => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("boom");
+    expect(screen.getByRole("heading", { name: "notes v3" })).toBeInTheDocument();
   });
 
   test("renders what the model and tools wrote as text, never as HTML", async () => {

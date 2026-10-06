@@ -15,9 +15,20 @@ export async function* parseEventStream(
   const reader = body.getReader();
   const decoder = new TextDecoder();
   const parser = new Parser();
+  // Whether the body ended or failed; otherwise the consumer stopped early,
+  // and the body is cancelled.
+  let settled = false;
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      let chunk: ReadableStreamReadResult<Uint8Array>;
+      try {
+        chunk = await reader.read();
+      } catch (error) {
+        settled = true;
+        throw error;
+      }
+      const { done, value } = chunk;
+      settled = done;
       const text = done ? decoder.decode() : decoder.decode(value, { stream: true });
       yield* parser.push(text, done);
       if (done) {
@@ -25,7 +36,9 @@ export async function* parseEventStream(
       }
     }
   } finally {
-    await reader.cancel();
+    if (!settled) {
+      await reader.cancel();
+    }
     reader.releaseLock();
   }
 }

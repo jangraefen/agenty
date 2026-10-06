@@ -1,5 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useId } from "react";
 import { ApiError, unwrap } from "@/api/client";
 import { approvalsQuery, runQuery, transcriptQuery } from "@/api/queries";
 import type { components } from "@/api/schema";
@@ -21,6 +22,18 @@ function RunPage() {
   const run = useQuery(runQuery(api, workspace, runId));
   const events = useRunEvents(api, workspace, runId);
 
+  if (run.data !== undefined) {
+    return (
+      <>
+        {run.isError && (
+          <p role="alert" className="mb-4 text-sm text-destructive">
+            The run could not be refreshed: {run.error.message}
+          </p>
+        )}
+        <RunDetails run={run.data} events={events} />
+      </>
+    );
+  }
   if (run.isPending) {
     return <p className="text-muted-foreground">Loading the run…</p>;
   }
@@ -45,7 +58,7 @@ function RunPage() {
       </p>
     );
   }
-  return <RunDetails run={run.data} events={events} />;
+  return null;
 }
 
 function RunDetails({
@@ -58,6 +71,10 @@ function RunDetails({
   const { workspace, runId } = Route.useParams();
   const { api } = Route.useRouteContext();
   const running = run.status === "running";
+  const approvals = useQuery({ ...approvalsQuery(api, workspace), enabled: running });
+  const waiting = running
+    ? (approvals.data?.filter((request) => request.run_id === runId) ?? [])
+    : [];
   const cancel = useMutation({
     mutationFn: () =>
       unwrap(
@@ -79,21 +96,27 @@ function RunDetails({
         <RunStatusBadge status={run.status} />
         {running && (
           <span className="ml-auto">
-            {cancel.isSuccess ? (
-              <span className="text-sm text-muted-foreground">Cancelling…</span>
-            ) : (
-              <Button
-                variant="destructive"
-                size="sm"
-                disabled={cancel.isPending}
-                onClick={() => cancel.mutate()}
-              >
-                Cancel run
-              </Button>
-            )}
+            {/* Not disabled, which would drop the focus, until the run ends. */}
+            <Button
+              variant="destructive"
+              size="sm"
+              aria-disabled={!cancel.isIdle && !cancel.isError}
+              onClick={() => {
+                if (cancel.isIdle || cancel.isError) {
+                  cancel.mutate();
+                }
+              }}
+            >
+              {cancel.isSuccess ? "Cancelling…" : "Cancel run"}
+            </Button>
           </span>
         )}
       </header>
+      <p role="status" className="sr-only">
+        The run is {run.status}.
+        {waiting.length > 0 &&
+          ` ${waiting.length} ${waiting.length === 1 ? "call waits" : "calls wait"} for approval.`}
+      </p>
       {cancel.isError && (
         <p role="alert" className="text-sm text-destructive">
           The run could not be cancelled: {cancel.error.message}
@@ -120,7 +143,7 @@ function RunDetails({
       {run.output !== "" && <Text title="Output" text={run.output} />}
       {run.error !== undefined && run.error !== "" && <Text title="Error" text={run.error} />}
 
-      {running && <WaitingApprovals />}
+      {waiting.length > 0 && <WaitingApprovals waiting={waiting} />}
 
       {events.error !== null && running && (
         <div role="alert" className="flex items-center gap-3 text-sm text-destructive">
@@ -145,20 +168,14 @@ function Text({ title, text }: { title: string; text: string }) {
   );
 }
 
-function WaitingApprovals() {
-  const { workspace, runId } = Route.useParams();
-  const { api } = Route.useRouteContext();
-  const approvals = useQuery(approvalsQuery(api, workspace));
-  const waiting = approvals.data?.filter((request) => request.run_id === runId) ?? [];
-  if (waiting.length === 0) {
-    return null;
-  }
+function WaitingApprovals({ waiting }: { waiting: Schemas["ApprovalRequest"][] }) {
+  const heading = useId();
   return (
     <section
-      aria-labelledby="waiting-heading"
+      aria-labelledby={heading}
       className="rounded-md border border-amber-300 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950"
     >
-      <h2 id="waiting-heading" className="font-semibold">
+      <h2 id={heading} className="font-semibold">
         Waiting for approval
       </h2>
       <ul className="mt-2 grid gap-3">

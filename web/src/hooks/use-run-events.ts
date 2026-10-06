@@ -18,7 +18,7 @@ interface RunEvents {
 
 // useRunEvents follows a run's event stream. The audit records it returns;
 // the other events update the queries they change: an approval request the
-// waiting approvals, a tool result the transcript, and the run's end the run.
+// waiting approvals, an audit record the transcript, and the run's end the run.
 export function useRunEvents(api: Api, workspace: string, id: string): RunEvents {
   const queryClient = useQueryClient();
   const [records, setRecords] = useState<Schemas["AuditRecord"][]>([]);
@@ -33,16 +33,17 @@ export function useRunEvents(api: Api, workspace: string, id: string): RunEvents
     const approvals = approvalsQuery(api, workspace).queryKey;
     const transcript = transcriptQuery(api, workspace, id).queryKey;
 
-    function handle(event: string, data: string): boolean {
+    // Handles an event; returns whether it was the last.
+    async function handle(event: string, data: string): Promise<boolean> {
       switch (event) {
         case "audit": {
           const record: Schemas["AuditRecord"] = JSON.parse(data);
           setRecords((previous) => [...previous, record]);
           if (record.event === "approval") {
             invalidate(approvals);
-          } else if (record.event === "result") {
-            invalidate(transcript);
           }
+          // The model's messages land in the transcript between tool calls.
+          invalidate(transcript);
           return false;
         }
         case "approval":
@@ -50,7 +51,10 @@ export function useRunEvents(api: Api, workspace: string, id: string): RunEvents
           return false;
         case "finished": {
           const run: Schemas["Run"] = JSON.parse(data);
-          queryClient.setQueryData(runQuery(api, workspace, id).queryKey, run);
+          const { queryKey } = runQuery(api, workspace, id);
+          // A fetch of the run under way may answer from before its end.
+          await queryClient.cancelQueries({ queryKey });
+          queryClient.setQueryData(queryKey, run);
           invalidate(transcript);
           invalidate(approvals);
           invalidate(["workspaces", workspace, "runs"]);
@@ -73,7 +77,7 @@ export function useRunEvents(api: Api, workspace: string, id: string): RunEvents
         throw new Error("the server sent no events");
       }
       for await (const { event, data } of parseEventStream(body)) {
-        if (handle(event, data)) {
+        if (await handle(event, data)) {
           return;
         }
       }

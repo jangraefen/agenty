@@ -91,7 +91,7 @@ The PoC held. The next step splits the command line: a server holds the state an
 - **Browsers**: only pages of the origins the operator config lists under `cors` may call the API; requests from any other page are refused.
 - **State**: PostgreSQL holds harnesses, runs, the audit log, which replaces the JSON-lines file, and each run's transcript: its conversation with the model, recorded message by message as the run goes, with secrets redacted. Each model reply is also kept in the provider's own form, such as Anthropic's thinking blocks, so a stored conversation can be sent to the model again as it was, except where a secret was redacted from it. Every changed harness is stored as a new, immutable version, and every run records the version it ran.
 - **Harnesses**: managed through the API. The CLI uploads a harness file with its policy files resolved.
-- **Approvals**: the server streams each run's events over server-sent events. A call that needs approval waits in the server until a member of the run's workspace posts the answer, and the audit log records that signed-in user as the approver. A workspace's waiting requests are listed at `GET /v1/workspaces/{ws}/approvals`. One that nobody answers is rejected after `approvals.timeout` in the operator config, an hour by default, and the model is told so. A run does not survive a server restart. Browsers' `EventSource` cannot send a token, so the web portal reads the event stream with `fetch`.
+- **Approvals**: the server streams each run's events over server-sent events. A call that needs approval waits in the server until a member of the run's workspace posts the answer, and the audit log records that signed-in user as the approver. A workspace's waiting requests are listed at `GET /v1/workspaces/{ws}/approvals`. One that nobody answers is rejected after `approvals.timeout` in the operator config, an hour by default, and the model is told so. A run does not survive a server restart.
 - **Runs**: each run records the user who started it and the harness version it ran. A workspace's runs are listed newest first, a page at a time, optionally of one harness or with one status. Any member may cancel a running run; it then ends as `cancelled`, naming who cancelled it, and interrupting `agenty run` cancels its run.
 - **CLI**: a client of the API instead of running agents itself. It signs in with the token in `AGENTY_TOKEN`, never a flag, and works in the workspace given by `--workspace` or `AGENTY_WORKSPACE`.
 
@@ -110,7 +110,7 @@ The example's central policy asks before every file change and denies dotfiles; 
 
 Decided for the stage after the API server:
 
-- **Frontend**: the separate web frontend above, using only the JSON API. Harnesses are authored in a form, with a read-only YAML view.
+- **Frontend**: the separate web frontend above, using only the JSON API. Browsers' `EventSource` cannot send a token, so it reads a run's event stream with `fetch`. Harnesses are authored in a form, with a read-only YAML view.
 - **Tenancy**: workspaces within one organisation, as the API server has them.
 - **Sign-in**: the API server's configured users and tokens are the stopgap: OIDC replaces them before release and is then the only way to sign in.
 - **Central policy**: stays Rego files from the operator config; the portal shows it read-only.

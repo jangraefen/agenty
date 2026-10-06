@@ -436,13 +436,16 @@ func (s *Server) execute(ctx context.Context, a *agent.Agent, run *agent.Run, hu
 		s.mu.Unlock()
 	}()
 	redact := s.cfg.Resolved.Redactor
-	res, err := run.Execute(ctx, input)
-	err = errors.Join(err, a.Close())
+	res, runErr := run.Execute(ctx, input)
+	err := errors.Join(runErr, a.Close())
 	status, errMsg := store.RunSucceeded, ""
 	var by cancelledBy
 	switch {
-	case err != nil && errors.As(context.Cause(ctx), &by):
+	case runErr != nil && errors.As(context.Cause(ctx), &by):
+		// The cause is what the run's record says; any other error, such as
+		// a server that did not stop, is logged.
 		status, errMsg = store.RunCancelled, by.Error()
+		s.cfg.Logger.Info("run cancelled", "run_id", run.ID(), "error", err)
 	case err != nil:
 		status, errMsg = store.RunFailed, redact.String(err.Error())
 	}
@@ -491,6 +494,7 @@ func (s *Server) listRuns(c *gin.Context) {
 	for i, r := range runs {
 		out.Runs[i] = apiRun(r)
 	}
+	// A full page may be the last: the next one is then empty.
 	if len(runs) == f.Limit {
 		out.Next = runs[len(runs)-1].ID
 	}

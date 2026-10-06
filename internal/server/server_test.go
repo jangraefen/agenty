@@ -803,6 +803,11 @@ func TestCancelRun(t *testing.T) {
 	assert.Equal(t, api.RunCancelled, finished.Status)
 	assert.Equal(t, "cancelled by bob", finished.Error)
 	assert.Zero(t, f.write.Calls, "the call waiting for approval never runs")
+	var audit []api.AuditRecord
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+run.ID+"/audit", nil, &audit))
+	require.Len(t, audit, 2)
+	assert.Equal(t, toolgateway.Deny, audit[1].Decision)
+	assert.Equal(t, "approval failed: cancelled by bob", audit[1].Reason, "the audit log says who cancelled")
 	var stored api.Run
 	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+run.ID, nil, &stored))
 	assert.Equal(t, finished, stored)

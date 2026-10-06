@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -75,7 +76,8 @@ func (h *hub) since(i int) ([]event, <-chan struct{}, bool) {
 var _ toolgateway.Approver = (*hub)(nil)
 
 // Approve publishes an approval request and waits until a client answers it,
-// the request times out, which rejects the call, or ctx ends. The gateway
+// the request times out, which rejects the call, or ctx ends, which fails it
+// with ctx's cause. The gateway
 // has already redacted req and reasons.
 func (h *hub) Approve(ctx context.Context, req toolgateway.Request, reasons []string) (toolgateway.Approval, error) {
 	now := time.Now()
@@ -89,26 +91,51 @@ func (h *hub) Approve(ctx context.Context, req toolgateway.Request, reasons []st
 	h.mu.Lock()
 	h.pending[p.req.ID] = p
 	h.mu.Unlock()
-	defer func() {
-		h.mu.Lock()
-		delete(h.pending, p.req.ID)
-		h.mu.Unlock()
-	}()
 
 	h.publish(event{api.EventApproval, p.req})
 	timer := time.NewTimer(h.timeout)
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
-		// An answer that arrives now is accepted but unused: the call is
-		// denied as cancelled.
-		return toolgateway.Approval{}, ctx.Err()
+		if a, answered := h.withdraw(p); answered {
+			return a, nil
+		}
+		return toolgateway.Approval{}, context.Cause(ctx)
 	case <-timer.C:
-		// An answer that arrives now is likewise unused.
-		return toolgateway.Approval{Reason: "no answer within " + h.timeout.String()}, nil
+		if a, answered := h.withdraw(p); answered {
+			return a, nil
+		}
+		return toolgateway.Approval{Reason: "no answer within " + duration(h.timeout)}, nil
 	case a := <-p.answer:
 		return a, nil
 	}
+}
+
+// withdraw takes p off the pending requests, so no answer is accepted from
+// now on. If an answer was accepted before, it returns that answer: the
+// client was told it counts.
+func (h *hub) withdraw(p pendingApproval) (toolgateway.Approval, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if _, ok := h.pending[p.req.ID]; ok {
+		delete(h.pending, p.req.ID)
+		return toolgateway.Approval{}, false
+	}
+	// answer removed it and sent its answer, under the lock.
+	return <-p.answer, true
+}
+
+// duration formats d without trailing zero units: 1h, not 1h0m0s.
+func duration(d time.Duration) string {
+	s := d.String()
+	s = strings.TrimSuffix(s, "m0s")
+	if s != d.String() {
+		s += "m"
+	}
+	if t := strings.TrimSuffix(s, "h0m"); t != s {
+		s = t + "h"
+	}
+	return s
 }
 
 // waiting returns the approval requests the run is waiting for.

@@ -48,8 +48,11 @@ func run(ctx context.Context, args []string, env Env) int {
 		// Interrupted: the run is not left behind on the server.
 		cancelCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer stop()
-		err = errors.Join(err, c.do(cancelCtx, http.MethodPost, c.path("runs", started.ID, "cancel"), nil, nil))
-		logger.Info("run cancelled", "run_id", started.ID)
+		if cerr := c.do(cancelCtx, http.MethodPost, c.path("runs", started.ID, "cancel"), nil, nil); cerr != nil {
+			err = errors.Join(err, fmt.Errorf("cancel: %w", cerr))
+		} else {
+			logger.Info("run cancelled", "run_id", started.ID)
+		}
 	}
 	if err != nil {
 		return fail(logger, "run failed", fmt.Errorf("run %s: %w", started.ID, err))

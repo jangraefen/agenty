@@ -12,6 +12,7 @@ import (
 	"github.com/jangraefen/agenty/internal/harness"
 	"github.com/jangraefen/agenty/internal/mcptool"
 	"github.com/jangraefen/agenty/internal/model"
+	"github.com/jangraefen/agenty/internal/model/modeltest"
 	"github.com/jangraefen/agenty/internal/toolgateway"
 	"github.com/jangraefen/agenty/internal/toolgateway/gatewaytest"
 )
@@ -26,13 +27,13 @@ func TestAgent_RunsMCPToolsThroughTheGateway(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, ss.Close()) })
 	audit := &gatewaytest.Audit{}
-	m := model.NewScripted(
-		model.CallTools(
+	m := modeltest.NewScripted(
+		modeltest.CallTools(
 			model.ToolCall{ID: "c1", Name: "test_echo", Args: json.RawMessage(`{"id":7}`)},
 			model.ToolCall{ID: "c2", Name: "test_mixed"},
 			model.ToolCall{ID: "c3", Name: "test_fail"},
 		),
-		model.Reply("done"),
+		modeltest.Reply("done"),
 	)
 	a, err := agent.New(t.Context(), agent.Config{
 		Harness: &harness.Harness{

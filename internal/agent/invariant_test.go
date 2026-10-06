@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jangraefen/agenty/internal/model"
+	"github.com/jangraefen/agenty/internal/model/modeltest"
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
@@ -17,10 +17,10 @@ import (
 func TestInvariant_SideEffectsOnlyViaGateway(t *testing.T) {
 	t.Run("every tool execution is a gateway call", func(t *testing.T) {
 		f := newFixture(5)
-		m := model.NewScripted(
-			model.CallTools(call("c1", "tickets_read"), call("c2", "tickets_delete"), call("c3", "tickets_label")),
-			model.CallTools(call("c4", "tickets_read")),
-			model.Reply("done"),
+		m := modeltest.NewScripted(
+			modeltest.CallTools(call("c1", "tickets_read"), call("c2", "tickets_delete"), call("c3", "tickets_label")),
+			modeltest.CallTools(call("c4", "tickets_read")),
+			modeltest.Reply("done"),
 		)
 
 		_, err := f.run(t, m)
@@ -56,7 +56,7 @@ func TestInvariant_ModelIsNotTrusted(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newFixture(3)
-			m := model.NewScripted(model.CallTools(call("c1", tt.call)), model.Reply("understood"))
+			m := modeltest.NewScripted(modeltest.CallTools(call("c1", tt.call)), modeltest.Reply("understood"))
 
 			res, err := f.run(t, m)
 

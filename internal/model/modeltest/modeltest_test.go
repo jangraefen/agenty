@@ -1,4 +1,4 @@
-package model_test
+package modeltest_test
 
 import (
 	"context"
@@ -10,14 +10,15 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jangraefen/agenty/internal/model"
+	"github.com/jangraefen/agenty/internal/model/modeltest"
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
 func TestScripted_ReplaysStepsInOrder(t *testing.T) {
 	call := model.ToolCall{ID: "c1", Name: "tickets_read", Args: json.RawMessage(`{"id":1}`)}
-	m := model.NewScripted(
-		model.CallTools(call),
-		model.Reply("done"),
+	m := modeltest.NewScripted(
+		modeltest.CallTools(call),
+		modeltest.Reply("done"),
 	)
 
 	first, err := m.Generate(context.Background(), model.Request{})
@@ -31,7 +32,7 @@ func TestScripted_ReplaysStepsInOrder(t *testing.T) {
 
 func TestScripted_ReturnsScriptedErrors(t *testing.T) {
 	boom := errors.New("provider overloaded")
-	m := model.NewScripted(model.Fail(boom))
+	m := modeltest.NewScripted(modeltest.Fail(boom))
 
 	msg, err := m.Generate(context.Background(), model.Request{})
 
@@ -40,17 +41,17 @@ func TestScripted_ReturnsScriptedErrors(t *testing.T) {
 }
 
 func TestScripted_ExhaustedScriptIsAnError(t *testing.T) {
-	m := model.NewScripted(model.Reply("only"))
+	m := modeltest.NewScripted(modeltest.Reply("only"))
 	_, err := m.Generate(context.Background(), model.Request{})
 	require.NoError(t, err)
 
 	_, err = m.Generate(context.Background(), model.Request{})
 
-	assert.ErrorIs(t, err, model.ErrScriptExhausted)
+	assert.ErrorIs(t, err, modeltest.ErrScriptExhausted)
 }
 
 func TestScripted_HonoursCancelledContext(t *testing.T) {
-	m := model.NewScripted(model.Reply("never"))
+	m := modeltest.NewScripted(modeltest.Reply("never"))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -63,7 +64,7 @@ func TestScripted_HonoursCancelledContext(t *testing.T) {
 }
 
 func TestScripted_RecordsRequestCopies(t *testing.T) {
-	m := model.NewScripted(model.Reply("a"), model.Reply("b"))
+	m := modeltest.NewScripted(modeltest.Reply("a"), modeltest.Reply("b"))
 	msgs := []model.Message{{Role: model.RoleUser, Text: "hello"}}
 	req := model.Request{
 		System:   "be brief",

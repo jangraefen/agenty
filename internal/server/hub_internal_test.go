@@ -83,13 +83,14 @@ func TestHub_CancellationWinsOverAnAnswer(t *testing.T) {
 	}()
 	require.Eventually(t, func() bool { return len(h.waiting()) == 1 }, 5*time.Second, time.Millisecond)
 
-	// Answer and cancel at once: under the hub's lock, so Approve sees both.
+	// Cancel, then answer, while holding the hub's lock: Approve wakes on
+	// either with both already done, and withdraw waits for the lock.
 	h.mu.Lock()
+	cancel(cancelledBy("bob"))
 	for id, p := range h.pending {
 		delete(h.pending, id)
 		p.answer <- toolgateway.Approval{Approved: true, Approver: "alice"}
 	}
-	cancel(cancelledBy("bob"))
 	h.mu.Unlock()
 
 	r := <-done

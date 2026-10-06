@@ -13,18 +13,19 @@ export function App({ session, history }: { session: Session; history?: RouterHi
     makeRouter({ queryClient, session, api: makeClient(session) }, history),
   );
 
-  // Signing out, by the user or by a refused token, drops what the user
-  // could see and sends the router back through its sign-in checks.
-  useEffect(
-    () =>
-      session.subscribe(() => {
-        if (session.token === null) {
-          queryClient.clear();
-        }
-        void router.invalidate();
-      }),
-    [session, queryClient, router],
-  );
+  // Signing out, by the user or by a refused token, or another user signing
+  // in in another tab, drops what the user could see and sends the router
+  // back through its sign-in checks.
+  useEffect(() => {
+    let token = session.token;
+    return session.subscribe(() => {
+      if (session.token !== token) {
+        token = session.token;
+        queryClient.clear();
+      }
+      void router.invalidate();
+    });
+  }, [session, queryClient, router]);
   useEffect(() => session.followOtherTabs(window), [session]);
 
   return (

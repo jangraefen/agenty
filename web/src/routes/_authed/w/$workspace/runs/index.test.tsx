@@ -162,6 +162,31 @@ describe("the runs page", () => {
     expect(queries.map(String)).toEqual(["status=failed"]);
   });
 
+  test.each(["true", "null", "1e3"])("filters by a harness named %s", async (name) => {
+    const queries: URLSearchParams[] = [];
+    server.use(runsHandler({ "": { runs: [run()] } }, queries));
+    renderApp(`/w/notes/runs?harness=${name}`, TOKEN);
+
+    await screen.findByRole("table", { name: "Runs" });
+    expect(queries[0]?.get("harness")).toBe(name);
+  });
+
+  test("moves the focus to the first run loaded", async () => {
+    server.use(
+      runsHandler({
+        "": { runs: [run({ id: "run-3" })], next: "run-3" },
+        "run-3": { runs: [run({ id: "run-2", harness_version: 9 })] },
+      }),
+    );
+    const { user } = renderApp("/w/notes/runs", TOKEN);
+
+    await user.click(await screen.findByRole("button", { name: "Load more" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("link", { name: "notes v9" })).toHaveFocus();
+    });
+  });
+
   test("filters by a harness whose name is all digits", async () => {
     const queries: URLSearchParams[] = [];
     server.use(runsHandler({ "": { runs: [run()] } }, queries));

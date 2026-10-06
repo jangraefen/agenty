@@ -283,6 +283,9 @@ describe("the run page", () => {
       ).not.toBeInTheDocument();
     });
     expect(answer).toEqual({ approved: true });
+    expect(screen.getByRole("status", { name: "Answers" })).toHaveTextContent(
+      "Approved files_write_file.",
+    );
   });
 
   test("refreshes the waiting approvals when the run asks for one", async () => {

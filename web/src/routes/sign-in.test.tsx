@@ -142,16 +142,71 @@ describe("workspaces", () => {
 
     expect(await screen.findByText("demo")).toBeInTheDocument();
     const nav = screen.getByRole("navigation", { name: "Workspaces" });
-    expect(within(nav).getByRole("link", { name: "notes" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
+    expect(within(nav).getByRole("link", { name: "notes" })).toHaveAttribute("aria-current");
+    expect(within(nav).getByRole("link", { name: "ops" })).not.toHaveAttribute("aria-current");
 
     await user.click(within(nav).getByRole("link", { name: "ops" }));
 
     await waitFor(() => {
       expect(history.location.pathname).toBe("/w/ops/runs");
     });
+  });
+
+  test("Escape closes the workspace menu and returns to its button", async () => {
+    server.use(meHandler({ user: "demo", workspaces: ["notes", "ops"] }));
+    const { user } = renderApp("/w/notes/runs", TOKEN);
+
+    const summary = (await screen.findByText("Workspace:")).closest("summary");
+    if (summary === null) {
+      throw new Error("no menu button");
+    }
+    await user.click(summary);
+    const menu = summary.closest("details");
+    expect(menu).toHaveAttribute("open");
+    await user.tab();
+    await user.keyboard("{Escape}");
+
+    expect(menu).not.toHaveAttribute("open");
+    expect(summary).toHaveFocus();
+  });
+
+  test("a click elsewhere closes the workspace menu", async () => {
+    server.use(meHandler({ user: "demo", workspaces: ["notes", "ops"] }));
+    const { user } = renderApp("/w/notes/runs", TOKEN);
+
+    const summary = (await screen.findByText("Workspace:")).closest("summary");
+    if (summary === null) {
+      throw new Error("no menu button");
+    }
+    await user.click(summary);
+    await user.click(screen.getByRole("heading", { name: "Runs" }));
+
+    expect(summary.closest("details")).not.toHaveAttribute("open");
+  });
+
+  test("a different user signing in in another tab replaces what this one shows", async () => {
+    const other = "another-test-token-of-at-least-32-chars";
+    server.use(
+      http.get(`${apiUrl}/v1/me`, ({ request }) => {
+        const auth = request.headers.get("Authorization");
+        if (auth === `Bearer ${TOKEN}`) {
+          return HttpResponse.json({ user: "demo", workspaces: ["notes"] });
+        }
+        if (auth === `Bearer ${other}`) {
+          return HttpResponse.json({ user: "ana", workspaces: ["notes"] });
+        }
+        return HttpResponse.json({ error: "unauthorized" }, { status: 401 });
+      }),
+    );
+    renderApp("/w/notes/runs", TOKEN);
+    expect(await screen.findByText("demo")).toBeInTheDocument();
+
+    act(() => {
+      localStorage.setItem("agenty.token", other);
+      window.dispatchEvent(new StorageEvent("storage", { key: "agenty.token", newValue: other }));
+    });
+
+    expect(await screen.findByText("ana")).toBeInTheDocument();
   });
 
   test("a workspace the user is not a member of is not found", async () => {

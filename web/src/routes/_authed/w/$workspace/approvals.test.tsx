@@ -148,6 +148,10 @@ describe("the approvals page", () => {
       "aria-disabled",
       "true",
     );
+    // Read-only, not disabled, so a user typing a reason keeps the focus.
+    const reason = within(request).getByLabelText("Reason (optional)");
+    expect(reason).toHaveAttribute("readonly");
+    expect(reason).toBeEnabled();
   });
 
   test("names the call each button answers", async () => {

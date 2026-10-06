@@ -17,6 +17,9 @@ import (
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
+// ws is the workspace the tests store harnesses in.
+const ws = "home"
+
 func notes() harness.Harness {
 	return harness.Harness{
 		Name:         "notes",
@@ -50,20 +53,21 @@ func TestPutHarness_StoresVersions(t *testing.T) {
 	s := storetest.New(t)
 	h := notes()
 
-	first, err := s.PutHarness(ctx, h)
+	first, err := s.PutHarness(ctx, ws, h)
 	require.NoError(t, err)
-	again, err := s.PutHarness(ctx, h)
+	again, err := s.PutHarness(ctx, ws, h)
 	require.NoError(t, err)
 	h.Instructions = "Tidy the notes, and sort them."
-	second, err := s.PutHarness(ctx, h)
+	second, err := s.PutHarness(ctx, ws, h)
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, first.Version)
 	assert.Equal(t, first, again, "an unchanged harness is not stored again")
 	assert.Equal(t, 2, second.Version)
 	assert.NotEqual(t, first.ID, second.ID)
+	assert.Equal(t, ws, second.Workspace)
 
-	latest, err := s.Harness(ctx, "notes")
+	latest, err := s.Harness(ctx, ws, "notes")
 	require.NoError(t, err)
 	assert.Equal(t, second, latest)
 	assert.Equal(t, h, latest.Harness, "the harness round-trips, policy modules included")
@@ -78,11 +82,11 @@ func TestPutHarness_EmptyAndMissingListsAreTheSame(t *testing.T) {
 	s := storetest.New(t)
 	h := notes()
 	h.Tools, h.Policy = nil, nil
-	first, err := s.PutHarness(ctx, h)
+	first, err := s.PutHarness(ctx, ws, h)
 	require.NoError(t, err)
 
 	h.Tools, h.Policy = []string{}, []policy.Module{}
-	again, err := s.PutHarness(ctx, h)
+	again, err := s.PutHarness(ctx, ws, h)
 
 	require.NoError(t, err)
 	assert.Equal(t, first.Version, again.Version)
@@ -99,7 +103,7 @@ func TestPutHarness_ConcurrentPutsGetTheirOwnVersions(t *testing.T) {
 		wg.Go(func() {
 			h := notes()
 			h.Instructions = fmt.Sprintf("Tidy the notes, take %d.", i)
-			v, err := s.PutHarness(ctx, h)
+			v, err := s.PutHarness(ctx, ws, h)
 			errs <- err
 			versions <- v.Version
 		})
@@ -123,10 +127,10 @@ func TestPutHarness_RejectsInvalidHarnesses(t *testing.T) {
 	h := notes()
 	h.Limits.MaxSteps = 0
 
-	_, err := s.PutHarness(context.Background(), h)
+	_, err := s.PutHarness(context.Background(), ws, h)
 
 	require.ErrorContains(t, err, "limits.max_steps")
-	_, err = s.Harness(context.Background(), "notes")
+	_, err = s.Harness(context.Background(), ws, "notes")
 	require.ErrorIs(t, err, store.ErrNotFound, "nothing is stored")
 }
 
@@ -134,17 +138,17 @@ func TestHarnesses_ListsTheLatestVersionOfEach(t *testing.T) {
 	ctx := context.Background()
 	s := storetest.New(t)
 	h := notes()
-	_, err := s.PutHarness(ctx, h)
+	_, err := s.PutHarness(ctx, ws, h)
 	require.NoError(t, err)
 	h.Instructions = "v2"
-	_, err = s.PutHarness(ctx, h)
+	_, err = s.PutHarness(ctx, ws, h)
 	require.NoError(t, err)
 	other := notes()
 	other.Name = "agenda"
-	_, err = s.PutHarness(ctx, other)
+	_, err = s.PutHarness(ctx, ws, other)
 	require.NoError(t, err)
 
-	all, err := s.Harnesses(ctx)
+	all, err := s.Harnesses(ctx, ws)
 
 	require.NoError(t, err)
 	require.Len(t, all, 2)
@@ -156,18 +160,45 @@ func TestHarnesses_ListsTheLatestVersionOfEach(t *testing.T) {
 func TestHarness_NotFound(t *testing.T) {
 	s := storetest.New(t)
 
-	_, err := s.Harness(context.Background(), "ghost")
+	_, err := s.Harness(context.Background(), ws, "ghost")
 	require.ErrorIs(t, err, store.ErrNotFound)
 	_, err = s.HarnessVersionByID(context.Background(), 42)
 	require.ErrorIs(t, err, store.ErrNotFound)
 }
 
+func TestWorkspaces_AreSeparate(t *testing.T) {
+	ctx := context.Background()
+	s := storetest.New(t)
+	v := newRun(t, s, "r1")
+	other := notes()
+	other.Instructions = "Something else."
+
+	theirs, err := s.PutHarness(ctx, "work", other)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, theirs.Version, "a harness name is versioned per workspace")
+	assert.Equal(t, "work", theirs.Workspace)
+	mine, err := s.Harness(ctx, ws, "notes")
+	require.NoError(t, err)
+	assert.Equal(t, v, mine, "another workspace's harness of the same name is a different harness")
+	all, err := s.Harnesses(ctx, "work")
+	require.NoError(t, err)
+	assert.Equal(t, []store.HarnessVersion{theirs}, all)
+	_, err = s.Harness(ctx, "empty", "notes")
+	require.ErrorIs(t, err, store.ErrNotFound)
+	none, err := s.Harnesses(ctx, "empty")
+	require.NoError(t, err)
+	assert.Empty(t, none)
+	_, err = s.Run(ctx, "work", "r1")
+	require.ErrorIs(t, err, store.ErrNotFound, "a run is found only in its harness's workspace")
+}
+
 // newRun stores the notes harness and a run of it.
 func newRun(t *testing.T, s *store.Store, id string) store.HarnessVersion {
 	t.Helper()
-	v, err := s.PutHarness(context.Background(), notes())
+	v, err := s.PutHarness(context.Background(), ws, notes())
 	require.NoError(t, err)
-	require.NoError(t, s.CreateRun(context.Background(), id, v.ID, "tidy"))
+	require.NoError(t, s.CreateRun(context.Background(), store.NewRun{ID: id, HarnessVersionID: v.ID, Input: "tidy", StartedBy: "alice"}))
 	return v
 }
 
@@ -176,15 +207,16 @@ func TestRuns_Lifecycle(t *testing.T) {
 	s := storetest.New(t)
 	v := newRun(t, s, "r1")
 
-	running, err := s.Run(ctx, "r1")
+	running, err := s.Run(ctx, ws, "r1")
 	require.NoError(t, err)
 	assert.Equal(t, store.RunRunning, running.Status)
 	assert.Equal(t, v.ID, running.HarnessVersionID)
 	assert.Equal(t, "tidy", running.Input)
+	assert.Equal(t, "alice", running.StartedBy)
 	assert.Nil(t, running.FinishedAt)
 
 	require.NoError(t, s.FinishRun(ctx, "r1", store.RunSucceeded, "done", 3, ""))
-	finished, err := s.Run(ctx, "r1")
+	finished, err := s.Run(ctx, ws, "r1")
 	require.NoError(t, err)
 	assert.Equal(t, store.RunSucceeded, finished.Status)
 	assert.Equal(t, "done", finished.Output)
@@ -200,11 +232,11 @@ func TestRuns_Errors(t *testing.T) {
 	s := storetest.New(t)
 	newRun(t, s, "r1")
 
-	require.Error(t, s.CreateRun(ctx, "r1", 1, "again"), "run IDs are unique")
-	require.Error(t, s.CreateRun(ctx, "r2", 999, "x"), "a run needs a stored harness version")
+	require.Error(t, s.CreateRun(ctx, store.NewRun{ID: "r1", HarnessVersionID: 1, Input: "again", StartedBy: "alice"}), "run IDs are unique")
+	require.Error(t, s.CreateRun(ctx, store.NewRun{ID: "r2", HarnessVersionID: 999, Input: "x", StartedBy: "alice"}), "a run needs a stored harness version")
 	require.ErrorContains(t, s.FinishRun(ctx, "r1", store.RunRunning, "", 0, ""), "cannot finish as running")
 	require.ErrorIs(t, s.FinishRun(ctx, "ghost", store.RunFailed, "", 0, ""), store.ErrNotFound)
-	_, err := s.Run(ctx, "ghost")
+	_, err := s.Run(ctx, ws, "ghost")
 	require.ErrorIs(t, err, store.ErrNotFound)
 }
 
@@ -212,18 +244,18 @@ func TestFailRunningRuns(t *testing.T) {
 	ctx := context.Background()
 	s := storetest.New(t)
 	newRun(t, s, "r1")
-	require.NoError(t, s.CreateRun(ctx, "r2", 1, "tidy"))
+	require.NoError(t, s.CreateRun(ctx, store.NewRun{ID: "r2", HarnessVersionID: 1, Input: "tidy", StartedBy: "alice"}))
 	require.NoError(t, s.FinishRun(ctx, "r2", store.RunSucceeded, "ok", 1, ""))
 
 	n, err := s.FailRunningRuns(ctx, "server restarted")
 
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), n)
-	r1, err := s.Run(ctx, "r1")
+	r1, err := s.Run(ctx, ws, "r1")
 	require.NoError(t, err)
 	assert.Equal(t, store.RunFailed, r1.Status)
 	assert.Equal(t, "server restarted", r1.Error)
-	r2, err := s.Run(ctx, "r2")
+	r2, err := s.Run(ctx, ws, "r2")
 	require.NoError(t, err)
 	assert.Equal(t, store.RunSucceeded, r2.Status, "finished runs are left alone")
 }
@@ -353,15 +385,15 @@ func TestRecord_FailsClosed(t *testing.T) {
 	require.ErrorContains(t, err, "audit", "an unreachable database is an error")
 	_, err = s.AuditRecords(ctx, "r1")
 	require.Error(t, err)
-	_, err = s.Harnesses(ctx)
+	_, err = s.Harnesses(ctx, ws)
 	require.Error(t, err)
 	_, err = s.FailRunningRuns(ctx, "x")
 	require.Error(t, err)
-	_, err = s.PutHarness(ctx, notes())
+	_, err = s.PutHarness(ctx, ws, notes())
 	require.Error(t, err)
 	require.Error(t, s.FinishRun(ctx, "r1", store.RunFailed, "", 0, ""))
-	require.Error(t, s.CreateRun(ctx, "r9", 1, ""))
-	_, err = s.Run(ctx, "r1")
+	require.Error(t, s.CreateRun(ctx, store.NewRun{ID: "r9", HarnessVersionID: 1, Input: "", StartedBy: "alice"}))
+	_, err = s.Run(ctx, ws, "r1")
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, store.ErrNotFound)
 }

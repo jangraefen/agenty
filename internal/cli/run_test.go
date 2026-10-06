@@ -31,6 +31,8 @@ import (
 const (
 	apiKey     = "sk-ant-api-key-0123456789"
 	filesToken = "files-token-abcdef0123"
+	aliceToken = "alice-token-0123456789abcdefghijklmn"
+	bobToken   = "bob-token-0123456789abcdefghijklmnopq"
 )
 
 const configYAML = `provider:
@@ -46,6 +48,16 @@ mcp_servers:
       FILES_TOKEN: {env: FILES_TOKEN}
   mail:
     command: mail-mcp
+users:
+  alice:
+    token: {env: ALICE_TOKEN}
+  bob:
+    token: {env: BOB_TOKEN}
+workspaces:
+  home:
+    members: [alice]
+  work:
+    members: [bob]
 policy:
   files: [central.rego]
 `
@@ -101,10 +113,14 @@ type fixture struct {
 func newFixture(t *testing.T, responses ...anthropictest.Response) *fixture {
 	t.Helper()
 	f := &fixture{
-		t:          t,
-		dir:        t.TempDir(),
-		api:        anthropictest.New(t, responses...),
-		vars:       map[string]string{"ANTHROPIC_API_KEY": apiKey, "FILES_TOKEN": filesToken},
+		t:   t,
+		dir: t.TempDir(),
+		api: anthropictest.New(t, responses...),
+		vars: map[string]string{
+			"ANTHROPIC_API_KEY": apiKey, "FILES_TOKEN": filesToken, "ALICE_TOKEN": aliceToken, "BOB_TOKEN": bobToken,
+			// The CLI signs in as alice, in her workspace.
+			"AGENTY_TOKEN": aliceToken, "AGENTY_WORKSPACE": "home",
+		},
 		stdin:      "y\n",
 		tty:        true,
 		read:       &gatewaytest.Tool{Name: "files_read", Result: json.RawMessage(`{"content":"buy milk"}`)},
@@ -176,7 +192,6 @@ func (f *fixture) main(args ...string) int {
 		Stdout:      &f.stdout,
 		Stderr:      &f.stderr,
 		Interactive: f.tty,
-		User:        "alice",
 		LookupEnv:   f.lookupEnv,
 	})
 }
@@ -248,7 +263,7 @@ func TestRun_EndToEnd(t *testing.T) {
 		"approval files_write allow",
 		"result files_write allow",
 	}, events(records))
-	assert.Equal(t, "alice", records[3].Approver)
+	assert.Equal(t, "alice", records[3].Approver, "the signed-in user approved")
 	transcript, err := f.store.Transcript(context.Background(), records[0].RunID)
 	require.NoError(t, err)
 	require.Len(t, transcript, 6)
@@ -305,7 +320,7 @@ func TestApply(t *testing.T) {
 	require.Equal(t, 0, f.main("apply", "--server", url, f.path("harness.yaml")), f.stderr.String())
 
 	assert.Equal(t, "notes version 1\nnotes version 1\nnotes version 2\n", f.stdout.String())
-	v, err := f.store.Harness(context.Background(), "notes")
+	v, err := f.store.Harness(context.Background(), "home", "notes")
 	require.NoError(t, err)
 	require.Len(t, v.Harness.Policy, 1, "the harness's policy is sent with it")
 	assert.Contains(t, v.Harness.Policy[0].Source, "no dotfiles")
@@ -417,7 +432,7 @@ func TestInvariant_CLICredentialsNeverLeak(t *testing.T) {
 	require.Equal(t, 0, code, f.stderr.String())
 	audit, err := json.Marshal(f.audit(t))
 	require.NoError(t, err)
-	for _, secret := range []string{apiKey, filesToken} {
+	for _, secret := range []string{apiKey, filesToken, aliceToken} {
 		assert.NotContains(t, f.stdout.String(), secret, "stdout")
 		assert.NotContains(t, f.stderr.String(), secret, "stderr, approval prompt included")
 		assert.NotContains(t, f.serverLogs.String(), secret, "server log")
@@ -468,6 +483,64 @@ func TestRun_Failures(t *testing.T) {
 	}
 }
 
+func TestClients_SignIn(t *testing.T) {
+	tests := []struct {
+		name     string
+		vars     map[string]string
+		args     []string
+		wantCode int
+		wantLog  string
+	}{
+		{"no token", map[string]string{"AGENTY_TOKEN": ""}, nil, 2, "AGENTY_TOKEN is not set"},
+		{"no workspace", map[string]string{"AGENTY_WORKSPACE": ""}, nil, 2, "--workspace or AGENTY_WORKSPACE is required"},
+		{"unknown token", map[string]string{"AGENTY_TOKEN": "mallory-token-0123456789abcdefghij"}, nil, 1, "server: sign in with a bearer token"},
+		{"token too short to redact", map[string]string{"AGENTY_TOKEN": "short"}, nil, 1, "AGENTY_TOKEN"},
+		{"workspace the user is not in", nil, []string{"--workspace", "work"}, 1, "workspace work: not found"},
+		{"another user's workspace from the environment", map[string]string{"AGENTY_WORKSPACE": "work"}, nil, 1, "workspace work: not found"},
+		{"the flag wins over the environment", map[string]string{"AGENTY_WORKSPACE": "work"}, []string{"--workspace", "home"}, 0, ""},
+	}
+	for _, tt := range tests {
+		for _, cmd := range []string{"apply", "run"} {
+			t.Run(cmd+" with "+tt.name, func(t *testing.T) {
+				f := newFixture(t, done(t))
+				url := f.serverURL()
+				if cmd == "run" {
+					f.apply()
+				}
+				for k, v := range tt.vars {
+					f.vars[k] = v
+				}
+				args := append([]string{cmd, "--server", url}, tt.args...)
+				if cmd == "apply" {
+					args = append(args, f.path("harness.yaml"))
+				} else {
+					args = append(args, "notes", "tidy")
+				}
+
+				code := f.main(args...)
+
+				assert.Equal(t, tt.wantCode, code, f.stderr.String())
+				assert.Contains(t, f.stderr.String(), tt.wantLog)
+				for _, token := range []string{aliceToken, "mallory-token-0123456789abcdefghij"} {
+					assert.NotContains(t, f.stderr.String(), token)
+				}
+			})
+		}
+	}
+}
+
+func TestRun_StartedByTheSignedInUser(t *testing.T) {
+	f := newFixture(t, done(t))
+
+	require.Equal(t, 0, f.run("tidy my notes"), f.stderr.String())
+
+	m := runID.FindStringSubmatch(f.stderr.String())
+	require.NotNil(t, m)
+	run, err := f.store.Run(context.Background(), "home", m[1])
+	require.NoError(t, err)
+	assert.Equal(t, "alice", run.StartedBy)
+}
+
 func TestRun_UnknownHarnessOrServer(t *testing.T) {
 	f := newFixture(t)
 
@@ -505,9 +578,10 @@ func TestRun_StdoutFailure(t *testing.T) {
 	f.apply()
 
 	code := cli.Main(context.Background(), []string{"run", "--server", f.serverURL(), "notes", "tidy"}, cli.Env{
-		Stdin:  strings.NewReader(""),
-		Stdout: failingWriter{},
-		Stderr: &f.stderr,
+		Stdin:     strings.NewReader(""),
+		Stdout:    failingWriter{},
+		Stderr:    &f.stderr,
+		LookupEnv: f.lookupEnv,
 	})
 
 	assert.Equal(t, 1, code)

@@ -29,6 +29,7 @@ type HarnessVersion struct {
 	Version    int32
 	Definition []byte
 	CreatedAt  time.Time
+	Workspace  string
 }
 
 type Run struct {
@@ -41,6 +42,7 @@ type Run struct {
 	Error            string
 	CreatedAt        time.Time
 	FinishedAt       *time.Time
+	StartedBy        string
 }
 
 type RunMessage struct {

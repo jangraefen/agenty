@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -313,6 +314,9 @@ func TestRun_Failures(t *testing.T) {
 			f.servers["files"].Tools = []toolgateway.Tool{f.read}
 		}, "grant files_write: server files has no such tool"},
 		{"server does not start", func(f *fixture) { f.servers["files"].StartErr = assert.AnError }, assert.AnError.Error()},
+		{"failure that carries a secret is logged redacted", func(f *fixture) {
+			f.servers["files"].StartErr = errors.New("login with " + filesToken + " refused")
+		}, "login with [redacted] refused"},
 		{"server lists no tools", func(f *fixture) { f.servers["files"].ToolsErr = assert.AnError }, assert.AnError.Error()},
 		{"invalid policy", func(f *fixture) { f.writeFile(t, "central.rego", "package agenty.tool\n\ndeny contains if {") }, "policy"},
 		{"audit log cannot be opened", func(f *fixture) {

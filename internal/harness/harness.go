@@ -18,17 +18,17 @@ import (
 
 // Harness is the declarative definition of an agent.
 type Harness struct {
-	Name         string   `yaml:"name"`
-	Instructions string   `yaml:"instructions"`
-	Model        Model    `yaml:"model"`
-	Tools        []string `yaml:"tools"`
-	Limits       Limits   `yaml:"limits"`
+	Name         string   `yaml:"name" json:"name"`
+	Instructions string   `yaml:"instructions" json:"instructions"`
+	Model        Model    `yaml:"model" json:"model"`
+	Tools        []string `yaml:"tools" json:"tools"`
+	Limits       Limits   `yaml:"limits" json:"limits"`
 	// Policy optionally tightens central policy for this harness: Rego
 	// modules in package agenty.tool, compiled together as one layer, so they
 	// may share rules with each other, but not with central policy. Load
 	// fills it from the file's policy section; Validate leaves it to the
 	// policy engine, which checks the modules when it compiles them.
-	Policy []policy.Module `yaml:"-"`
+	Policy []policy.Module `yaml:"-" json:"policy"`
 }
 
 // file is a harness file: the harness, and its policy as written.
@@ -50,16 +50,16 @@ type policySection struct {
 
 // Model selects the model provider and model a harness runs on.
 type Model struct {
-	Provider string `yaml:"provider"`
-	Name     string `yaml:"name"`
+	Provider string `yaml:"provider" json:"provider"`
+	Name     string `yaml:"name" json:"name"`
 }
 
 // Limits bound a single run of a harness.
 type Limits struct {
 	// MaxSteps bounds the model calls of a run.
-	MaxSteps int `yaml:"max_steps"`
+	MaxSteps int `yaml:"max_steps" json:"max_steps"`
 	// MaxToolCalls bounds the tool calls of a run, denied ones included.
-	MaxToolCalls int `yaml:"max_tool_calls"`
+	MaxToolCalls int `yaml:"max_tool_calls" json:"max_tool_calls"`
 }
 
 var _ error = (*FieldError)(nil) //nolint:errcheck // an interface guard, not a discarded error

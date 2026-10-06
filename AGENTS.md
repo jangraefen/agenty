@@ -4,13 +4,13 @@ Guidance for AI coding agents working in this repository.
 
 ## Project
 
-Agenty is an open-source, self-hostable platform for building governed AI agent harnesses. The proof of concept is done and the next stage is the web solution: [docs/IDEA.md](docs/IDEA.md) describes the idea, the settled technology choices, the PoC, and the web solution's decisions. Read it before working.
+Agenty is an open-source, self-hostable platform for building governed AI agent harnesses. The proof of concept is done and the next stage is an API server: [docs/IDEA.md](docs/IDEA.md) describes the idea, the settled technology choices, the PoC, and the decisions for the next stages. Read it before working.
 
 ## Non-negotiables
 
 - **Scope**: build the stage IDEA.md describes as next. Add a component only when that stage needs it.
 - **Language**: Go for the backend; the web frontend alone is TypeScript (React, TanStack), in its own deployable. No agent framework: Agenty owns its agent loop on the official model provider SDKs.
-- **Web stack**: gin for the API; PostgreSQL through sqlc.
+- **Server stack**: gin for the API; PostgreSQL only through `internal/store`, with sqlc-generated queries on pgx and goose migrations. After changing a query or migration, run `go generate ./internal/store/` and commit the result. Tests that need PostgreSQL use `storetest`, which reads `AGENTY_TEST_DATABASE_URL`.
 - **Policy**: OPA, embedded, is the only policy engine.
 - **Trust model**: every change preserves the guarantees in IDEA.md, above all: every side effect goes through the Tool Gateway, ungranted tools are denied, and credentials never reach model context or logs.
 - **Tests first**: write the failing test before the implementation. Each trust-model guarantee has a named test; extend it when touching security-relevant code. The gateway, policy and secret redaction code get the most thorough tests.

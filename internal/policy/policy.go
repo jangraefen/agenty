@@ -34,8 +34,8 @@ require_approval := object.get(data, ["agenty", "tool", "require_approval"], [])
 
 // Module is one Rego source file.
 type Module struct {
-	Name   string
-	Source string
+	Name   string `json:"name"`
+	Source string `json:"source"`
 }
 
 // Layer is a set of modules compiled together, such as central policy or

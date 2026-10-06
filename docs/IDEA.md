@@ -22,7 +22,7 @@ The bet is that governance can live in one deterministic place — the path ever
 
 - **Harness** — a declarative definition (YAML) of an agent: instructions, model, granted tools, limits, and expected output. Model-driven, not a flowchart: the builder describes the situation and the limits; the agent decides the steps. The definition does not depend on any agent framework.
 - **Tool** — a typed capability the agent may call, backed by an MCP server.
-- **Tool Gateway** — the single path for every side effect. For each call it resolves the tool, checks that it is granted, evaluates policy, executes, and records the outcome. It also owns the tool servers: it starts the MCP servers that serve a granted tool and stops them when done, so no other code holds a connection to one.
+- **Tool Gateway** — the single path for every side effect. For each call it checks that the tool is granted, evaluates policy, executes, and records the outcome. It also owns the tool servers: it starts the MCP servers that serve a granted tool and stops them when done, so no other code holds a connection to one.
 - **Policy** — rules evaluated before every tool call, producing `allow`, `deny`, or `require_approval`. Builders can tighten central policy, never loosen it. Policy only has `deny` and `require_approval` rules, and central and harness policy are evaluated as separate layers, so no layer can change another's rules.
 - **Run** — one execution of a harness: the unit of tracing and audit.
 
@@ -69,7 +69,7 @@ The first goal is to prove the core loop end to end, in a single Go binary:
 4. Enforce grants and an OPA policy (including `require_approval`, answered on the command line).
 5. Write an audit log of every decision and call.
 
-All five are built. `agenty run` ties them together: an operator config (`agenty.yaml`: model provider, MCP servers, central policy) is kept apart from the harness, so builders never touch credentials. Config values come from the environment (`{env: NAME}`, then treated as secrets and redacted everywhere) or are plain text (`{value: TEXT}`). Approvals are asked at the terminal and rejected when stdin is not one. The audit log is a JSON-lines file, one record per decision, approval and result. The gateway starts only the MCP servers whose tools the harness grants.
+All five are built. `agenty run` ties them together: an operator config (`agenty.yaml`: model provider, MCP servers, central policy) is kept apart from the harness, so builders never touch credentials. Config values come from the environment (`{env: NAME}`, then treated as secrets and redacted everywhere) or are plain text (`{value: TEXT}`). Approvals are asked at the terminal and rejected when stdin is not one. The audit log is a JSON-lines file, one record per decision, approval and result. The gateway starts only the MCP servers whose tools the harness grants, and refuses to start when a granted tool is not served by any of them, so a misconfigured harness fails before it runs.
 
 To try it (needs Node.js for the example's filesystem MCP server, and `ANTHROPIC_API_KEY` in the environment or a `.env` file):
 

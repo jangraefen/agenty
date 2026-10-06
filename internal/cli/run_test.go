@@ -308,7 +308,10 @@ func TestRun_Failures(t *testing.T) {
 		}, "is not supported; use anthropic"},
 		{"granted server not configured", func(f *fixture) {
 			f.writeFile(t, "harness.yaml", strings.Replace(harnessYAML, "files_write]", "files_write, chat_post]", 1))
-		}, "harness grants chat_post, but no MCP server"},
+		}, "grant chat_post: no server"},
+		{"granted tool not served", func(f *fixture) {
+			f.servers["files"].Tools = []toolgateway.Tool{f.read}
+		}, "grant files_write: server files has no such tool"},
 		{"server does not start", func(f *fixture) { f.servers["files"].StartErr = assert.AnError }, assert.AnError.Error()},
 		{"server lists no tools", func(f *fixture) { f.servers["files"].ToolsErr = assert.AnError }, assert.AnError.Error()},
 		{"invalid policy", func(f *fixture) { f.writeFile(t, "central.rego", "package agenty.tool\n\ndeny contains if {") }, "policy"},
@@ -415,15 +418,4 @@ func TestMain_UsageWriteFailure(t *testing.T) {
 
 		assert.Equal(t, 1, code, "args %q", args)
 	}
-}
-
-func TestRun_WarnsAboutGrantsNoServerServes(t *testing.T) {
-	f := newFixture(t, done(t))
-	f.servers["files"].Tools = []toolgateway.Tool{f.read}
-
-	code := f.run("tidy my notes")
-
-	require.Equal(t, 0, code, f.stderr.String())
-	assert.Contains(t, f.stderr.String(), "granted tool not found on its server")
-	assert.Contains(t, f.stderr.String(), "tool=files_write")
 }

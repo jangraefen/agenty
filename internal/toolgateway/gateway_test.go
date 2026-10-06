@@ -22,12 +22,11 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 	}{
 		{"missing policy", toolgateway.Config{MaxToolCalls: 100, Audit: &gatewaytest.Audit{}}, "policy is required"},
 		{"zero tool call limit", toolgateway.Config{Policy: &gatewaytest.Policy{}, Audit: &gatewaytest.Audit{}}, "max tool calls must be greater than 0"},
-		{"nil audit", toolgateway.Config{MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Tools: []toolgateway.Tool{read}}, "audit is required"},
-		{"nil tool", toolgateway.Config{MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Tools: []toolgateway.Tool{nil}, Audit: &gatewaytest.Audit{}}, "tool 0 is nil"},
-		{"unnamed tool", toolgateway.Config{MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Tools: []toolgateway.Tool{&gatewaytest.Tool{}}, Audit: &gatewaytest.Audit{}}, `tool 0: tool name "" must be`},
-		{"duplicate tool", toolgateway.Config{MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Tools: []toolgateway.Tool{read, &gatewaytest.Tool{Name: "tickets_read"}}, Audit: &gatewaytest.Audit{}}, `duplicate tool "tickets_read"`},
+		{"nil audit", toolgateway.Config{MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Servers: gatewaytest.Servers(read)}, "audit is required"},
 		{"empty grant", toolgateway.Config{MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Granted: []string{""}, Audit: &gatewaytest.Audit{}}, `grant 0: tool name ""`},
 		{"invalid grant", toolgateway.Config{MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Granted: []string{"tickets.read"}, Audit: &gatewaytest.Audit{}}, `grant 0: tool name "tickets.read"`},
+		{"grant of an unconfigured server", toolgateway.Config{MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Granted: []string{"tickets_read"}, Audit: &gatewaytest.Audit{}}, `grant tickets_read: no server "tickets" is configured`},
+		{"grant without a server part", toolgateway.Config{MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Granted: []string{"read"}, Servers: gatewaytest.Servers(read), Audit: &gatewaytest.Audit{}}, `grant read: no server "read" is configured`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -45,7 +44,7 @@ func TestCall_PassesArgsAndReturnsResult(t *testing.T) {
 		MaxToolCalls: 100,
 		Policy:       &gatewaytest.Policy{},
 		Granted:      []string{"tickets_read"},
-		Tools:        []toolgateway.Tool{read},
+		Servers:      gatewaytest.Servers(read),
 		Audit:        &gatewaytest.Audit{},
 	})
 	require.NoError(t, err)
@@ -67,7 +66,7 @@ func TestCall_GrantsAreFixedAtConstruction(t *testing.T) {
 		MaxToolCalls: 100,
 		Policy:       &gatewaytest.Policy{},
 		Granted:      granted,
-		Tools:        []toolgateway.Tool{read, del},
+		Servers:      gatewaytest.Servers(read, del),
 		Audit:        &gatewaytest.Audit{},
 	})
 	require.NoError(t, err)
@@ -86,7 +85,7 @@ func TestCall_EachCallGetsItsOwnCallID(t *testing.T) {
 		MaxToolCalls: 100,
 		Policy:       &gatewaytest.Policy{},
 		Granted:      []string{"tickets_read"},
-		Tools:        []toolgateway.Tool{&gatewaytest.Tool{Name: "tickets_read"}},
+		Servers:      gatewaytest.Servers(&gatewaytest.Tool{Name: "tickets_read"}),
 		Audit:        audit,
 	})
 	require.NoError(t, err)
@@ -101,16 +100,16 @@ func TestCall_EachCallGetsItsOwnCallID(t *testing.T) {
 	assert.NotEqual(t, audit.Records[0].CallID, audit.Records[2].CallID)
 }
 
-func TestDefinitions_OnlyGrantedAndResolvedToolsSortedByName(t *testing.T) {
+func TestDefinitions_OnlyGrantedToolsSortedByName(t *testing.T) {
 	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
 		MaxToolCalls: 100,
 		Policy:       &gatewaytest.Policy{},
-		Granted:      []string{"tickets_read", "tickets_label", "tickets_ghost"},
-		Tools: []toolgateway.Tool{
+		Granted:      []string{"tickets_read", "tickets_label"},
+		Servers: gatewaytest.Servers(
 			&gatewaytest.Tool{Name: "tickets_read"},
 			&gatewaytest.Tool{Name: "tickets_delete"},
 			&gatewaytest.Tool{Name: "tickets_label"},
-		},
+		),
 		Audit: &gatewaytest.Audit{},
 	})
 	require.NoError(t, err)
@@ -130,7 +129,7 @@ func TestStart_EachRunHasItsOwnID(t *testing.T) {
 		MaxToolCalls: 100,
 		Policy:       &gatewaytest.Policy{},
 		Granted:      []string{"tickets_read"},
-		Tools:        []toolgateway.Tool{&gatewaytest.Tool{Name: "tickets_read"}},
+		Servers:      gatewaytest.Servers(&gatewaytest.Tool{Name: "tickets_read"}),
 		Audit:        audit,
 	})
 	require.NoError(t, err)
@@ -162,7 +161,7 @@ func TestStart_EachRunHasItsOwnLimitAndCounts(t *testing.T) {
 		MaxToolCalls: 1,
 		Policy:       policy,
 		Granted:      []string{"tickets_read"},
-		Tools:        []toolgateway.Tool{read},
+		Servers:      gatewaytest.Servers(read),
 		Audit:        &gatewaytest.Audit{},
 	})
 	require.NoError(t, err)
@@ -180,7 +179,7 @@ func TestStart_EachRunHasItsOwnLimitAndCounts(t *testing.T) {
 	assert.Zero(t, policy.Inputs[1].Calls.Total, "the second run starts with no executed calls")
 }
 
-func TestNew_ValidatesTools(t *testing.T) {
+func TestNew_ValidatesServerTools(t *testing.T) {
 	read := &gatewaytest.Tool{Name: "tickets_read"}
 	tests := []struct {
 		name    string
@@ -188,22 +187,46 @@ func TestNew_ValidatesTools(t *testing.T) {
 		wantErr string
 	}{
 		{"valid", []toolgateway.Tool{read, &gatewaytest.Tool{Name: "tickets_label"}}, ""},
-		{"none", nil, ""},
-		{"nil tool", []toolgateway.Tool{read, nil}, "tool 1 is nil"},
-		{"unnamed tool", []toolgateway.Tool{&gatewaytest.Tool{}}, `tool 0: tool name "" must be`},
-		{"tool name models cannot use", []toolgateway.Tool{&gatewaytest.Tool{Name: "tickets.read"}}, `tool 0: tool name "tickets.read"`},
+		{"nil tool", []toolgateway.Tool{read, nil}, `tool "<nil>" is not named tickets_<tool>`},
+		{"unnamed tool", []toolgateway.Tool{read, &gatewaytest.Tool{}}, `tool "" is not named tickets_<tool>`},
+		{"tool name models cannot use", []toolgateway.Tool{read, &gatewaytest.Tool{Name: "tickets_re.ad"}}, `tool name "tickets_re.ad" must be`},
 		{"duplicate tool", []toolgateway.Tool{read, &gatewaytest.Tool{Name: "tickets_read"}}, `duplicate tool "tickets_read"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := toolgateway.New(context.Background(), toolgateway.Config{Tools: tt.tools, MaxToolCalls: 1, Policy: &gatewaytest.Policy{}, Audit: &gatewaytest.Audit{}})
+			tickets := &gatewaytest.Server{Tools: tt.tools}
+			gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+				Granted:      []string{"tickets_read"},
+				Servers:      map[string]toolgateway.ToolServer{"tickets": tickets},
+				MaxToolCalls: 1,
+				Policy:       &gatewaytest.Policy{},
+				Audit:        &gatewaytest.Audit{},
+			})
 			if tt.wantErr == "" {
-				assert.NoError(t, err)
+				require.NoError(t, err)
+				assert.NoError(t, gw.Close())
 				return
 			}
-			assert.ErrorContains(t, err, tt.wantErr)
+			require.ErrorContains(t, err, "server tickets: "+tt.wantErr)
+			assert.Equal(t, 1, tickets.Closed, "a server with invalid tools is stopped")
 		})
 	}
+}
+
+func TestNew_FailsOnGrantsNoServerServes(t *testing.T) {
+	tickets := &gatewaytest.Server{Tools: []toolgateway.Tool{&gatewaytest.Tool{Name: "tickets_read"}}}
+
+	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+		Granted:      []string{"tickets_read", "tickets_ghost"},
+		Servers:      map[string]toolgateway.ToolServer{"tickets": tickets},
+		MaxToolCalls: 1,
+		Policy:       &gatewaytest.Policy{},
+		Audit:        &gatewaytest.Audit{},
+	})
+
+	require.ErrorContains(t, err, "grant tickets_ghost: server tickets has no such tool")
+	assert.Nil(t, gw)
+	assert.Equal(t, 1, tickets.Closed, "the started server is stopped")
 }
 
 func TestValidateToolName(t *testing.T) {

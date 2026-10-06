@@ -58,7 +58,7 @@ func callTool(ctx context.Context, t *testing.T, tool toolgateway.Tool, args jso
 	t.Helper()
 	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
 		Granted:      []string{tool.Definition().Name},
-		Tools:        []toolgateway.Tool{tool},
+		Servers:      gatewaytest.Servers(tool),
 		MaxToolCalls: 100,
 		Policy:       &gatewaytest.Policy{},
 		Audit:        &gatewaytest.Audit{},
@@ -86,8 +86,15 @@ func TestTools_PrefixesNamesAndKeepsDefinitions(t *testing.T) {
 	def := tools["test_echo"].Definition()
 	assert.Equal(t, "Echoes its arguments.", def.Description)
 	assert.JSONEq(t, `{"type":"object"}`, string(def.InputSchema))
-	_, err := toolgateway.New(context.Background(), toolgateway.Config{Tools: slices.Collect(maps.Values(tools)), MaxToolCalls: 1, Policy: &gatewaytest.Policy{}, Audit: &gatewaytest.Audit{}})
+	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+		Granted:      slices.Collect(maps.Keys(tools)),
+		Servers:      gatewaytest.Servers(slices.Collect(maps.Values(tools))...),
+		MaxToolCalls: 1,
+		Policy:       &gatewaytest.Policy{},
+		Audit:        &gatewaytest.Audit{},
+	})
 	require.NoError(t, err, "the gateway accepts every MCP tool")
+	assert.Len(t, gw.Definitions(), len(tools))
 }
 
 func TestCall_Results(t *testing.T) {

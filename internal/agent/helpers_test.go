@@ -25,15 +25,15 @@ type fixture struct {
 	del     *gatewaytest.Tool
 }
 
-// newFixture grants tickets_read, tickets_label and tickets_ghost (which no
-// tool resolves). tickets_delete is registered but not granted.
+// newFixture grants tickets_read and tickets_label. tickets_delete is served
+// but not granted.
 func newFixture(maxSteps int) *fixture {
 	return &fixture{
 		harness: &harness.Harness{
 			Name:         "triage",
 			Instructions: instructions,
 			Model:        harness.Model{Provider: "scripted", Name: "scripted"},
-			Tools:        []string{"tickets_read", "tickets_label", "tickets_ghost"},
+			Tools:        []string{"tickets_read", "tickets_label"},
 			Limits:       harness.Limits{MaxSteps: maxSteps, MaxToolCalls: 50},
 		},
 		audit: &gatewaytest.Audit{},
@@ -48,7 +48,7 @@ func (f *fixture) config(m model.Model) agent.Config {
 	return agent.Config{
 		Harness: f.harness,
 		Model:   m,
-		Tools:   []toolgateway.Tool{f.read, f.label, f.del},
+		Servers: gatewaytest.Servers(f.read, f.label, f.del),
 		Audit:   f.audit,
 	}
 }

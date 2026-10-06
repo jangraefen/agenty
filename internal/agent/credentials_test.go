@@ -13,7 +13,6 @@ import (
 	"github.com/jangraefen/agenty/internal/model"
 	"github.com/jangraefen/agenty/internal/model/anthropic"
 	"github.com/jangraefen/agenty/internal/model/anthropic/anthropictest"
-	"github.com/jangraefen/agenty/internal/toolgateway"
 	"github.com/jangraefen/agenty/internal/toolgateway/gatewaytest"
 )
 
@@ -43,7 +42,7 @@ func TestInvariant_CredentialsNeverReachModel(t *testing.T) {
 	a, err := agent.New(context.Background(), agent.Config{
 		Harness: f.harness,
 		Model:   m,
-		Tools:   []toolgateway.Tool{leakyResult, leakyError},
+		Servers: gatewaytest.Servers(leakyResult, leakyError),
 		Audit:   audit,
 		Secrets: secrets,
 	})

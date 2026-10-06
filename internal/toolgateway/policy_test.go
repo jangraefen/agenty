@@ -24,7 +24,7 @@ func TestCall_PolicySeesTheCallAndExecutedCounts(t *testing.T) {
 		MaxToolCalls: 100,
 		Policy:       policy,
 		Granted:      []string{"tickets_read", "tickets_label", "tickets_close"},
-		Tools:        []toolgateway.Tool{read, label, &gatewaytest.Tool{Name: "tickets_close"}},
+		Servers:      gatewaytest.Servers(read, label, &gatewaytest.Tool{Name: "tickets_close"}),
 		Audit:        &gatewaytest.Audit{},
 	})
 	require.NoError(t, err)
@@ -66,7 +66,7 @@ func TestCall_ApproverSeesTheRequest(t *testing.T) {
 		}},
 		Approver: approver,
 		Granted:  []string{"tickets_label"},
-		Tools:    []toolgateway.Tool{&gatewaytest.Tool{Name: "tickets_label"}},
+		Servers:  gatewaytest.Servers(&gatewaytest.Tool{Name: "tickets_label"}),
 		Audit:    &gatewaytest.Audit{},
 	})
 	require.NoError(t, err)
@@ -96,7 +96,7 @@ func TestCall_ToolCallLimitCountsEveryAttempt(t *testing.T) {
 		MaxToolCalls: 2,
 		Policy:       policy,
 		Granted:      []string{"tickets_read"},
-		Tools:        []toolgateway.Tool{read},
+		Servers:      gatewaytest.Servers(read),
 		Audit:        audit,
 	})
 	require.NoError(t, err)

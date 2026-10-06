@@ -32,21 +32,14 @@ type ToolSession interface {
 // the server name.
 var serverName = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
-// validateServers checks server names, and that no in-process tool uses a
-// server's name, so a tool's name always says where it runs.
-func validateServers(servers map[string]ToolServer, tools []Tool) error {
+// validateServers checks that every server is set and has a valid name.
+func validateServers(servers map[string]ToolServer) error {
 	for _, name := range slices.Sorted(maps.Keys(servers)) {
 		if !serverName.MatchString(name) {
 			return fmt.Errorf("toolgateway: server name %q must be lowercase letters, digits and single hyphens", name)
 		}
 		if servers[name] == nil {
 			return fmt.Errorf("toolgateway: server %s is nil", name)
-		}
-	}
-	for _, tool := range tools {
-		tool := tool.Definition().Name
-		if server, _, found := strings.Cut(tool, "_"); found && servers[server] != nil {
-			return fmt.Errorf("toolgateway: tool %q is named like a tool of server %s", tool, server)
 		}
 	}
 	return nil
@@ -60,9 +53,8 @@ func validateServers(servers map[string]ToolServer, tools []Tool) error {
 func startServers(ctx context.Context, servers map[string]ToolServer, granted map[string]bool) ([]namedSession, []Tool, error) {
 	needed := map[string]bool{}
 	for tool := range granted {
-		if server, _, found := strings.Cut(tool, "_"); found && servers[server] != nil {
-			needed[server] = true
-		}
+		server, _, _ := strings.Cut(tool, "_")
+		needed[server] = true
 	}
 	names := slices.Sorted(maps.Keys(needed))
 
@@ -127,10 +119,19 @@ func startServer(ctx context.Context, name string, server ToolServer) started {
 	if err != nil {
 		return started{session: session, err: fmt.Errorf("toolgateway: server %s: tools: %w", name, err)}
 	}
+	seen := make(map[string]bool, len(tools))
 	for _, tool := range tools {
 		if tool == nil || !strings.HasPrefix(tool.Definition().Name, name+"_") {
 			return started{session: session, err: fmt.Errorf("toolgateway: server %s: tool %q is not named %s_<tool>", name, toolNameOf(tool), name)}
 		}
+		def := tool.Definition()
+		if err := ValidateToolName(def.Name); err != nil {
+			return started{session: session, err: fmt.Errorf("toolgateway: server %s: %w", name, err)}
+		}
+		if seen[def.Name] {
+			return started{session: session, err: fmt.Errorf("toolgateway: server %s: duplicate tool %q", name, def.Name)}
+		}
+		seen[def.Name] = true
 	}
 	return started{session: session, tools: tools}
 }

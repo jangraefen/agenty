@@ -134,9 +134,6 @@ func TestNew_ValidatesBeforeStartingServers(t *testing.T) {
 		{"invalid config", func(cfg *toolgateway.Config) { cfg.Policy = nil }, "policy is required"},
 		{"nil server", func(cfg *toolgateway.Config) { cfg.Servers["tickets"] = nil }, "server tickets is nil"},
 		{"invalid server name", func(cfg *toolgateway.Config) { cfg.Servers["my_tickets"] = &gatewaytest.Server{} }, `server name "my_tickets" must be`},
-		{"server name clashes with a tool", func(cfg *toolgateway.Config) {
-			cfg.Tools = []toolgateway.Tool{&gatewaytest.Tool{Name: "files_read"}}
-		}, `tool "files_read" is named like a tool of server files`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

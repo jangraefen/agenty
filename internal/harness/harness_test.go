@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jangraefen/agenty/internal/harness"
+	"github.com/jangraefen/agenty/internal/policy"
 )
 
 func TestLoad_Valid(t *testing.T) {
@@ -34,13 +35,10 @@ func TestLoad_Valid(t *testing.T) {
 				Model:        harness.Model{Provider: "anthropic", Name: "claude-sonnet-5-5"},
 				Tools:        []string{"tickets_read", "tickets_label"},
 				Limits:       harness.Limits{MaxSteps: 20, MaxToolCalls: 50},
-				Policy: &harness.Policy{
-					Files: []string{"triage.rego", "helpers.rego"},
-					Rules: "deny contains \"too many writes\" if input.calls.by_tool[\"tickets_label\"] >= 10\n",
-					FileSources: []string{
-						"package agenty.tool\n\nrequire_approval contains \"labels need a human\" if input.tool == \"tickets_label\"\n",
-						"package agenty.tool\n\nwrites := {\"tickets_label\", \"tickets_close\"}\n",
-					},
+				Policy: []policy.Module{
+					{Name: "triage.rego", Source: "package agenty.tool\n\nrequire_approval contains \"labels need a human\" if input.tool == \"tickets_label\"\n"},
+					{Name: "helpers.rego", Source: "package agenty.tool\n\nwrites := {\"tickets_label\", \"tickets_close\"}\n"},
+					policy.RulesModule("ticket-triage (inline policy)", "deny contains \"too many writes\" if input.calls.by_tool[\"tickets_label\"] >= 10\n"),
 				},
 			},
 		},
@@ -52,7 +50,7 @@ func TestLoad_Valid(t *testing.T) {
 				Model:        harness.Model{Provider: "anthropic", Name: "claude-sonnet-5-5"},
 				Tools:        []string{"tickets_label"},
 				Limits:       harness.Limits{MaxSteps: 3, MaxToolCalls: 5},
-				Policy:       &harness.Policy{Rules: "require_approval contains \"writes need a human\" if input.tool == \"tickets_label\"\n"},
+				Policy:       []policy.Module{policy.RulesModule("inline (inline policy)", "require_approval contains \"writes need a human\" if input.tool == \"tickets_label\"\n")},
 			},
 		},
 	}
@@ -121,12 +119,15 @@ func TestLoad_InvalidDocument(t *testing.T) {
 	}
 }
 
-func TestParse_MultipleDocumentsRejected(t *testing.T) {
+func TestLoad_MultipleDocumentsRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "h.yaml")
 	doc := "name: a\ninstructions: x\nmodel: {provider: p, name: m}\nlimits: {max_steps: 1, max_tool_calls: 1}\n---\nname: b\n"
-	got, err := harness.Parse([]byte(doc))
-	require.Error(t, err)
+	require.NoError(t, os.WriteFile(path, []byte(doc), 0o600))
+
+	got, err := harness.Load(path)
+
+	require.ErrorContains(t, err, "single document")
 	assert.Nil(t, got)
-	assert.ErrorContains(t, err, "single document")
 }
 
 func TestFieldError_Error(t *testing.T) {
@@ -159,20 +160,6 @@ func fieldsOf(err error) []string {
 	return fields
 }
 
-func TestParse_KeepsPolicyPathWithoutReadingIt(t *testing.T) {
-	doc := "name: a\ninstructions: x\nmodel: {provider: p, name: m}\nlimits: {max_steps: 1, max_tool_calls: 1}\npolicy: {files: [extra.rego]}\n"
-	got, err := harness.Parse([]byte(doc))
-	require.NoError(t, err)
-	assert.Equal(t, []string{"extra.rego"}, got.Policy.Files)
-	assert.Empty(t, got.Policy.FileSources, "only Load knows where the harness file lives")
-}
-
-func TestParse_PolicyFileSourcesCannotComeFromYAML(t *testing.T) {
-	doc := "name: a\ninstructions: x\nmodel: {provider: p, name: m}\nlimits: {max_steps: 1, max_tool_calls: 1}\npolicy: {files: [x.rego], filesources: [y]}\n"
-	_, err := harness.Parse([]byte(doc))
-	require.ErrorContains(t, err, "filesources")
-}
-
 func TestLoad_AbsolutePolicyPath(t *testing.T) {
 	dir := t.TempDir()
 	policyPath := filepath.Join(dir, "elsewhere.rego")
@@ -184,5 +171,5 @@ func TestLoad_AbsolutePolicyPath(t *testing.T) {
 	got, err := harness.Load(harnessPath)
 
 	require.NoError(t, err)
-	assert.Equal(t, []string{"package agenty.tool\n"}, got.Policy.FileSources)
+	assert.Equal(t, []policy.Module{{Name: policyPath, Source: "package agenty.tool\n"}}, got.Policy)
 }

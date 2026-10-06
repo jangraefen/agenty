@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jangraefen/agenty/internal/agent"
-	"github.com/jangraefen/agenty/internal/harness"
 	"github.com/jangraefen/agenty/internal/model"
 	"github.com/jangraefen/agenty/internal/policy"
 	"github.com/jangraefen/agenty/internal/toolgateway"
@@ -160,7 +159,7 @@ func TestRun_FirstRequestCarriesInstructionsInputAndGrantedTools(t *testing.T) {
 		assert.JSONEq(t, `{"type":"object"}`, string(d.InputSchema))
 	}
 	assert.Equal(t, []string{"tickets_label", "tickets_read"}, names,
-		"only granted, resolvable tools are offered to the model")
+		"only granted tools are offered to the model")
 }
 
 func TestRun_FeedsToolResultsBackAndKeepsTheTranscript(t *testing.T) {
@@ -218,12 +217,8 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 	m := model.NewScripted(model.Reply("unused"))
 	invalid := *f.harness
 	invalid.Limits.MaxSteps = 0
-	unloaded := *f.harness
-	unloaded.Policy = &harness.Policy{Files: []string{"triage.rego"}}
 	broken := *f.harness
-	broken.Policy = &harness.Policy{Files: []string{"triage.rego"}, FileSources: []string{"package agenty.tool\n\ndeny contains"}}
-	brokenInline := *f.harness
-	brokenInline.Policy = &harness.Policy{Rules: "deny contains"}
+	broken.Policy = []policy.Module{{Name: "triage.rego", Source: "package agenty.tool\n\ndeny contains"}}
 	ghost := *f.harness
 	ghost.Tools = []string{"tickets_read", "tickets_ghost"}
 	withConfig := func(change func(*agent.Config)) agent.Config {
@@ -242,12 +237,10 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 		{"nil audit", withConfig(func(c *agent.Config) { c.Audit = nil }), "audit is required"},
 		{"invalid harness", withConfig(func(c *agent.Config) { c.Harness = &invalid }), "limits.max_steps"},
 		{"grant no server serves", withConfig(func(c *agent.Config) { c.Harness = &ghost }), "grant tickets_ghost: server tickets has no such tool"},
-		{"harness policy not loaded", withConfig(func(c *agent.Config) { c.Harness = &unloaded }), `harness policy "triage.rego" was not loaded`},
 		{"invalid central policy", withConfig(func(c *agent.Config) {
 			c.Policy = []policy.Module{{Name: "central.rego", Source: "package agenty.tool\n\ndeny contains"}}
 		}), "central.rego"},
 		{"invalid harness policy", withConfig(func(c *agent.Config) { c.Harness = &broken }), "triage.rego"},
-		{"invalid inline harness policy", withConfig(func(c *agent.Config) { c.Harness = &brokenInline }), "triage (inline policy)"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

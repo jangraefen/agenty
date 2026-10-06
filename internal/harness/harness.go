@@ -12,6 +12,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/jangraefen/agenty/internal/policy"
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
@@ -22,23 +23,28 @@ type Harness struct {
 	Model        Model    `yaml:"model"`
 	Tools        []string `yaml:"tools"`
 	Limits       Limits   `yaml:"limits"`
-	// Policy optionally tightens central policy for this harness.
-	Policy *Policy `yaml:"policy"`
+	// Policy optionally tightens central policy for this harness: Rego
+	// modules in package agenty.tool, compiled together as one layer, so they
+	// may share rules with each other, but not with central policy. Load
+	// fills it from the file's policy section.
+	Policy []policy.Module `yaml:"-"`
 }
 
-// Policy is a harness policy: Rego files, inline rules, or both. Together they
-// form one layer, so they may share rules with each other, but not with
-// central policy.
-type Policy struct {
+// file is a harness file: the harness, and its policy as written.
+type file struct {
+	Harness `yaml:",inline"`
+	Policy  *policySection `yaml:"policy"`
+}
+
+// policySection is a harness policy as written: Rego files, inline rules, or
+// both.
+type policySection struct {
 	// Files are Rego modules in package agenty.tool, relative to the harness
 	// file.
 	Files []string `yaml:"files"`
 	// Rules are Rego rules without a package line; package agenty.tool is
 	// implied.
 	Rules string `yaml:"rules"`
-	// FileSources holds the content of each of Files, in order. Load fills
-	// it; it never comes from YAML.
-	FileSources []string `yaml:"-"`
 }
 
 // Model selects the model provider and model a harness runs on.
@@ -72,38 +78,43 @@ var slug = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 var packageLine = regexp.MustCompile(`(?m)^\s*package\s`)
 
 // Load reads, parses and validates the harness file at path, and reads its
-// policy files, if any, relative to it.
+// policy files, if any, relative to it. Unknown keys are rejected.
 func Load(path string) (*Harness, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // G304: reading the file the caller names is the purpose of Load.
 	if err != nil {
 		return nil, fmt.Errorf("load harness: %w", err)
 	}
-	h, err := Parse(data)
+	f, err := parse(data)
 	if err != nil {
 		return nil, fmt.Errorf("harness %s: %w", path, err)
 	}
-	for i, file := range policyFiles(h) {
-		policyPath := file
-		if !filepath.IsAbs(policyPath) {
-			policyPath = filepath.Join(filepath.Dir(path), policyPath)
+	h := f.Harness
+	if p := f.Policy; p != nil {
+		for i, name := range p.Files {
+			policyPath := name
+			if !filepath.IsAbs(policyPath) {
+				policyPath = filepath.Join(filepath.Dir(path), policyPath)
+			}
+			src, err := os.ReadFile(policyPath) //nolint:gosec // G304: the harness names its own policy file.
+			if err != nil {
+				return nil, fmt.Errorf("harness %s: %w", path, &FieldError{Field: fmt.Sprintf("policy.files[%d]", i), Msg: err.Error()})
+			}
+			h.Policy = append(h.Policy, policy.Module{Name: name, Source: string(src)})
 		}
-		src, err := os.ReadFile(policyPath) //nolint:gosec // G304: the harness names its own policy file.
-		if err != nil {
-			return nil, fmt.Errorf("harness %s: %w", path, &FieldError{Field: fmt.Sprintf("policy.files[%d]", i), Msg: err.Error()})
+		if p.Rules != "" {
+			h.Policy = append(h.Policy, policy.RulesModule(h.Name+" (inline policy)", p.Rules))
 		}
-		h.Policy.FileSources = append(h.Policy.FileSources, string(src))
 	}
-	return h, nil
+	return &h, nil
 }
 
-// Parse decodes and validates a harness from a single YAML document.
-// Unknown keys are rejected.
-func Parse(data []byte) (*Harness, error) {
+// parse decodes and validates a harness file from a single YAML document.
+func parse(data []byte) (*file, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 
-	var h Harness
-	if err := dec.Decode(&h); err != nil && !errors.Is(err, io.EOF) {
+	var f file
+	if err := dec.Decode(&f); err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("decode: %w", err)
 	}
 	var extra any
@@ -111,10 +122,10 @@ func Parse(data []byte) (*Harness, error) {
 		return nil, errors.New("decode: harness must be a single document")
 	}
 
-	if err := h.Validate(); err != nil {
+	if err := errors.Join(f.Validate(), f.Policy.validate()); err != nil {
 		return nil, err
 	}
-	return &h, nil
+	return &f, nil
 }
 
 // Validate reports every invalid field, joined into one error of FieldErrors.
@@ -157,31 +168,35 @@ func (h *Harness) Validate() error {
 	if h.Limits.MaxToolCalls <= 0 {
 		add("limits.max_tool_calls", "must be greater than 0")
 	}
-	if p := h.Policy; p != nil {
-		switch {
-		case len(p.Files) == 0 && p.Rules == "":
-			add("policy", "needs files or rules")
-		case packageLine.MatchString(p.Rules):
-			add("policy.rules", "must not declare a package; package agenty.tool is implied")
-		}
-		seenFiles := make(map[string]bool, len(p.Files))
-		for i, file := range p.Files {
-			field := fmt.Sprintf("policy.files[%d]", i)
-			switch {
-			case file == "":
-				add(field, "must not be empty")
-			case seenFiles[file]:
-				add(field, fmt.Sprintf("duplicate file %q", file))
-			}
-			seenFiles[file] = true
-		}
-	}
 	return errors.Join(errs...)
 }
 
-func policyFiles(h *Harness) []string {
-	if h.Policy == nil {
+// validate reports every invalid field of the policy section, if there is
+// one.
+func (p *policySection) validate() error {
+	if p == nil {
 		return nil
 	}
-	return h.Policy.Files
+	var errs []error
+	add := func(field, msg string) {
+		errs = append(errs, &FieldError{Field: field, Msg: msg})
+	}
+	switch {
+	case len(p.Files) == 0 && p.Rules == "":
+		add("policy", "needs files or rules")
+	case packageLine.MatchString(p.Rules):
+		add("policy.rules", "must not declare a package; package agenty.tool is implied")
+	}
+	seen := make(map[string]bool, len(p.Files))
+	for i, name := range p.Files {
+		field := fmt.Sprintf("policy.files[%d]", i)
+		switch {
+		case name == "":
+			add(field, "must not be empty")
+		case seen[name]:
+			add(field, fmt.Sprintf("duplicate file %q", name))
+		}
+		seen[name] = true
+	}
+	return errors.Join(errs...)
 }

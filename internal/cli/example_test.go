@@ -13,7 +13,6 @@ import (
 	"github.com/jangraefen/agenty/internal/config"
 	"github.com/jangraefen/agenty/internal/harness"
 	"github.com/jangraefen/agenty/internal/model"
-	"github.com/jangraefen/agenty/internal/policy"
 	"github.com/jangraefen/agenty/internal/toolgateway"
 	"github.com/jangraefen/agenty/internal/toolgateway/gatewaytest"
 )
@@ -32,10 +31,6 @@ func TestExample_Notes(t *testing.T) {
 	for _, name := range h.Tools {
 		tools = append(tools, &gatewaytest.Tool{Name: name, Result: json.RawMessage(`{}`)})
 	}
-	central := make([]policy.Module, len(cfg.Policy.Files))
-	for i, file := range cfg.Policy.Files {
-		central[i] = policy.Module{Name: file, Source: cfg.Policy.FileSources[i]}
-	}
 	audit := &gatewaytest.Audit{}
 	call := func(id, name, args string) model.ToolCall {
 		return model.ToolCall{ID: id, Name: name, Args: json.RawMessage(args)}
@@ -52,7 +47,7 @@ func TestExample_Notes(t *testing.T) {
 			model.Reply("done"),
 		),
 		Servers:  gatewaytest.Servers(tools...),
-		Policy:   central,
+		Policy:   cfg.Policy,
 		Approver: &gatewaytest.Approver{Approval: toolgateway.Approval{Approved: true, Approver: "alice"}},
 		Audit:    audit,
 	})

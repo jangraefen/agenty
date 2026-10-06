@@ -20,7 +20,6 @@ import (
 	"github.com/jangraefen/agenty/internal/mcptool"
 	"github.com/jangraefen/agenty/internal/model/anthropic"
 	"github.com/jangraefen/agenty/internal/must"
-	"github.com/jangraefen/agenty/internal/policy"
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
@@ -194,15 +193,11 @@ func runHarness(ctx context.Context, logger *slog.Logger, env Env, flags runFlag
 		}
 	}()
 
-	central := make([]policy.Module, len(cfg.Policy.Files))
-	for i, file := range cfg.Policy.Files {
-		central[i] = policy.Module{Name: file, Source: cfg.Policy.FileSources[i]}
-	}
 	a, err := agent.New(ctx, agent.Config{
 		Harness:  h,
 		Model:    m,
 		Servers:  servers,
-		Policy:   central,
+		Policy:   cfg.Policy,
 		Approver: newTerminalApprover(env.Stdin, env.Stderr, env.Interactive, env.User),
 		Audit:    log,
 		Secrets:  resolved.Secrets,

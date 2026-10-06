@@ -178,10 +178,11 @@ var _ toolgateway.Audit = runAudit{}
 // Record stores rec even if the run is being cancelled: a result is recorded
 // after its call ran, and must not be lost to a shutdown.
 func (a runAudit) Record(ctx context.Context, rec toolgateway.Record) error {
-	if err := a.store.Record(context.WithoutCancel(ctx), rec); err != nil {
+	at, err := a.store.RecordAt(context.WithoutCancel(ctx), rec)
+	if err != nil {
 		return err
 	}
-	a.hub.publish(event{api.EventAudit, rec})
+	a.hub.publish(event{api.EventAudit, api.FromRecord(rec, at)})
 	return nil
 }
 

@@ -470,3 +470,17 @@ func TestRecord_FailsClosed(t *testing.T) {
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, store.ErrNotFound)
 }
+
+func TestRecordAt_ReturnsWhenItRecorded(t *testing.T) {
+	ctx := context.Background()
+	s := storetest.New(t)
+	newRun(t, s, "r1")
+
+	at, err := s.RecordAt(ctx, toolgateway.Record{RunID: "r1", CallID: "c1", Event: toolgateway.EventDecision, Tool: "files_read", Decision: toolgateway.Allow})
+
+	require.NoError(t, err)
+	records, err := s.AuditRecords(ctx, "r1")
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	assert.Equal(t, records[0].RecordedAt, at)
+}

@@ -191,8 +191,9 @@ func (f *fixture) doAs(t *testing.T, bearer, method, path string, body, out any)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, resp.Body.Close()) }()
+	got := readChecked(t, req, resp)
 	if out != nil {
-		require.NoError(t, json.NewDecoder(resp.Body).Decode(out))
+		require.NoError(t, json.NewDecoder(got).Decode(out))
 	}
 	return resp.StatusCode
 }
@@ -234,6 +235,7 @@ func (f *fixture) events(t *testing.T, runID string) *stream {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.True(t, strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream"), resp.Header.Get("Content-Type"))
+	checkContract(t, req, resp, nil)
 	s := &stream{t: t, body: resp.Body, lines: bufio.NewScanner(resp.Body), events: make(chan sse)}
 	t.Cleanup(func() { assert.NoError(t, resp.Body.Close()) })
 	go s.read()
@@ -257,12 +259,14 @@ func (s *stream) read() {
 	}
 }
 
-// next returns the next event, failing after a few seconds.
+// next returns the next event, checked against the spec, failing after a
+// few seconds.
 func (s *stream) next() sse {
 	s.t.Helper()
 	select {
 	case e, ok := <-s.events:
 		require.True(s.t, ok, "the stream ended early")
+		checkEvent(s.t, e.name, e.data)
 		return e
 	case <-time.After(5 * time.Second):
 		s.t.Fatal("no event within 5s")
@@ -280,6 +284,7 @@ func (s *stream) rest() []sse {
 			if !ok {
 				return out
 			}
+			checkEvent(s.t, e.name, e.data)
 			out = append(out, e)
 		case <-time.After(5 * time.Second):
 			s.t.Fatal("the stream did not end within 5s")

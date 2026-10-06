@@ -7,18 +7,15 @@
 package server
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"mime"
 	"net"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,7 +29,6 @@ import (
 	"github.com/jangraefen/agenty/internal/mcptool"
 	"github.com/jangraefen/agenty/internal/model"
 	"github.com/jangraefen/agenty/internal/model/anthropic"
-	"github.com/jangraefen/agenty/internal/policy"
 	"github.com/jangraefen/agenty/internal/store"
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
@@ -143,21 +139,12 @@ func (s *Server) routes() *gin.Engine {
 	r.NoRoute(func(c *gin.Context) {
 		s.fail(c, http.StatusNotFound, fmt.Errorf("%s %s: no such route", c.Request.Method, c.Request.URL.Path))
 	})
-	v1 := r.Group("/v1")
-	v1.GET("/me", s.me)
-	ws := v1.Group("/workspaces/:workspace", s.member)
-	ws.PUT("/harnesses/:name", s.putHarness)
-	ws.GET("/harnesses", s.listHarnesses)
-	ws.GET("/harnesses/:name", s.getHarness)
-	ws.POST("/runs", s.createRun)
-	ws.GET("/runs", s.listRuns)
-	ws.GET("/runs/:id", s.getRun)
-	ws.POST("/runs/:id/cancel", s.cancelRun)
-	ws.GET("/approvals", s.listApprovals)
-	ws.GET("/runs/:id/audit", s.getAudit)
-	ws.GET("/runs/:id/transcript", s.getTranscript)
-	ws.GET("/runs/:id/events", s.streamEvents)
-	ws.POST("/runs/:id/approvals/:approval", s.answerApproval)
+	RegisterHandlersWithOptions(r, handlers{s}, GinServerOptions{
+		Middlewares: []MiddlewareFunc{s.member},
+		ErrorHandler: func(c *gin.Context, err error, status int) {
+			s.fail(c, status, err)
+		},
+	})
 	return r
 }
 
@@ -262,99 +249,6 @@ func decode(c *gin.Context, v any) error {
 		return fmt.Errorf("invalid request body: %w", err)
 	}
 	return nil
-}
-
-func (s *Server) me(c *gin.Context) {
-	user := c.GetString(userKey)
-	workspaces := []string{}
-	for _, name := range slices.Sorted(maps.Keys(s.cfg.Operator.Workspaces)) {
-		if slices.Contains(s.cfg.Operator.Workspaces[name].Members, user) {
-			workspaces = append(workspaces, name)
-		}
-	}
-	c.JSON(http.StatusOK, api.Me{User: user, Workspaces: workspaces})
-}
-
-func (s *Server) putHarness(c *gin.Context) {
-	var h harness.Harness
-	if err := decode(c, &h); err != nil {
-		s.failDecode(c, err)
-		return
-	}
-	if h.Name != c.Param("name") {
-		s.fail(c, http.StatusBadRequest, fmt.Errorf("harness name %q does not match the path", h.Name))
-		return
-	}
-	if err := h.Validate(); err != nil {
-		s.fail(c, http.StatusBadRequest, fmt.Errorf("invalid harness: %w", err))
-		return
-	}
-	// Reject policy that does not compile now, rather than at its first run.
-	if _, err := policy.New(c.Request.Context(), policy.Layer{Name: "harness", Modules: h.Policy}); err != nil {
-		s.fail(c, http.StatusBadRequest, fmt.Errorf("invalid harness: %w", err))
-		return
-	}
-	v, err := s.cfg.Store.PutHarness(c.Request.Context(), c.Param("workspace"), h)
-	if err != nil {
-		s.failStore(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, harnessVersion(v))
-}
-
-func (s *Server) listHarnesses(c *gin.Context) {
-	versions, err := s.cfg.Store.Harnesses(c.Request.Context(), c.Param("workspace"))
-	if err != nil {
-		s.failStore(c, err)
-		return
-	}
-	out := make([]api.HarnessVersion, len(versions))
-	for i, v := range versions {
-		out[i] = harnessVersion(v)
-	}
-	c.JSON(http.StatusOK, out)
-}
-
-func (s *Server) getHarness(c *gin.Context) {
-	v, err := s.cfg.Store.Harness(c.Request.Context(), c.Param("workspace"), c.Param("name"))
-	if err != nil {
-		s.failStore(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, harnessVersion(v))
-}
-
-func harnessVersion(v store.HarnessVersion) api.HarnessVersion {
-	return api.HarnessVersion{ID: v.ID, Version: v.Version, Harness: v.Harness, CreatedAt: v.CreatedAt}
-}
-
-func (s *Server) createRun(c *gin.Context) {
-	var req api.CreateRun
-	if err := decode(c, &req); err != nil {
-		s.failDecode(c, err)
-		return
-	}
-	if req.Input == "" {
-		s.fail(c, http.StatusBadRequest, errors.New("input is required"))
-		return
-	}
-	ws := c.Param("workspace")
-	v, err := s.cfg.Store.Harness(c.Request.Context(), ws, req.Harness)
-	if err != nil {
-		s.failStore(c, err)
-		return
-	}
-	id, status, err := s.start(v, req.Input, c.GetString(userKey))
-	if err != nil {
-		s.fail(c, status, fmt.Errorf("cannot start run: %w", err))
-		return
-	}
-	run, err := s.cfg.Store.Run(c.Request.Context(), ws, id)
-	if err != nil {
-		s.failStore(c, err)
-		return
-	}
-	c.JSON(http.StatusCreated, apiRun(run))
 }
 
 // start builds an agent for the harness version, which starts the MCP servers
@@ -462,232 +356,6 @@ func (s *Server) execute(ctx context.Context, a *agent.Agent, run *agent.Run, hu
 		finished = store.Run{ID: run.ID(), Status: status, Output: redact.String(res.Output), Steps: res.Steps, Error: errMsg}
 	}
 	hub.publish(event{api.EventFinished, apiRun(finished)})
-}
-
-func (s *Server) listRuns(c *gin.Context) {
-	f := store.RunFilter{
-		Harness: c.Query("harness"),
-		Status:  store.RunStatus(c.Query("status")),
-		Before:  c.Query("before"),
-		Limit:   api.DefaultRunsLimit,
-	}
-	switch f.Status {
-	case "", store.RunRunning, store.RunSucceeded, store.RunFailed, store.RunCancelled:
-	default:
-		s.fail(c, http.StatusBadRequest, fmt.Errorf("status %q: must be running, succeeded, failed or cancelled", f.Status))
-		return
-	}
-	if l := c.Query("limit"); l != "" {
-		n, err := strconv.Atoi(l)
-		if err != nil || n < 1 || n > api.MaxRunsLimit {
-			s.fail(c, http.StatusBadRequest, fmt.Errorf("limit %q: must be a number from 1 to %d", l, api.MaxRunsLimit))
-			return
-		}
-		f.Limit = n
-	}
-	runs, err := s.cfg.Store.Runs(c.Request.Context(), c.Param("workspace"), f)
-	if err != nil {
-		s.failStore(c, err)
-		return
-	}
-	out := api.RunList{Runs: make([]api.Run, len(runs))}
-	for i, r := range runs {
-		out.Runs[i] = apiRun(r)
-	}
-	// A full page may be the last: the next one is then empty.
-	if len(runs) == f.Limit {
-		out.Next = runs[len(runs)-1].ID
-	}
-	c.JSON(http.StatusOK, out)
-}
-
-// cancelRun cancels a running run of this server. The run ends as soon as
-// what it is doing stops, and is recorded as cancelled by the user; the
-// response comes before that, so the run's events tell when it ended.
-func (s *Server) cancelRun(c *gin.Context) {
-	ws, id := c.Param("workspace"), c.Param("id")
-	if h := s.hub(ws, id); h != nil {
-		h.cancel(cancelledBy(c.GetString(userKey)))
-		c.Status(http.StatusAccepted)
-		return
-	}
-	run, err := s.cfg.Store.Run(c.Request.Context(), ws, id)
-	switch {
-	case err != nil:
-		s.failStore(c, err)
-	case run.Status == store.RunRunning:
-		s.fail(c, http.StatusConflict, fmt.Errorf("run %s is running on another server", id))
-	default:
-		s.fail(c, http.StatusConflict, fmt.Errorf("run %s has already finished", id))
-	}
-}
-
-// listApprovals returns the approval requests the workspace's runs are
-// waiting for, oldest first.
-func (s *Server) listApprovals(c *gin.Context) {
-	ws := c.Param("workspace")
-	s.mu.Lock()
-	var hubs []*hub
-	for _, h := range s.runs {
-		if h.workspace == ws {
-			hubs = append(hubs, h)
-		}
-	}
-	s.mu.Unlock()
-	out := []api.ApprovalRequest{}
-	for _, h := range hubs {
-		out = append(out, h.waiting()...)
-	}
-	slices.SortFunc(out, func(a, b api.ApprovalRequest) int {
-		return cmp.Or(a.CreatedAt.Compare(b.CreatedAt), strings.Compare(a.ID, b.ID))
-	})
-	c.JSON(http.StatusOK, out)
-}
-
-func (s *Server) getRun(c *gin.Context) {
-	run, err := s.cfg.Store.Run(c.Request.Context(), c.Param("workspace"), c.Param("id"))
-	if err != nil {
-		s.failStore(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, apiRun(run))
-}
-
-func apiRun(r store.Run) api.Run {
-	return api.Run{
-		ID:               r.ID,
-		HarnessVersionID: r.HarnessVersionID,
-		Harness:          r.Harness,
-		HarnessVersion:   r.HarnessVersion,
-		StartedBy:        r.StartedBy,
-		Input:            r.Input,
-		Status:           string(r.Status),
-		Output:           r.Output,
-		Steps:            r.Steps,
-		Error:            r.Error,
-		CreatedAt:        r.CreatedAt,
-		FinishedAt:       r.FinishedAt,
-	}
-}
-
-func (s *Server) getAudit(c *gin.Context) {
-	id := c.Param("id")
-	if _, err := s.cfg.Store.Run(c.Request.Context(), c.Param("workspace"), id); err != nil {
-		s.failStore(c, err)
-		return
-	}
-	records, err := s.cfg.Store.AuditRecords(c.Request.Context(), id)
-	if err != nil {
-		s.failStore(c, err)
-		return
-	}
-	out := make([]api.AuditRecord, len(records))
-	for i, r := range records {
-		out[i] = api.AuditRecord{Record: r.Record, RecordedAt: r.RecordedAt}
-	}
-	c.JSON(http.StatusOK, out)
-}
-
-func (s *Server) getTranscript(c *gin.Context) {
-	id := c.Param("id")
-	if _, err := s.cfg.Store.Run(c.Request.Context(), c.Param("workspace"), id); err != nil {
-		s.failStore(c, err)
-		return
-	}
-	messages, err := s.cfg.Store.Transcript(c.Request.Context(), id)
-	if err != nil {
-		s.failStore(c, err)
-		return
-	}
-	out := make([]api.TranscriptMessage, len(messages))
-	for i, m := range messages {
-		out[i] = api.TranscriptMessage{Position: m.Position, Message: m.Message, CreatedAt: m.CreatedAt}
-	}
-	c.JSON(http.StatusOK, out)
-}
-
-// streamEvents sends a run's events from the start. A running run's stream
-// follows it until it finishes; a finished run's stream replays its audit
-// records and its end from the store.
-func (s *Server) streamEvents(c *gin.Context) {
-	id := c.Param("id")
-	h := s.hub(c.Param("workspace"), id)
-	if h == nil {
-		s.replayEvents(c, id)
-		return
-	}
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
-	sent := 0
-	for {
-		events, changed, finished := h.since(sent)
-		for _, e := range events {
-			c.SSEvent(e.name, e.data)
-		}
-		sent += len(events)
-		c.Writer.Flush()
-		if finished {
-			return
-		}
-		select {
-		case <-changed:
-		case <-c.Request.Context().Done():
-			return
-		case <-s.ctx.Done():
-			// The run ends too, promptly; wait for its last event rather
-			// than the client.
-			<-changed
-		}
-	}
-}
-
-func (s *Server) replayEvents(c *gin.Context, id string) {
-	ctx := c.Request.Context()
-	run, err := s.cfg.Store.Run(ctx, c.Param("workspace"), id)
-	if err != nil {
-		s.failStore(c, err)
-		return
-	}
-	if run.Status == store.RunRunning {
-		// Every running run of this server has a hub, and New fails those of
-		// earlier servers, so this is a run of another server sharing the
-		// database.
-		s.fail(c, http.StatusConflict, fmt.Errorf("run %s is running on another server", id))
-		return
-	}
-	records, err := s.cfg.Store.AuditRecords(ctx, id)
-	if err != nil {
-		s.failStore(c, err)
-		return
-	}
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
-	for _, r := range records {
-		c.SSEvent(api.EventAudit, r.Record)
-	}
-	c.SSEvent(api.EventFinished, apiRun(run))
-	c.Writer.Flush()
-}
-
-func (s *Server) answerApproval(c *gin.Context) {
-	var answer api.Answer
-	if err := decode(c, &answer); err != nil {
-		s.failDecode(c, err)
-		return
-	}
-	h := s.hub(c.Param("workspace"), c.Param("id"))
-	reason := answer.Reason
-	if reason == "" {
-		reason = "rejected through the API"
-		if answer.Approved {
-			reason = "approved through the API"
-		}
-	}
-	if h == nil || !h.answer(c.Param("approval"), toolgateway.Approval{Approved: answer.Approved, Approver: c.GetString(userKey), Reason: reason}) {
-		s.fail(c, http.StatusNotFound, fmt.Errorf("run %s is not waiting for approval %s", c.Param("id"), c.Param("approval")))
-		return
-	}
-	c.Status(http.StatusNoContent)
 }
 
 // hub returns the hub of the running run id in workspace, or nil if there is

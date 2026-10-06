@@ -1,0 +1,533 @@
+openapi: 3.0.3
+info:
+  title: Agenty API
+  version: v1
+  description: |
+    The API of an agenty server: it stores harnesses, runs them, and streams
+    each run's events, approval requests included.
+
+    Every request signs in with a user's bearer token. Harnesses and runs
+    live in workspaces; a workspace the user is not a member of is not found,
+    and neither is a run asked for in another workspace than its own.
+
+    Errors are returned as an Error: 400 for an invalid request, 401 without
+    a valid token, 403 for a request for a host that is not local or from a
+    web page of an origin that is not configured, 404 for anything not
+    found, workspaces included, 409 for cancelling a run that has finished
+    or for a run that runs on another server, 415 for a body that is not
+    JSON, 422 for a harness that cannot run, 500 when the server fails, and
+    503 while the server is stopping.
+
+    This file is the API's source of truth: the Go types in internal/api and
+    the server interface in internal/server are generated from it.
+servers:
+  - url: http://127.0.0.1:8080
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/me:
+    get:
+      operationId: getMe
+      summary: The signed-in user and their workspaces
+      responses:
+        "200":
+          description: The user.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Me"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /v1/workspaces/{workspace}/harnesses:
+    parameters:
+      - $ref: "#/components/parameters/Workspace"
+    get:
+      operationId: listHarnesses
+      summary: The latest version of every harness, sorted by name
+      responses:
+        "200":
+          description: The harnesses.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/HarnessVersion"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /v1/workspaces/{workspace}/harnesses/{name}:
+    parameters:
+      - $ref: "#/components/parameters/Workspace"
+      - name: name
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      operationId: getHarness
+      summary: The latest version of a harness
+      responses:
+        "200":
+          description: The harness version.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/HarnessVersion"}
+        default: {$ref: "#/components/responses/Error"}
+    put:
+      operationId: putHarness
+      summary: Store a harness as its next version
+      description: |
+        A changed harness becomes the next version; an unchanged one is left
+        as it is, and its latest version is returned. The name must match
+        the path.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/Harness"}
+      responses:
+        "200":
+          description: The stored version.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/HarnessVersion"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /v1/workspaces/{workspace}/runs:
+    parameters:
+      - $ref: "#/components/parameters/Workspace"
+    get:
+      operationId: listRuns
+      summary: The runs, newest first, a page at a time
+      parameters:
+        - name: harness
+          in: query
+          description: Only the runs of this harness.
+          schema: {type: string}
+        - name: status
+          in: query
+          description: Only the runs with this status.
+          schema: {$ref: "#/components/schemas/RunStatus"}
+        - name: limit
+          in: query
+          description: The page size.
+          schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+        - name: before
+          in: query
+          description: |
+            Continue after the run with this ID, as RunList.next gives it. A
+            run that is not one of the workspace's gives an empty page.
+          schema: {type: string}
+      responses:
+        "200":
+          description: A page of runs.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RunList"}
+        default: {$ref: "#/components/responses/Error"}
+    post:
+      operationId: createRun
+      summary: Start a run of a harness's latest version
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/CreateRun"}
+      responses:
+        "201":
+          description: The started run.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Run"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /v1/workspaces/{workspace}/runs/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Workspace"
+      - $ref: "#/components/parameters/RunID"
+    get:
+      operationId: getRun
+      summary: A run
+      responses:
+        "200":
+          description: The run.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Run"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /v1/workspaces/{workspace}/runs/{id}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/Workspace"
+      - $ref: "#/components/parameters/RunID"
+    post:
+      operationId: cancelRun
+      summary: Cancel a running run
+      description: |
+        The run ends as soon as what it is doing stops, as cancelled by the
+        user; its events tell when.
+      responses:
+        "202":
+          description: The run is being cancelled.
+        default: {$ref: "#/components/responses/Error"}
+
+  /v1/workspaces/{workspace}/runs/{id}/audit:
+    parameters:
+      - $ref: "#/components/parameters/Workspace"
+      - $ref: "#/components/parameters/RunID"
+    get:
+      operationId: getRunAudit
+      summary: A run's audit records, in the order they were recorded
+      responses:
+        "200":
+          description: The audit records.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/AuditRecord"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /v1/workspaces/{workspace}/runs/{id}/transcript:
+    parameters:
+      - $ref: "#/components/parameters/Workspace"
+      - $ref: "#/components/parameters/RunID"
+    get:
+      operationId: getRunTranscript
+      summary: A run's conversation with the model, with secrets redacted
+      responses:
+        "200":
+          description: The messages, in order.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/TranscriptMessage"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /v1/workspaces/{workspace}/runs/{id}/events:
+    parameters:
+      - $ref: "#/components/parameters/Workspace"
+      - $ref: "#/components/parameters/RunID"
+    get:
+      operationId: streamRunEvents
+      summary: A run's events, as server-sent events
+      description: |
+        The events from the run's start. A running run's stream follows it
+        until it finishes; a finished run's stream replays its audit records
+        and its end. Each event's data is JSON:
+
+        - `audit`: an AuditRecord
+        - `approval`: an ApprovalRequest
+        - `finished`: the Run, always the last event
+      responses:
+        "200":
+          description: The event stream.
+          content:
+            text/event-stream:
+              schema: {type: string}
+        default: {$ref: "#/components/responses/Error"}
+
+  /v1/workspaces/{workspace}/runs/{id}/approvals/{approval}:
+    parameters:
+      - $ref: "#/components/parameters/Workspace"
+      - $ref: "#/components/parameters/RunID"
+      - name: approval
+        in: path
+        required: true
+        schema: {type: string}
+    post:
+      operationId: answerApproval
+      summary: Answer an approval request
+      description: The signed-in user is recorded as the approver.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/Answer"}
+      responses:
+        "204":
+          description: The answer is accepted.
+        default: {$ref: "#/components/responses/Error"}
+
+  /v1/workspaces/{workspace}/approvals:
+    parameters:
+      - $ref: "#/components/parameters/Workspace"
+    get:
+      operationId: listApprovals
+      summary: The approval requests waiting for an answer, oldest first
+      responses:
+        "200":
+          description: The requests.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/ApprovalRequest"}
+        default: {$ref: "#/components/responses/Error"}
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+
+  parameters:
+    Workspace:
+      name: workspace
+      in: path
+      required: true
+      schema: {type: string}
+    RunID:
+      name: id
+      in: path
+      required: true
+      schema: {type: string}
+
+  responses:
+    Error:
+      description: An error.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: {type: string}
+
+    Me:
+      type: object
+      required: [user, workspaces]
+      properties:
+        user: {type: string}
+        workspaces:
+          description: The workspaces the user is a member of, sorted.
+          type: array
+          items: {type: string}
+
+    Harness:
+      description: A declarative definition of an agent.
+      type: object
+      additionalProperties: false
+      required: [name, instructions, model, limits]
+      properties:
+        name: {type: string}
+        instructions: {type: string}
+        model: {$ref: "#/components/schemas/HarnessModel"}
+        tools:
+          description: The granted tools.
+          type: array
+          items: {type: string}
+        limits: {$ref: "#/components/schemas/Limits"}
+        policy:
+          description: |
+            Rego modules in package agenty.tool that tighten central policy
+            for this harness.
+          type: array
+          items: {$ref: "#/components/schemas/PolicyModule"}
+
+    HarnessModel:
+      type: object
+      additionalProperties: false
+      required: [provider, name]
+      properties:
+        provider: {type: string}
+        name: {type: string}
+
+    Limits:
+      type: object
+      additionalProperties: false
+      required: [max_steps, max_tool_calls]
+      properties:
+        max_steps:
+          description: Bounds the model calls of a run.
+          type: integer
+        max_tool_calls:
+          description: Bounds the tool calls of a run, denied ones included.
+          type: integer
+
+    PolicyModule:
+      type: object
+      additionalProperties: false
+      required: [name, source]
+      properties:
+        name: {type: string}
+        source: {type: string}
+
+    HarnessVersion:
+      type: object
+      required: [id, version, harness, created_at]
+      properties:
+        id:
+          description: Identifies the version across all harnesses.
+          type: integer
+          format: int64
+        version: {type: integer}
+        harness: {$ref: "#/components/schemas/Harness"}
+        created_at: {type: string, format: date-time}
+
+    CreateRun:
+      type: object
+      additionalProperties: false
+      required: [harness, input]
+      properties:
+        harness:
+          description: The harness to run, by name; the run uses its latest version.
+          type: string
+        input: {type: string}
+
+    RunStatus:
+      type: string
+      enum: [running, succeeded, failed, cancelled]
+
+    Run:
+      type: object
+      required: [id, harness_version_id, harness, harness_version, started_by, input, status, output, steps, created_at]
+      properties:
+        id: {type: string}
+        harness_version_id: {type: integer, format: int64}
+        harness: {type: string}
+        harness_version: {type: integer}
+        started_by:
+          description: The user who started the run.
+          type: string
+        input: {type: string}
+        status: {$ref: "#/components/schemas/RunStatus"}
+        output: {type: string}
+        steps: {type: integer}
+        error:
+          description: Why the run failed, or who cancelled it.
+          type: string
+        created_at: {type: string, format: date-time}
+        finished_at:
+          description: Unset while the run is running.
+          type: string
+          format: date-time
+          x-omitzero: true
+
+    RunList:
+      type: object
+      required: [runs]
+      properties:
+        runs:
+          type: array
+          items: {$ref: "#/components/schemas/Run"}
+        next:
+          description: The before parameter of the next page, which may be empty.
+          type: string
+
+    AuditEvent:
+      type: string
+      enum: [decision, approval, result]
+
+    Decision:
+      type: string
+      enum: [allow, deny, require_approval]
+
+    AuditRecord:
+      description: One decision, approval or result the tool gateway recorded.
+      type: object
+      required: [run_id, call_id, event, tool, decision, recorded_at]
+      properties:
+        run_id: {type: string}
+        call_id: {type: string}
+        event: {$ref: "#/components/schemas/AuditEvent"}
+        tool: {type: string}
+        args: {$ref: "#/components/schemas/JSON"}
+        decision: {$ref: "#/components/schemas/Decision"}
+        reason: {type: string}
+        approver:
+          description: Who approved or rejected the call, if anyone did.
+          type: string
+        result: {$ref: "#/components/schemas/JSON"}
+        error: {type: string}
+        recorded_at: {type: string, format: date-time}
+
+    Role:
+      type: string
+      enum: [user, assistant]
+
+    ToolCall:
+      type: object
+      required: [id, name]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        args: {$ref: "#/components/schemas/JSON"}
+
+    ToolResult:
+      type: object
+      required: [call_id, content]
+      properties:
+        call_id: {type: string}
+        content: {type: string}
+        is_error: {type: boolean}
+
+    ProviderPart:
+      description: |
+        A message in the form of the provider that generated it, kept so it
+        can be sent to the model again.
+      type: object
+      required: [name, data]
+      properties:
+        name: {type: string}
+        data: {$ref: "#/components/schemas/JSON"}
+
+    TranscriptMessage:
+      description: |
+        One message of a run's conversation with the model: the input, a
+        model reply, or the results of the reply's tool calls.
+      type: object
+      required: [position, role, created_at]
+      properties:
+        position:
+          description: The message's index in the conversation.
+          type: integer
+        role: {$ref: "#/components/schemas/Role"}
+        text: {type: string}
+        tool_calls:
+          type: array
+          items: {$ref: "#/components/schemas/ToolCall"}
+        tool_results:
+          type: array
+          items: {$ref: "#/components/schemas/ToolResult"}
+        provider:
+          allOf: [{$ref: "#/components/schemas/ProviderPart"}]
+          x-omitzero: true
+        created_at: {type: string, format: date-time}
+
+    ApprovalRequest:
+      description: |
+        A call that policy marked as requiring approval. Secrets are already
+        redacted from it.
+      type: object
+      required: [id, run_id, harness, tool, args, reasons, created_at, expires_at]
+      properties:
+        id:
+          description: Identifies the request when answering it.
+          type: string
+        run_id: {type: string}
+        harness: {type: string}
+        tool: {type: string}
+        args: {$ref: "#/components/schemas/JSON"}
+        reasons:
+          type: array
+          items: {type: string}
+        created_at: {type: string, format: date-time}
+        expires_at:
+          description: When the request is rejected if no one answers it.
+          type: string
+          format: date-time
+
+    Answer:
+      type: object
+      additionalProperties: false
+      required: [approved]
+      properties:
+        approved: {type: boolean}
+        reason: {type: string}
+
+    JSON:
+      description: Any JSON value, kept as written.
+      x-go-type: json.RawMessage

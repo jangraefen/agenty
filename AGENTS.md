@@ -10,7 +10,7 @@ Agenty is an open-source, self-hostable platform for building governed AI agent 
 
 - **Scope**: build the stage IDEA.md describes as next. Add a component only when that stage needs it.
 - **Language**: Go for the backend; the web frontend alone is TypeScript (React, TanStack), in its own deployable. No agent framework: Agenty owns its agent loop on the official model provider SDKs.
-- **Server stack**: gin for the API; PostgreSQL only through `internal/store`, with sqlc-generated queries on pgx and goose migrations. After changing a query or migration, run `go generate ./internal/store/` and commit the result. Tests that need PostgreSQL use `storetest`, which reads `AGENTY_TEST_DATABASE_URL`.
+- **Server stack**: gin for the API, spec-first: `internal/api/openapi.yaml` defines it, and oapi-codegen generates the API types into `internal/api` and the gin server interface into `internal/server`. Change the spec first, never the generated code. PostgreSQL only through `internal/store`, with sqlc-generated queries on pgx and goose migrations. After changing the spec, a query or a migration, run `task generate` and commit the result. Tests that need PostgreSQL use `storetest`, which reads `AGENTY_TEST_DATABASE_URL`.
 - **Policy**: OPA, embedded, is the only policy engine.
 - **Trust model**: every change preserves the guarantees in IDEA.md, above all: every side effect goes through the Tool Gateway, ungranted tools are denied, and credentials never reach model context or logs.
 - **Tests first**: write the failing test before the implementation. Each trust-model guarantee has a named test; extend it when touching security-relevant code. The gateway, policy and secret redaction code get the most thorough tests.

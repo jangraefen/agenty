@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"time"
 )
 
 const auditRecordsOfRun = `-- name: AuditRecordsOfRun :many
@@ -48,9 +49,10 @@ func (q *Queries) AuditRecordsOfRun(ctx context.Context, runID string) ([]AuditR
 	return items, nil
 }
 
-const insertAuditRecord = `-- name: InsertAuditRecord :exec
+const insertAuditRecord = `-- name: InsertAuditRecord :one
 INSERT INTO audit_records (run_id, call_id, event, tool, args, decision, reason, approver, result, error)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+RETURNING recorded_at
 `
 
 type InsertAuditRecordParams struct {
@@ -66,8 +68,8 @@ type InsertAuditRecordParams struct {
 	Error    string
 }
 
-func (q *Queries) InsertAuditRecord(ctx context.Context, arg InsertAuditRecordParams) error {
-	_, err := q.db.Exec(ctx, insertAuditRecord,
+func (q *Queries) InsertAuditRecord(ctx context.Context, arg InsertAuditRecordParams) (time.Time, error) {
+	row := q.db.QueryRow(ctx, insertAuditRecord,
 		arg.RunID,
 		arg.CallID,
 		arg.Event,
@@ -79,5 +81,7 @@ func (q *Queries) InsertAuditRecord(ctx context.Context, arg InsertAuditRecordPa
 		arg.Result,
 		arg.Error,
 	)
-	return err
+	var recorded_at time.Time
+	err := row.Scan(&recorded_at)
+	return recorded_at, err
 }

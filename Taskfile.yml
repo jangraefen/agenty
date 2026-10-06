@@ -33,9 +33,9 @@ tasks:
       - docker compose down --volumes
 
   generate:
-    desc: Generate the sqlc queries after changing a query or migration
+    desc: Generate code after changing a query, a migration or the API's spec
     cmds:
-      - go generate ./internal/store/
+      - go generate ./internal/store/ ./internal/api/ ./internal/server/
 
   lint:
     desc: Run golangci-lint, at the version CI uses
@@ -61,7 +61,7 @@ tasks:
     desc: "What CI checks: generated code, lint, go mod tidy and the tests"
     cmds:
       - task: generate
-      - test -z "$(git status --porcelain internal/store/db)"
+      - test -z "$(git status --porcelain internal/store/db internal/api internal/server)"
       - task: lint
       - go mod tidy
       - git diff --exit-code go.mod go.sum

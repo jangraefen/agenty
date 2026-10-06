@@ -34,7 +34,7 @@ func apply(ctx context.Context, args []string, env Env) int {
 		return fail(logger, "apply failed", err)
 	}
 	var v api.HarnessVersion
-	if err := c.do(ctx, http.MethodPut, c.path("harnesses", h.Name), h, &v); err != nil {
+	if err := c.do(ctx, http.MethodPut, c.path("harnesses", h.Name), api.FromHarness(*h), &v); err != nil {
 		return fail(logger, "apply failed", err)
 	}
 	if _, err := fmt.Fprintf(env.Stdout, "%s version %d\n", h.Name, v.Version); err != nil {

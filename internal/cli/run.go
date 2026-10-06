@@ -13,7 +13,6 @@ import (
 	"github.com/jangraefen/agenty/internal/api"
 	"github.com/jangraefen/agenty/internal/must"
 	"github.com/jangraefen/agenty/internal/secret"
-	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
 const runUsage = `usage: agenty run [flags] HARNESS INPUT
@@ -63,7 +62,7 @@ func run(ctx context.Context, args []string, env Env) int {
 			return fail(logger, "run failed", fmt.Errorf("write answer: %w", err))
 		}
 	}
-	if finished.Status != api.RunSucceeded {
+	if finished.Status != api.RunStatusSucceeded {
 		logger.Error("run failed", "run_id", finished.ID, "steps", finished.Steps, "error", finished.Error)
 		return exitFailure
 	}
@@ -94,7 +93,7 @@ func follow(ctx context.Context, logger *slog.Logger, c *client, runID string, a
 		}
 		switch name {
 		case api.EventAudit:
-			var rec toolgateway.Record
+			var rec api.AuditRecord
 			if err := json.Unmarshal(data, &rec); err != nil {
 				return api.Run{}, fmt.Errorf("audit event: %w", err)
 			}

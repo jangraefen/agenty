@@ -335,7 +335,13 @@ var _ toolgateway.Audit = (*Store)(nil)
 // valid JSON, such as malformed arguments from a model, is stored as a JSON
 // string.
 func (s *Store) Record(ctx context.Context, rec toolgateway.Record) error {
-	err := s.queries.InsertAuditRecord(ctx, db.InsertAuditRecordParams{
+	_, err := s.RecordAt(ctx, rec)
+	return err
+}
+
+// RecordAt is Record, and returns when the record was recorded.
+func (s *Store) RecordAt(ctx context.Context, rec toolgateway.Record) (time.Time, error) {
+	at, err := s.queries.InsertAuditRecord(ctx, db.InsertAuditRecordParams{
 		RunID:    text(rec.RunID),
 		CallID:   text(rec.CallID),
 		Event:    text(string(rec.Event)),
@@ -348,9 +354,9 @@ func (s *Store) Record(ctx context.Context, rec toolgateway.Record) error {
 		Error:    text(rec.Err),
 	})
 	if err != nil {
-		return fmt.Errorf("store: audit: %w", err)
+		return time.Time{}, fmt.Errorf("store: audit: %w", err)
 	}
-	return nil
+	return at, nil
 }
 
 // AuditRecord is a stored audit record.

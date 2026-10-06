@@ -1,152 +1,95 @@
 // Package api holds the JSON types of Agenty's HTTP API, shared by the
-// server and its clients.
-//
-// The API lives under /v1. Every request signs in with a user's bearer token,
-// "Authorization: Bearer TOKEN". Harnesses and runs live in workspaces, under
-// /v1/workspaces/{ws}; a workspace the user is not a member of is not found.
-//
-//	GET  /v1/me                                     the signed-in user and their workspaces
-//	PUT  {ws}/harnesses/{name}                      store a harness as its next version
-//	GET  {ws}/harnesses                             latest version of every harness
-//	GET  {ws}/harnesses/{name}                      latest version of one harness
-//	POST {ws}/runs                                  start a run
-//	GET  {ws}/runs                                  the runs, newest first; see DefaultRunsLimit
-//	GET  {ws}/runs/{id}                             a run
-//	POST {ws}/runs/{id}/cancel                      cancel a running run: 202, then the run ends
-//	GET  {ws}/runs/{id}/audit                       a run's audit records
-//	GET  {ws}/runs/{id}/transcript                  a run's conversation with the model
-//	GET  {ws}/runs/{id}/events                      a run's events, as server-sent events
-//	POST {ws}/runs/{id}/approvals/{approval}        answer an approval request
-//	GET  {ws}/approvals                             the approval requests waiting for an answer
-//
-// Errors are returned as an Error with a 4xx or 5xx status: 400 for an
-// invalid request, 401 without a valid token, 404 for anything not found,
-// workspaces included, 409 for cancelling a run that has finished or runs on
-// another server, and 422 for a harness that cannot run.
+// server and its clients. openapi.yaml defines the API: its routes, and the
+// types generated from it into api.gen.go. This file adds what the spec
+// cannot express in Go: the event names of a run's stream, and conversions
+// from and to the platform's own types.
 package api
 
+//go:generate go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0 -config oapi-codegen.yaml openapi.yaml
+
 import (
-	"encoding/json"
 	"time"
 
 	"github.com/jangraefen/agenty/internal/harness"
 	"github.com/jangraefen/agenty/internal/model"
+	"github.com/jangraefen/agenty/internal/policy"
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
-// Error is the body of every error response.
-type Error struct {
-	Error string `json:"error"`
-}
-
-// Me is the signed-in user, and the workspaces they are a member of, sorted.
-type Me struct {
-	User       string   `json:"user"`
-	Workspaces []string `json:"workspaces"`
-}
-
-// HarnessVersion is one stored version of a harness.
-type HarnessVersion struct {
-	ID        int64           `json:"id"`
-	Version   int             `json:"version"`
-	Harness   harness.Harness `json:"harness"`
-	CreatedAt time.Time       `json:"created_at"`
-}
-
-// CreateRun is the body of POST {ws}/runs: the harness to run, by name, and
-// the input to run it on. The run uses the harness's latest version.
-type CreateRun struct {
-	Harness string `json:"harness"`
-	Input   string `json:"input"`
-}
-
-// Run statuses.
-const (
-	RunRunning   = "running"
-	RunSucceeded = "succeeded"
-	RunFailed    = "failed"
-	// RunCancelled is a run a user cancelled.
-	RunCancelled = "cancelled"
-)
-
-// GET {ws}/runs takes optional query parameters: harness and status select
-// the runs of one harness or with one status; limit, at most MaxRunsLimit,
-// is the page size; before continues a list after the run with that ID, as
-// RunList.Next gives it.
-const (
-	DefaultRunsLimit = 50
-	MaxRunsLimit     = 200
-)
-
-// RunList is a page of runs, newest first. Next, if set, is the before
-// parameter of the next page, which may be empty. A before that is not a
-// run of the workspace gives an empty page.
-type RunList struct {
-	Runs []Run  `json:"runs"`
-	Next string `json:"next,omitempty"`
-}
-
-// Run is a run of a harness version.
-type Run struct {
-	ID               string `json:"id"`
-	HarnessVersionID int64  `json:"harness_version_id"`
-	// Harness and HarnessVersion name the harness version the run runs.
-	Harness        string `json:"harness"`
-	HarnessVersion int    `json:"harness_version"`
-	// StartedBy names the user who started the run.
-	StartedBy  string     `json:"started_by"`
-	Input      string     `json:"input"`
-	Status     string     `json:"status"`
-	Output     string     `json:"output"`
-	Steps      int        `json:"steps"`
-	Error      string     `json:"error,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
-}
-
-// AuditRecord is a recorded audit record.
-type AuditRecord struct {
-	toolgateway.Record
-	RecordedAt time.Time `json:"recorded_at"`
-}
-
-// TranscriptMessage is one message of a run's conversation with the model:
-// the input, a model reply, or the results of the reply's tool calls.
-// Secrets are redacted from it.
-type TranscriptMessage struct {
-	// Position is the message's index in the conversation.
-	Position int `json:"position"`
-	model.Message
-	CreatedAt time.Time `json:"created_at"`
-}
-
 // Event names of the server-sent events of a run. Every event's data is JSON:
-// a toolgateway.Record for EventAudit, an ApprovalRequest for EventApproval,
-// and a Run for EventFinished, which is always the last event.
+// an AuditRecord for EventAudit, an ApprovalRequest for EventApproval, and a
+// Run for EventFinished, which is always the last event.
 const (
 	EventAudit    = "audit"
 	EventApproval = "approval"
 	EventFinished = "finished"
 )
 
-// ApprovalRequest asks a person to approve a call that policy marked as
-// requiring approval. Secrets are already redacted from it.
-type ApprovalRequest struct {
-	// ID identifies the request when answering it.
-	ID        string          `json:"id"`
-	RunID     string          `json:"run_id"`
-	Harness   string          `json:"harness"`
-	Tool      string          `json:"tool"`
-	Args      json.RawMessage `json:"args"`
-	Reasons   []string        `json:"reasons"`
-	CreatedAt time.Time       `json:"created_at"`
-	// ExpiresAt is when the request is rejected if no one answers it.
-	ExpiresAt time.Time `json:"expires_at"`
+// The page sizes of listing runs, as the spec gives them.
+const (
+	DefaultRunsLimit = 50
+	MaxRunsLimit     = 200
+)
+
+// FromHarness returns h in its API form.
+func FromHarness(h harness.Harness) Harness {
+	out := Harness{
+		Name:         h.Name,
+		Instructions: h.Instructions,
+		Model:        HarnessModel{Provider: h.Model.Provider, Name: h.Model.Name},
+		Tools:        h.Tools,
+		Limits:       Limits{MaxSteps: h.Limits.MaxSteps, MaxToolCalls: h.Limits.MaxToolCalls},
+	}
+	for _, m := range h.Policy {
+		out.Policy = append(out.Policy, PolicyModule{Name: m.Name, Source: m.Source})
+	}
+	return out
 }
 
-// Answer is the body of an answer to an approval request. The signed-in user
-// is recorded in the audit log as the approver.
-type Answer struct {
-	Approved bool   `json:"approved"`
-	Reason   string `json:"reason,omitempty"`
+// ToHarness returns h as a harness.Harness.
+func (h Harness) ToHarness() harness.Harness {
+	out := harness.Harness{
+		Name:         h.Name,
+		Instructions: h.Instructions,
+		Model:        harness.Model{Provider: h.Model.Provider, Name: h.Model.Name},
+		Tools:        h.Tools,
+		Limits:       harness.Limits{MaxSteps: h.Limits.MaxSteps, MaxToolCalls: h.Limits.MaxToolCalls},
+	}
+	for _, m := range h.Policy {
+		out.Policy = append(out.Policy, policy.Module{Name: m.Name, Source: m.Source})
+	}
+	return out
+}
+
+// FromRecord returns rec, recorded at the given time, in its API form.
+func FromRecord(rec toolgateway.Record, recordedAt time.Time) AuditRecord {
+	return AuditRecord{
+		RunID:      rec.RunID,
+		CallID:     rec.CallID,
+		Event:      AuditEvent(rec.Event),
+		Tool:       rec.Tool,
+		Args:       rec.Args,
+		Decision:   Decision(rec.Decision),
+		Reason:     rec.Reason,
+		Approver:   rec.Approver,
+		Result:     rec.Result,
+		Error:      rec.Err,
+		RecordedAt: recordedAt,
+	}
+}
+
+// FromMessage returns msg, at position in its conversation and stored at the
+// given time, in its API form.
+func FromMessage(position int, msg model.Message, createdAt time.Time) TranscriptMessage {
+	out := TranscriptMessage{Position: position, Role: Role(msg.Role), Text: msg.Text, CreatedAt: createdAt}
+	for _, c := range msg.ToolCalls {
+		out.ToolCalls = append(out.ToolCalls, ToolCall{ID: c.ID, Name: c.Name, Args: c.Args})
+	}
+	for _, r := range msg.ToolResults {
+		out.ToolResults = append(out.ToolResults, ToolResult{CallID: r.CallID, Content: r.Content, IsError: r.IsError})
+	}
+	if p := msg.Provider; p != nil {
+		out.Provider = ProviderPart{Name: p.Name, Data: p.Data}
+	}
+	return out
 }

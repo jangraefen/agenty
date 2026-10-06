@@ -49,11 +49,11 @@ jobs:
           go mod tidy
           git diff --exit-code go.mod go.sum
 
-      - name: sqlc code is generated from the current queries
+      - name: generated code is up to date (sqlc queries, OpenAPI types and server)
         run: |
-          go generate ./internal/store/
-          git status --porcelain internal/store/db
-          test -z "$(git status --porcelain internal/store/db)"
+          go generate ./internal/store/ ./internal/api/ ./internal/server/
+          git status --porcelain internal/store/db internal/api internal/server
+          test -z "$(git status --porcelain internal/store/db internal/api internal/server)"
 
       - name: go test
         run: go test -race -coverprofile=coverage.out ./...

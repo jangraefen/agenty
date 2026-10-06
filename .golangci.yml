@@ -48,6 +48,19 @@ linters:
           deny:
             - pkg: github.com/gin-gonic/gin
               desc: serve HTTP only through internal/server
+        openapi:
+          # The API's types are generated from its spec; only the generated
+          # gin server binds parameters with the oapi-codegen runtime, and
+          # only tests check responses against the spec.
+          files: ["$all", "!**/internal/server/**"]
+          deny:
+            - pkg: github.com/oapi-codegen/runtime
+              desc: serve HTTP only through internal/server
+        openapi-tests:
+          files: ["$all", "!$test"]
+          deny:
+            - pkg: github.com/getkin/kin-openapi
+              desc: check the API against its spec in tests only
         anthropic:
           # One place builds Anthropic clients, with the SDK's environment
           # defaults turned off; a client built elsewhere could read credentials

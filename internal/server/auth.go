@@ -59,14 +59,14 @@ func (s *Server) authenticate(c *gin.Context) {
 	c.Next()
 }
 
-// member lets the request through only if the signed-in user is a member of
-// the workspace it names. Any other workspace is not found, whether it exists
-// or not, so no one learns the names of workspaces they are not in.
+// member refuses the request unless the signed-in user is a member of the
+// workspace it names, if it names one. Any other workspace is not found,
+// whether it exists or not, so no one learns the names of workspaces they
+// are not in. It runs in the generated routes, after their parameters are
+// read.
 func (s *Server) member(c *gin.Context) {
-	ws := c.Param("workspace")
-	if !slices.Contains(s.cfg.Operator.Workspaces[ws].Members, c.GetString(userKey)) {
+	ws, ok := c.Params.Get("workspace")
+	if ok && !slices.Contains(s.cfg.Operator.Workspaces[ws].Members, c.GetString(userKey)) {
 		s.fail(c, http.StatusNotFound, fmt.Errorf("workspace %s: not found", ws))
-		return
 	}
-	c.Next()
 }

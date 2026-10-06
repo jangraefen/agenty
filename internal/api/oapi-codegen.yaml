@@ -1,0 +1,10 @@
+# Generates the API's types from openapi.yaml: go generate ./internal/api/
+package: api
+output: api.gen.go
+generate:
+  models: true
+output-options:
+  prefer-skip-optional-pointer: true
+  name-normalizer: ToCamelCaseWithInitialisms
+compatibility:
+  always-prefix-enum-values: true

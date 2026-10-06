@@ -1,0 +1,14 @@
+# Generates the gin server interface from the API's spec, using the types
+# generated into internal/api: go generate ./internal/server/
+package: server
+output: api.gen.go
+generate:
+  gin-server: true
+additional-imports:
+  - package: github.com/jangraefen/agenty/internal/api
+    alias: .
+output-options:
+  prefer-skip-optional-pointer: true
+  name-normalizer: ToCamelCaseWithInitialisms
+compatibility:
+  always-prefix-enum-values: true

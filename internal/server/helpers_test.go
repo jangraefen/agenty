@@ -191,8 +191,9 @@ func (f *fixture) doAs(t *testing.T, bearer, method, path string, body, out any)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, resp.Body.Close()) }()
+	got := readChecked(t, req, resp)
 	if out != nil {
-		require.NoError(t, json.NewDecoder(resp.Body).Decode(out))
+		require.NoError(t, json.NewDecoder(got).Decode(out))
 	}
 	return resp.StatusCode
 }

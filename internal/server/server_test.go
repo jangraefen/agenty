@@ -25,7 +25,6 @@ import (
 	"github.com/jangraefen/agenty/internal/server"
 	"github.com/jangraefen/agenty/internal/store"
 	"github.com/jangraefen/agenty/internal/store/storetest"
-	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
 func call(id, name, args string) model.ToolCall {
@@ -68,7 +67,7 @@ func TestHarnesses(t *testing.T) {
 	assert.Equal(t, 1, first.Version)
 	assert.Equal(t, first, again, "an unchanged harness is not a new version")
 	assert.Equal(t, 2, second.Version)
-	assert.Equal(t, changed, second.Harness)
+	assert.Equal(t, api.FromHarness(changed), second.Harness)
 
 	var got api.HarnessVersion
 	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/harnesses/notes", nil, &got))
@@ -128,22 +127,22 @@ func TestRun_SucceedsAndStreamsItsEvents(t *testing.T) {
 	run := f.startRun(t, "tidy my notes")
 	events := f.events(t, run.ID).rest()
 
-	assert.Equal(t, api.RunRunning, run.Status)
+	assert.Equal(t, api.RunStatusRunning, run.Status)
 	assert.Equal(t, "alice", run.StartedBy, "the run records who started it")
 	require.Len(t, events, 3)
-	decision := decodeAs[toolgateway.Record](t, events[0])
+	decision := decodeAs[api.AuditRecord](t, events[0])
 	assert.Equal(t, api.EventAudit, events[0].name)
-	assert.Equal(t, toolgateway.EventDecision, decision.Event)
+	assert.Equal(t, api.AuditEventDecision, decision.Event)
 	assert.Equal(t, run.ID, decision.RunID)
-	result := decodeAs[toolgateway.Record](t, events[1])
-	assert.Equal(t, toolgateway.EventResult, result.Event)
+	result := decodeAs[api.AuditRecord](t, events[1])
+	assert.Equal(t, api.AuditEventResult, result.Event)
 	assert.JSONEq(t, `{"content":"- milk"}`, string(result.Result))
 	assert.Equal(t, api.EventFinished, events[2].name)
 	finished := decodeAs[api.Run](t, events[2])
-	assert.Equal(t, api.RunSucceeded, finished.Status)
+	assert.Equal(t, api.RunStatusSucceeded, finished.Status)
 	assert.Equal(t, "- milk", finished.Output)
 	assert.Equal(t, 2, finished.Steps)
-	assert.NotNil(t, finished.FinishedAt)
+	assert.False(t, finished.FinishedAt.IsZero())
 
 	var stored api.Run
 	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+run.ID, nil, &stored))
@@ -151,7 +150,7 @@ func TestRun_SucceedsAndStreamsItsEvents(t *testing.T) {
 	var audit []api.AuditRecord
 	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+run.ID+"/audit", nil, &audit))
 	require.Len(t, audit, 2)
-	assert.Equal(t, decision, audit[0].Record)
+	assert.Equal(t, decision, audit[0])
 	assert.Equal(t, []string{"files"}, f.files.StartedAs)
 	assert.Equal(t, 1, f.files.Closed, "the run's MCP servers stop when it ends")
 
@@ -161,9 +160,11 @@ func TestRun_SucceedsAndStreamsItsEvents(t *testing.T) {
 	var transcript []api.TranscriptMessage
 	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+run.ID+"/transcript", nil, &transcript))
 	require.Len(t, transcript, 4)
-	assert.Equal(t, model.Message{Role: model.RoleUser, Text: "tidy my notes"}, transcript[0].Message)
-	assert.Equal(t, []model.ToolCall{{ID: "c1", Name: "files_read", Args: json.RawMessage(`{"path":"notes.md"}`)}}, transcript[1].ToolCalls)
-	assert.Equal(t, []model.ToolResult{{CallID: "c1", Content: `{"content":"- milk"}`}}, transcript[2].ToolResults)
+	assert.Equal(t, api.RoleUser, transcript[0].Role)
+	assert.Equal(t, "tidy my notes", transcript[0].Text)
+	assert.Equal(t, api.RoleAssistant, transcript[1].Role)
+	assert.Equal(t, []api.ToolCall{{ID: "c1", Name: "files_read", Args: json.RawMessage(`{"path":"notes.md"}`)}}, transcript[1].ToolCalls)
+	assert.Equal(t, []api.ToolResult{{CallID: "c1", Content: `{"content":"- milk"}`}}, transcript[2].ToolResults)
 	assert.Equal(t, "- milk", transcript[3].Text)
 	for i, m := range transcript {
 		assert.Equal(t, i, m.Position)
@@ -177,13 +178,13 @@ func TestRun_Approvals(t *testing.T) {
 		name         string
 		as           string
 		answer       api.Answer
-		wantDecision toolgateway.Decision
+		wantDecision api.Decision
 		wantApprover string
 		wantReason   string
 		wantWrites   int
 	}{
-		{"approved", aliceToken, api.Answer{Approved: true}, toolgateway.Allow, "alice", "approved through the API", 1},
-		{"rejected with a reason, by another member", bobToken, api.Answer{Reason: "not today"}, toolgateway.Deny, "bob", "approval rejected: not today", 0},
+		{"approved", aliceToken, api.Answer{Approved: true}, api.DecisionAllow, "alice", "approved through the API", 1},
+		{"rejected with a reason, by another member", bobToken, api.Answer{Reason: "not today"}, api.DecisionDeny, "bob", "approval rejected: not today", 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -193,8 +194,8 @@ func TestRun_Approvals(t *testing.T) {
 			run := f.startRun(t, "tidy my notes")
 			events := f.events(t, run.ID)
 
-			decision := decodeAs[toolgateway.Record](t, events.next())
-			assert.Equal(t, toolgateway.RequireApproval, decision.Decision)
+			decision := decodeAs[api.AuditRecord](t, events.next())
+			assert.Equal(t, api.DecisionRequireApproval, decision.Decision)
 			e := events.next()
 			require.Equal(t, api.EventApproval, e.name)
 			req := decodeAs[api.ApprovalRequest](t, e)
@@ -206,14 +207,14 @@ func TestRun_Approvals(t *testing.T) {
 
 			require.Equal(t, http.StatusNoContent, f.doAs(t, tt.as, http.MethodPost, home+"/runs/"+run.ID+"/approvals/"+req.ID, tt.answer, nil))
 
-			approval := decodeAs[toolgateway.Record](t, events.next())
-			assert.Equal(t, toolgateway.EventApproval, approval.Event)
+			approval := decodeAs[api.AuditRecord](t, events.next())
+			assert.Equal(t, api.AuditEventApproval, approval.Event)
 			assert.Equal(t, tt.wantDecision, approval.Decision)
 			assert.Equal(t, tt.wantApprover, approval.Approver, "the approver is the signed-in user")
 			assert.Equal(t, tt.wantReason, approval.Reason)
 			rest := events.rest()
 			finished := decodeAs[api.Run](t, rest[len(rest)-1])
-			assert.Equal(t, api.RunSucceeded, finished.Status, "a rejection is reported to the model, not a failure")
+			assert.Equal(t, api.RunStatusSucceeded, finished.Status, "a rejection is reported to the model, not a failure")
 			assert.Equal(t, tt.wantWrites, f.write.Calls)
 
 			var resp api.Error
@@ -293,7 +294,7 @@ func TestRun_ModelFailureFailsTheRun(t *testing.T) {
 
 	require.Len(t, events, 1)
 	finished := decodeAs[api.Run](t, events[0])
-	assert.Equal(t, api.RunFailed, finished.Status)
+	assert.Equal(t, api.RunStatusFailed, finished.Status)
 	assert.Contains(t, finished.Error, "model down, key [redacted]")
 }
 
@@ -344,7 +345,7 @@ func TestInvariant_ServerCredentialsNeverLeak(t *testing.T) {
 	assert.Equal(t, "the token is [redacted]", stored.Output)
 	assert.Equal(t, "the token is [redacted]", transcript[len(transcript)-1].Text)
 	assert.Contains(t, string(transcript[1].ToolCalls[1].Args), "[redacted]", "the model's own arguments are redacted too")
-	require.NotNil(t, transcript[len(transcript)-1].Provider)
+	require.Equal(t, "scripted", transcript[len(transcript)-1].Provider.Name)
 	assert.JSONEq(t, `{"thinking":"I saw [redacted]"}`, string(transcript[len(transcript)-1].Provider.Data), "so is the provider's form of a reply")
 	for _, data := range append(seen, string(storedJSON), string(auditJSON), string(transcriptJSON), f.logs.String()) {
 		assert.NotContains(t, data, token)
@@ -365,7 +366,7 @@ func TestClose_FailsRunsWaitingForApproval(t *testing.T) {
 
 	rest := events.rest()
 	finished := decodeAs[api.Run](t, rest[len(rest)-1])
-	assert.Equal(t, api.RunFailed, finished.Status)
+	assert.Equal(t, api.RunStatusFailed, finished.Status)
 	assert.Contains(t, finished.Error, "context canceled")
 	assert.Zero(t, f.write.Calls)
 	stored, err := f.store.Run(context.Background(), "home", run.ID)
@@ -420,7 +421,7 @@ func TestRun_WithTheConfiguredAnthropicProvider(t *testing.T) {
 	events := f.events(t, run.ID).rest()
 
 	finished := decodeAs[api.Run](t, events[len(events)-1])
-	assert.Equal(t, api.RunSucceeded, finished.Status)
+	assert.Equal(t, api.RunStatusSucceeded, finished.Status)
 	assert.Equal(t, "hello", finished.Output)
 	assert.Equal(t, v.ID, finished.HarnessVersionID)
 	require.Len(t, fake.Requests(), 1)
@@ -436,7 +437,7 @@ func TestRun_GatewayStopsAToolServerThatDoesNotStop(t *testing.T) {
 	events := f.events(t, run.ID).rest()
 
 	finished := decodeAs[api.Run](t, events[len(events)-1])
-	assert.Equal(t, api.RunFailed, finished.Status, "a server that does not stop fails the run")
+	assert.Equal(t, api.RunStatusFailed, finished.Status, "a server that does not stop fails the run")
 	assert.Contains(t, finished.Error, "still running")
 	assert.Equal(t, "done", finished.Output)
 }
@@ -706,7 +707,7 @@ func TestInvariant_WorkspacesAreSeparate(t *testing.T) {
 	assert.Zero(t, f.write.Calls, "no outsider answered the approval")
 	require.Equal(t, http.StatusNoContent, f.do(t, http.MethodPost, home+"/runs/"+run.ID+"/approvals/"+req.ID, api.Answer{}, nil))
 	rest := events.rest()
-	assert.Equal(t, api.RunSucceeded, decodeAs[api.Run](t, rest[len(rest)-1]).Status)
+	assert.Equal(t, api.RunStatusSucceeded, decodeAs[api.Run](t, rest[len(rest)-1]).Status)
 }
 
 func TestCreateRun_RefusedAfterClose(t *testing.T) {
@@ -765,7 +766,7 @@ func TestListRuns(t *testing.T) {
 	assert.Equal(t, "notes", all.Runs[0].Harness)
 	assert.Equal(t, 1, all.Runs[0].HarnessVersion)
 	assert.Equal(t, "bob", all.Runs[1].StartedBy)
-	assert.Equal(t, api.RunFailed, all.Runs[0].Status)
+	assert.Equal(t, api.RunStatusFailed, all.Runs[0].Status)
 
 	var page1, page2 api.RunList
 	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs?limit=2", nil, &page1))
@@ -800,13 +801,13 @@ func TestCancelRun(t *testing.T) {
 
 	rest := events.rest()
 	finished := decodeAs[api.Run](t, rest[len(rest)-1])
-	assert.Equal(t, api.RunCancelled, finished.Status)
+	assert.Equal(t, api.RunStatusCancelled, finished.Status)
 	assert.Equal(t, "cancelled by bob", finished.Error)
 	assert.Zero(t, f.write.Calls, "the call waiting for approval never runs")
 	var audit []api.AuditRecord
 	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+run.ID+"/audit", nil, &audit))
 	require.Len(t, audit, 2)
-	assert.Equal(t, toolgateway.Deny, audit[1].Decision)
+	assert.Equal(t, api.DecisionDeny, audit[1].Decision)
 	assert.Equal(t, "approval failed: cancelled by bob", audit[1].Reason, "the audit log says who cancelled")
 	var stored api.Run
 	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+run.ID, nil, &stored))
@@ -871,18 +872,18 @@ func TestApprovals_TimeOut(t *testing.T) {
 
 	events := f.events(t, run.ID).rest()
 
-	var approval toolgateway.Record
+	var approval api.AuditRecord
 	for _, e := range events {
 		if e.name == api.EventAudit {
-			if r := decodeAs[toolgateway.Record](t, e); r.Event == toolgateway.EventApproval {
+			if r := decodeAs[api.AuditRecord](t, e); r.Event == api.AuditEventApproval {
 				approval = r
 			}
 		}
 	}
-	assert.Equal(t, toolgateway.Deny, approval.Decision)
+	assert.Equal(t, api.DecisionDeny, approval.Decision)
 	assert.Equal(t, "approval rejected: no answer within 50ms", approval.Reason)
 	assert.Empty(t, approval.Approver)
 	assert.Zero(t, f.write.Calls)
 	finished := decodeAs[api.Run](t, events[len(events)-1])
-	assert.Equal(t, api.RunSucceeded, finished.Status, "a timed-out approval is a rejection, reported to the model")
+	assert.Equal(t, api.RunStatusSucceeded, finished.Status, "a timed-out approval is a rejection, reported to the model")
 }

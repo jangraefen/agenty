@@ -143,6 +143,21 @@ tasks:
     cmds:
       - pnpm build
 
+  web:e2e:
+    desc: Run the web frontend's smoke test against a real agenty server (needs Google Chrome)
+    deps: [build, db, web:install]
+    vars:
+      # A database of its own on the compose server, made afresh each time:
+      # a starting server fails every running run in its database, which
+      # must not be those of the development server.
+      E2E_DATABASE_URL: postgres://agenty:{{.POSTGRES_PASSWORD | default "agenty-dev-password"}}@127.0.0.1:{{.POSTGRES_PORT | default "5432"}}/agenty_e2e
+    env:
+      AGENTY_E2E_DATABASE_URL: "{{.E2E_DATABASE_URL}}"
+    cmds:
+      - docker compose exec -T postgres dropdb --username agenty --if-exists agenty_e2e
+      - docker compose exec -T postgres createdb --username agenty agenty_e2e
+      - cd web && pnpm e2e
+
   web:check:
     desc: "What CI checks of the web frontend: lint, types, tests, the build and its generated route tree"
     cmds:

@@ -1,0 +1,19 @@
+# The operator config of the end-to-end smoke test. Its variables have names
+# of their own, so a .env with real credentials never reaches the test. The
+# model key is a dummy and the provider's address a closed local port, so a
+# run fails at once, without leaving the machine.
+provider:
+  anthropic:
+    api_key: {env: AGENTY_E2E_ANTHROPIC_API_KEY}
+    max_tokens: 64
+    base_url: http://127.0.0.1:9
+database:
+  url: {env: AGENTY_E2E_DATABASE_URL}
+users:
+  smoke:
+    token: {env: AGENTY_E2E_TOKEN}
+workspaces:
+  smoke:
+    members: [smoke]
+cors:
+  origins: [http://127.0.0.1:4173]

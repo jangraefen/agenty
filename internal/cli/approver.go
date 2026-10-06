@@ -12,13 +12,11 @@ import (
 	"sync"
 	"unicode"
 
-	"github.com/jangraefen/agenty/internal/toolgateway"
+	"github.com/jangraefen/agenty/internal/api"
 )
 
-var _ toolgateway.Approver = (*terminalApprover)(nil)
-
 // terminalApprover asks the person at the terminal to approve calls. The
-// gateway hands it the call with secrets already redacted.
+// server sends each request with secrets already redacted.
 type terminalApprover struct {
 	out io.Writer
 	// interactive is false when stdin is not a terminal: piped input is not a
@@ -41,13 +39,13 @@ func newTerminalApprover(in io.Reader, out io.Writer, interactive bool, user str
 	return &terminalApprover{in: in, out: out, interactive: interactive, user: user, lines: make(chan line)}
 }
 
-// Approve shows the call and reads the answer: "y" or "yes" approves,
-// anything else rejects.
-func (a *terminalApprover) Approve(ctx context.Context, req toolgateway.Request, reasons []string) (toolgateway.Approval, error) {
+// Approve shows the call of run runID and reads the answer: "y" or "yes"
+// approves, anything else rejects.
+func (a *terminalApprover) Approve(ctx context.Context, runID string, req api.ApprovalRequest) (api.Answer, error) {
 	var b strings.Builder
-	fmt.Fprintf(&b, "\nApproval needed: %s (harness %s, run %s)\n", escape(req.Tool), escape(req.Harness), req.RunID)
+	fmt.Fprintf(&b, "\nApproval needed: %s (harness %s, run %s)\n", escape(req.Tool), escape(req.Harness), escape(runID))
 	fmt.Fprintf(&b, "Arguments:\n%s\n", escape(indent(req.Args)))
-	for _, reason := range reasons {
+	for _, reason := range req.Reasons {
 		fmt.Fprintf(&b, "Reason: %s\n", escape(reason))
 	}
 	if !a.interactive {
@@ -56,24 +54,24 @@ func (a *terminalApprover) Approve(ctx context.Context, req toolgateway.Request,
 		b.WriteString("Approve? [y/N] ")
 	}
 	if _, err := io.WriteString(a.out, b.String()); err != nil {
-		return toolgateway.Approval{}, fmt.Errorf("approval prompt: %w", err)
+		return api.Answer{}, fmt.Errorf("approval prompt: %w", err)
 	}
 	if !a.interactive {
-		return toolgateway.Approval{Reason: "stdin is not a terminal, so no one can approve"}, nil
+		return api.Answer{Approver: a.user, Reason: "stdin is not a terminal, so no one can approve"}, nil
 	}
 
 	answer, err := a.readLine(ctx)
 	switch {
 	case errors.Is(err, io.EOF):
-		return toolgateway.Approval{Approver: a.user, Reason: "no answer at the terminal"}, nil
+		return api.Answer{Approver: a.user, Reason: "no answer at the terminal"}, nil
 	case err != nil:
-		return toolgateway.Approval{}, fmt.Errorf("approval answer: %w", err)
+		return api.Answer{}, fmt.Errorf("approval answer: %w", err)
 	}
 	switch strings.ToLower(strings.TrimSpace(answer)) {
 	case "y", "yes":
-		return toolgateway.Approval{Approved: true, Approver: a.user, Reason: "approved at the terminal"}, nil
+		return api.Answer{Approved: true, Approver: a.user, Reason: "approved at the terminal"}, nil
 	default:
-		return toolgateway.Approval{Approver: a.user, Reason: "rejected at the terminal"}, nil
+		return api.Answer{Approver: a.user, Reason: "rejected at the terminal"}, nil
 	}
 }
 

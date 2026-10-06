@@ -1,10 +1,13 @@
-# Operator config: what the platform team owns. Run agenty from this
-# directory, so the server's ./sandbox resolves here.
+# Operator config: what the platform team owns. Run agenty serve from this
+# directory, so the MCP server's ./sandbox resolves here.
 provider:
   anthropic:
     # Read from the environment (or a .env file); never written here.
     api_key: {env: ANTHROPIC_API_KEY}
     max_tokens: 4096
+database:
+  # A PostgreSQL URL, such as postgres://agenty:PASSWORD@localhost/agenty.
+  url: {env: DATABASE_URL}
 mcp_servers:
   # The reference filesystem MCP server, limited to ./sandbox. Needs Node.js.
   files:

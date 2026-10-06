@@ -1,233 +1,112 @@
-// Package cli is the agenty command line. "agenty run" loads the operator
-// config and a harness, starts the MCP servers the harness needs, runs the
-// agent once on the input, and prints its answer. Approvals are asked at the
-// terminal, every tool call is appended to a JSON-lines audit log, and
-// secrets are redacted from everything the command prints.
 package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/url"
 
-	"github.com/jangraefen/agenty/internal/agent"
-	"github.com/jangraefen/agenty/internal/audit"
-	"github.com/jangraefen/agenty/internal/config"
-	"github.com/jangraefen/agenty/internal/harness"
-	"github.com/jangraefen/agenty/internal/mcptool"
-	"github.com/jangraefen/agenty/internal/model/anthropic"
+	"github.com/jangraefen/agenty/internal/api"
 	"github.com/jangraefen/agenty/internal/must"
 	"github.com/jangraefen/agenty/internal/secret"
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
-// Exit codes.
-const (
-	exitOK      = 0
-	exitFailure = 1
-	exitUsage   = 2
-)
+const runUsage = `usage: agenty run [flags] HARNESS INPUT
 
-const usage = `usage: agenty run [flags] INPUT
-
-Runs a harness once on INPUT and prints the answer.
-
+Runs the latest version of HARNESS on INPUT on the server, asks at the
+terminal when a call needs approval, and prints the answer.
 `
-
-// Env is the process around a command: its streams, its environment, and
-// what runs an MCP server.
-type Env struct {
-	Stdin  io.Reader
-	Stdout io.Writer
-	Stderr io.Writer
-	// Interactive reports whether Stdin is a terminal. Without one, calls
-	// that need approval are rejected.
-	Interactive bool
-	// User names the person at the terminal; approvals record it.
-	User      string
-	LookupEnv func(string) (string, bool)
-	// Server returns the tool server for a configured MCP server: srv
-	// itself outside of tests. The gateway starts it if a grant needs it.
-	Server func(name string, srv mcptool.Server) toolgateway.ToolServer
-}
-
-// Main runs the command line args, without the program name, and returns the
-// exit code: 0 on success, 1 when the command fails, 2 on a usage error.
-func Main(ctx context.Context, args []string, env Env) int {
-	if len(args) == 0 {
-		return printUsage(env.Stderr, "", exitUsage)
-	}
-	switch args[0] {
-	case "run":
-		return run(ctx, args[1:], env)
-	case "serve":
-		return serve(ctx, args[1:], env)
-	case "help", "-h", "--help":
-		return printUsage(env.Stderr, "", exitOK)
-	default:
-		return printUsage(env.Stderr, fmt.Sprintf("unknown command %q\n", args[0]), exitUsage)
-	}
-}
-
-const commands = `usage: agenty <command> [flags]
-
-Commands:
-  run     runs a harness once on INPUT and prints the answer
-  serve   serves the HTTP API on localhost
-
-Run "agenty <command> -h" for a command's flags.
-`
-
-func printUsage(w io.Writer, msg string, code int) int {
-	if _, err := io.WriteString(w, msg+commands); err != nil {
-		return exitFailure
-	}
-	return code
-}
-
-// runFlags are the flags of "agenty run".
-type runFlags struct {
-	config, harness, audit string
-	logLevel               slog.Level
-	input                  string
-}
-
-func parseRunFlags(args []string, stderr io.Writer) (runFlags, int, bool) {
-	var f runFlags
-	fs := flag.NewFlagSet("agenty run", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		if _, err := io.WriteString(stderr, usage+"Flags:\n"); err == nil {
-			fs.PrintDefaults()
-		}
-	}
-	fs.StringVar(&f.config, "config", "agenty.yaml", "operator config `file`: model provider, MCP servers, central policy")
-	fs.StringVar(&f.harness, "harness", "", "harness `file` to run (required)")
-	fs.StringVar(&f.audit, "audit", "audit.jsonl", "audit log `file`, appended to")
-	fs.TextVar(&f.logLevel, "log-level", slog.LevelInfo, "log `level`: debug, info, warn or error")
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return f, exitOK, false
-		}
-		return f, exitUsage, false
-	}
-	var problem string
-	switch {
-	case f.harness == "":
-		problem = "--harness is required"
-	case fs.NArg() != 1:
-		problem = "exactly one input is required; quote it if it has spaces"
-	}
-	if problem != "" {
-		// Report it the way the flag package reports a bad flag.
-		if _, err := fmt.Fprintln(stderr, "agenty run:", problem); err != nil {
-			return f, exitFailure, false
-		}
-		fs.Usage()
-		return f, exitUsage, false
-	}
-	f.input = fs.Arg(0)
-	return f, exitOK, true
-}
 
 func run(ctx context.Context, args []string, env Env) int {
-	flags, code, ok := parseRunFlags(args, env.Stderr)
+	flags, rest, code, ok := parseClientFlags("run", runUsage, 2, args, env.Stderr)
 	if !ok {
 		return code
 	}
-	// No secret is known before the config is resolved, so this logger
-	// redacts nothing; it only reports failures to get that far.
+	// The client knows no secret; the server redacts what it sends.
 	logger := newLogger(env.Stderr, flags.logLevel, must.Value(secret.NewRedactor(nil)))
+	c, err := newClient(flags.server)
+	if err != nil {
+		return fail(logger, "run failed", err)
+	}
+	var started api.Run
+	if err := c.do(ctx, http.MethodPost, "/v1/runs", api.CreateRun{Harness: rest[0], Input: rest[1]}, &started); err != nil {
+		return fail(logger, "run failed", err)
+	}
+	logger.Info("run started", "harness", rest[0], "run_id", started.ID)
 
-	cfg, err := config.Load(flags.config)
+	finished, err := follow(ctx, logger, c, started.ID, newTerminalApprover(env.Stdin, env.Stderr, env.Interactive, env.User))
 	if err != nil {
-		return fail(logger, err)
+		return fail(logger, "run failed", fmt.Errorf("run %s: %w", started.ID, err))
 	}
-	h, err := harness.Load(flags.harness)
-	if err != nil {
-		return fail(logger, err)
-	}
-	resolved, err := cfg.Resolve(env.LookupEnv)
-	if err != nil {
-		return fail(logger, err)
-	}
-	logger = newLogger(env.Stderr, flags.logLevel, resolved.Redactor)
-
-	output, err := runHarness(ctx, logger, env, flags, cfg, resolved, h)
-	if output != "" {
-		if _, werr := io.WriteString(env.Stdout, resolved.Redactor.String(output)+"\n"); werr != nil {
-			err = errors.Join(err, fmt.Errorf("write answer: %w", werr))
+	if finished.Output != "" {
+		if _, err := io.WriteString(env.Stdout, finished.Output+"\n"); err != nil {
+			return fail(logger, "run failed", fmt.Errorf("write answer: %w", err))
 		}
 	}
-	if err != nil {
-		return fail(logger, err)
+	if finished.Status != api.RunSucceeded {
+		logger.Error("run failed", "run_id", finished.ID, "steps", finished.Steps, "error", finished.Error)
+		return exitFailure
 	}
+	logger.Info("run finished", "run_id", finished.ID, "steps", finished.Steps)
 	return exitOK
 }
 
-func fail(logger *slog.Logger, err error) int {
-	logger.Error("run failed", "error", err)
-	return exitFailure
+// follow reads a run's events until it finishes, logs its tool calls, and
+// answers its approval requests at the terminal. It returns the finished
+// run.
+func follow(ctx context.Context, logger *slog.Logger, c *client, runID string, approver *terminalApprover) (finished api.Run, err error) {
+	events, err := c.events(ctx, runID)
+	if err != nil {
+		return api.Run{}, err
+	}
+	defer func() {
+		if cerr := events.Close(); cerr != nil {
+			err = errors.Join(err, cerr)
+		}
+	}()
+	for {
+		name, data, err := events.next()
+		if errors.Is(err, io.EOF) {
+			return api.Run{}, errors.New("the event stream ended before the run finished")
+		}
+		if err != nil {
+			return api.Run{}, err
+		}
+		switch name {
+		case api.EventAudit:
+			var rec toolgateway.Record
+			if err := json.Unmarshal(data, &rec); err != nil {
+				return api.Run{}, fmt.Errorf("audit event: %w", err)
+			}
+			logger.Debug("tool call", "event", rec.Event, "tool", rec.Tool, "decision", rec.Decision, "reason", rec.Reason)
+		case api.EventApproval:
+			var req api.ApprovalRequest
+			if err := json.Unmarshal(data, &req); err != nil {
+				return api.Run{}, fmt.Errorf("approval event: %w", err)
+			}
+			answer, err := approver.Approve(ctx, runID, req)
+			if err != nil {
+				return api.Run{}, err
+			}
+			path := "/v1/runs/" + url.PathEscape(runID) + "/approvals/" + url.PathEscape(req.ID)
+			if err := c.do(ctx, http.MethodPost, path, answer, nil); err != nil {
+				return api.Run{}, err
+			}
+		case api.EventFinished:
+			if err := json.Unmarshal(data, &finished); err != nil {
+				return api.Run{}, fmt.Errorf("finished event: %w", err)
+			}
+			return finished, nil
+		}
+	}
 }
 
-// runHarness wires and runs the agent and returns its answer. The agent's
-// servers and the audit log are closed before it returns, and failing to
-// close them fails the run.
-func runHarness(ctx context.Context, logger *slog.Logger, env Env, flags runFlags, cfg *config.Config, resolved *config.Resolved, h *harness.Harness) (output string, runErr error) {
-	if h.Model.Provider != "anthropic" {
-		return "", fmt.Errorf("model provider %q is not supported; use anthropic", h.Model.Provider)
-	}
-	m, err := anthropic.New(anthropic.Config{
-		APIKey:    resolved.AnthropicAPIKey,
-		Model:     h.Model.Name,
-		MaxTokens: cfg.Provider.Anthropic.MaxTokens,
-		BaseURL:   cfg.Provider.Anthropic.BaseURL,
-	})
-	if err != nil {
-		return "", err
-	}
-
-	servers := make(map[string]toolgateway.ToolServer, len(cfg.MCPServers))
-	for name, srv := range cfg.MCPServers {
-		servers[name] = env.Server(name, mcptool.Server{Command: srv.Command, Args: srv.Args, Env: resolved.MCPServerEnv[name]})
-	}
-
-	log, err := audit.Open(flags.audit)
-	if err != nil {
-		return "", err
-	}
-	defer func() {
-		if cerr := log.Close(); cerr != nil {
-			runErr = errors.Join(runErr, cerr)
-		}
-	}()
-
-	a, err := agent.New(ctx, agent.Config{
-		Harness:  h,
-		Model:    m,
-		Servers:  servers,
-		Policy:   cfg.Policy,
-		Approver: newTerminalApprover(env.Stdin, env.Stderr, env.Interactive, env.User),
-		Audit:    log,
-		Redactor: resolved.Redactor,
-	})
-	if err != nil {
-		return "", err
-	}
-	defer func() {
-		if cerr := a.Close(); cerr != nil {
-			runErr = errors.Join(runErr, cerr)
-		}
-	}()
-	var names []string
-	for _, def := range a.Tools() {
-		names = append(names, def.Name)
-	}
-	logger.Debug("tools offered to the model", "tools", names)
-	res, err := a.Run(ctx, flags.input)
-	logger.Info("run finished", "harness", h.Name, "run_id", res.RunID, "steps", res.Steps, "audit", flags.audit)
-	return res.Output, err
+func fail(logger *slog.Logger, msg string, err error) int {
+	logger.Error(msg, "error", err)
+	return exitFailure
 }

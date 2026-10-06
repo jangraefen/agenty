@@ -36,6 +36,7 @@ tasks:
     desc: Generate code after changing a query, a migration or the API's spec
     cmds:
       - go generate ./internal/store/ ./internal/api/ ./internal/server/
+      - task: web:generate
 
   lint:
     desc: Run golangci-lint, at the version CI uses
@@ -58,14 +59,16 @@ tasks:
       - go test -race {{.CLI_ARGS | default "./..."}}
 
   check:
-    desc: "What CI checks: generated code, lint, go mod tidy and the tests"
+    desc: "What CI checks: generated code, lint, go mod tidy and the tests, of the backend and the web frontend"
     cmds:
       - task: generate
       - test -z "$(git status --porcelain internal/store/db internal/api internal/server)"
+      - git diff --exit-code web/src/api
       - task: lint
       - go mod tidy
       - git diff --exit-code go.mod go.sum
       - task: test
+      - task: web:check
 
   build:
     desc: Build the agenty binary
@@ -94,3 +97,55 @@ tasks:
     cmds:
       - ../../agenty apply --server {{.SERVER}} notes.yaml
       - ../../agenty run --server {{.SERVER}} notes {{.CLI_ARGS | default "tidy my notes" | shellQuote}}
+
+  # The web frontend, in web/. Needs Node.js and pnpm.
+
+  web:install:
+    desc: Install the web frontend's dependencies from its lockfile
+    dir: web
+    cmds:
+      - pnpm install --frozen-lockfile
+
+  web:generate:
+    desc: Generate the web frontend's API types from the OpenAPI spec
+    deps: [web:install]
+    dir: web
+    cmds:
+      - pnpm generate
+
+  web:dev:
+    desc: Serve the web frontend at http://127.0.0.1:5173
+    deps: [web:install]
+    dir: web
+    cmds:
+      - pnpm dev
+
+  web:lint:
+    desc: Lint and typecheck the web frontend
+    deps: [web:install]
+    dir: web
+    cmds:
+      - pnpm lint
+      - pnpm typecheck
+
+  web:test:
+    desc: Run the web frontend's unit tests
+    deps: [web:install]
+    dir: web
+    cmds:
+      - pnpm test
+
+  web:build:
+    desc: Build the web frontend into web/dist
+    deps: [web:install]
+    dir: web
+    cmds:
+      - pnpm build
+
+  web:check:
+    desc: "What CI checks of the web frontend: lint, types, tests, the build and its generated route tree"
+    cmds:
+      - task: web:lint
+      - task: web:test
+      - task: web:build
+      - git diff --exit-code web/src/routeTree.gen.ts

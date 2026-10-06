@@ -22,6 +22,9 @@ users:
 workspaces:
   notes:
     members: [demo]
+# Web pages that may call the API: the web frontend's development server.
+cors:
+  origins: [http://127.0.0.1:5173]
 # A call that needs approval is rejected when no one answers within this.
 approvals:
   timeout: 30m

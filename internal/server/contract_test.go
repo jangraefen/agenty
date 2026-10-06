@@ -30,7 +30,7 @@ type contract struct {
 
 // spec loads the spec once.
 var spec = sync.OnceValues(func() (contract, error) {
-	doc, err := openapi3.NewLoader().LoadFromFile(filepath.Join("..", "api", "openapi.yaml"))
+	doc, err := openapi3.NewLoader().LoadFromFile(filepath.Join("..", "..", "schema", "openapi.yaml"))
 	if err != nil {
 		return contract{}, err
 	}

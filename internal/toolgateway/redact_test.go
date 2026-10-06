@@ -23,7 +23,7 @@ func newRedactingRun(t *testing.T, tool *gatewaytest.Tool, audit *gatewaytest.Au
 	t.Helper()
 	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
 		Granted:      []string{tool.Name},
-		Tools:        []toolgateway.Tool{tool},
+		Servers:      gatewaytest.Servers(tool),
 		MaxToolCalls: 100,
 		Policy:       &gatewaytest.Policy{},
 		Audit:        audit,
@@ -64,7 +64,7 @@ func TestCall_RedactsSecretsFromResults(t *testing.T) {
 func TestCall_RedactedResultThatIsNoLongerJSONBecomesAString(t *testing.T) {
 	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
 		Granted:      []string{"vault_read"},
-		Tools:        []toolgateway.Tool{&gatewaytest.Tool{Name: "vault_read", Result: json.RawMessage(`{"pin":12345678}`)}},
+		Servers:      gatewaytest.Servers(&gatewaytest.Tool{Name: "vault_read", Result: json.RawMessage(`{"pin":12345678}`)}),
 		MaxToolCalls: 100,
 		Policy:       &gatewaytest.Policy{},
 		Audit:        &gatewaytest.Audit{},
@@ -119,7 +119,7 @@ func TestCall_RedactsSecretsWithHTMLCharacters(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			gw, err := toolgateway.New(context.Background(), toolgateway.Config{
 				Granted:      []string{"vault_read"},
-				Tools:        []toolgateway.Tool{&gatewaytest.Tool{Name: "vault_read", Result: result}},
+				Servers:      gatewaytest.Servers(&gatewaytest.Tool{Name: "vault_read", Result: result}),
 				MaxToolCalls: 100,
 				Policy:       &gatewaytest.Policy{},
 				Audit:        &gatewaytest.Audit{},
@@ -140,7 +140,7 @@ func TestCall_ApproverSeesRedactedArgsAndReasons(t *testing.T) {
 	approver := &gatewaytest.Approver{Approval: toolgateway.Approval{Approved: true, Approver: "alice"}}
 	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
 		Granted:      []string{"vault_write"},
-		Tools:        []toolgateway.Tool{&gatewaytest.Tool{Name: "vault_write"}},
+		Servers:      gatewaytest.Servers(&gatewaytest.Tool{Name: "vault_write"}),
 		MaxToolCalls: 100,
 		Policy: &gatewaytest.Policy{Verdicts: map[string]toolgateway.Verdict{
 			"vault_write": {Decision: toolgateway.RequireApproval, Reasons: []string{"writes " + apiKey + " to the vault"}},

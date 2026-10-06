@@ -51,7 +51,7 @@ func TestExample_Notes(t *testing.T) {
 			),
 			model.Reply("done"),
 		),
-		Tools:    tools,
+		Servers:  gatewaytest.Servers(tools...),
 		Policy:   central,
 		Approver: &gatewaytest.Approver{Approval: toolgateway.Approval{Approved: true, Approver: "alice"}},
 		Audit:    audit,

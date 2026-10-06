@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
@@ -169,4 +170,22 @@ func (s *session) Close() error {
 	}
 	s.server.Closed++
 	return s.server.CloseErr
+}
+
+// Servers puts tools on fake servers by the server part of their names, as in
+// "<server>_<tool>", so tests can hand any set of fake tools to the gateway.
+func Servers(tools ...toolgateway.Tool) map[string]toolgateway.ToolServer {
+	byName := map[string]*Server{}
+	for _, tool := range tools {
+		name, _, _ := strings.Cut(tool.Definition().Name, "_")
+		if byName[name] == nil {
+			byName[name] = &Server{}
+		}
+		byName[name].Tools = append(byName[name].Tools, tool)
+	}
+	servers := make(map[string]toolgateway.ToolServer, len(byName))
+	for name, srv := range byName {
+		servers[name] = srv
+	}
+	return servers
 }

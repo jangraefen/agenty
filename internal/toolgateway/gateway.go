@@ -1,13 +1,12 @@
 // Package toolgateway is the single path every tool call takes.
 //
-// For each call the gateway checks the grant, resolves the tool, enforces the
-// run's tool call limit, asks policy, asks an approver when policy requires
-// one, and records each decision before it executes the tool and records the
-// result. A call is never executed unless its decision and approval have been
+// For each call the gateway checks the grant, enforces the run's tool call
+// limit, asks policy, asks an approver when policy requires one, and records
+// each decision before it executes the tool and records the result. A call is never executed unless its decision and approval have been
 // recorded, and anything short of a clear allow is a denial.
 //
-// The gateway also owns tool servers, such as MCP servers: it starts those
-// that serve a granted tool and stops them on Close.
+// Every tool comes from a tool server, such as an MCP server. The gateway owns
+// them: it starts those that serve a granted tool and stops them on Close.
 package toolgateway
 
 import (
@@ -16,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -66,16 +66,15 @@ type Config struct {
 	// Harness names the harness of the run, for policy.
 	Harness string
 	// Granted names the tools the harness may call. Anything else is denied.
+	// Each must be a tool of a server in Servers, named "<server>_<tool>".
 	Granted []string
-	// Tools are the in-process executors the gateway can resolve calls to.
-	Tools []Tool
 	// Servers are tool servers, by name. The gateway starts those that serve
 	// a granted tool, resolves calls to their tools, and stops them on Close.
 	Servers map[string]ToolServer
 	// MaxToolCalls bounds the calls of each run, denied ones included. It is
 	// required.
 	MaxToolCalls int
-	// Policy decides on granted, resolved calls. It is required.
+	// Policy decides on granted calls. It is required.
 	Policy Policy
 	// Approver answers calls that policy marks as requiring approval. Without
 	// one, such calls are denied.
@@ -93,8 +92,8 @@ type Config struct {
 // approver, audit and secrets. It is built and validated once; each run then
 // starts with Start and calls tools through the returned Run.
 type Gateway struct {
-	harness      string
-	granted      map[string]bool
+	harness string
+	// tools are the granted tools; every other call is denied.
 	tools        map[string]Tool
 	defs         []Definition
 	maxToolCalls int
@@ -108,8 +107,9 @@ type Gateway struct {
 }
 
 // New returns a Gateway for cfg, after starting the servers that serve a
-// granted tool. The grants are copied, so later changes to cfg do not affect
-// the gateway. Close stops the servers.
+// granted tool. A grant that no server serves is an error. The grants are
+// copied, so later changes to cfg do not affect the gateway. Close stops the
+// servers.
 func New(ctx context.Context, cfg Config) (*Gateway, error) {
 	switch {
 	case cfg.Audit == nil:
@@ -119,71 +119,52 @@ func New(ctx context.Context, cfg Config) (*Gateway, error) {
 	case cfg.MaxToolCalls <= 0:
 		return nil, errors.New("toolgateway: max tool calls must be greater than 0")
 	}
-	g := &Gateway{
-		harness:      cfg.Harness,
-		granted:      make(map[string]bool, len(cfg.Granted)),
-		tools:        make(map[string]Tool, len(cfg.Tools)),
-		maxToolCalls: cfg.MaxToolCalls,
-		policy:       cfg.Policy,
-		approver:     cfg.Approver,
-		audit:        cfg.Audit,
+	if err := validateServers(cfg.Servers); err != nil {
+		return nil, err
 	}
+	granted := make(map[string]bool, len(cfg.Granted))
 	for i, name := range cfg.Granted {
 		if err := ValidateToolName(name); err != nil {
 			return nil, fmt.Errorf("toolgateway: grant %d: %w", i, err)
 		}
-		g.granted[name] = true
-	}
-	if err := validateTools(cfg.Tools); err != nil {
-		return nil, err
-	}
-	if err := validateServers(cfg.Servers, cfg.Tools); err != nil {
-		return nil, err
+		if server, _, _ := strings.Cut(name, "_"); cfg.Servers[server] == nil {
+			return nil, fmt.Errorf("toolgateway: grant %s: no server %q is configured", name, server)
+		}
+		granted[name] = true
 	}
 	redact, err := NewRedactor(cfg.Secrets)
 	if err != nil {
 		return nil, err
 	}
-	g.redact = redact
 
-	sessions, serverTools, err := startServers(ctx, cfg.Servers, g.granted)
+	sessions, served, err := startServers(ctx, cfg.Servers, granted)
 	if err != nil {
 		return nil, err
 	}
-	tools := append(slices.Clone(cfg.Tools), serverTools...)
-	if err := validateTools(tools); err != nil {
-		return nil, errors.Join(err, closeSessions(sessions))
+	g := &Gateway{
+		harness:      cfg.Harness,
+		tools:        make(map[string]Tool, len(granted)),
+		maxToolCalls: cfg.MaxToolCalls,
+		policy:       cfg.Policy,
+		approver:     cfg.Approver,
+		audit:        cfg.Audit,
+		redact:       redact,
+		sessions:     sessions,
 	}
-	g.sessions = sessions
-	for _, tool := range tools {
-		def := tool.Definition()
-		g.tools[def.Name] = tool
-		if g.granted[def.Name] {
+	for _, tool := range served {
+		if def := tool.Definition(); granted[def.Name] {
+			g.tools[def.Name] = tool
 			g.defs = append(g.defs, def)
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(granted)) {
+		if g.tools[name] == nil {
+			server, _, _ := strings.Cut(name, "_")
+			return nil, errors.Join(fmt.Errorf("toolgateway: grant %s: server %s has no such tool", name, server), closeSessions(sessions))
 		}
 	}
 	slices.SortFunc(g.defs, func(a, b Definition) int { return strings.Compare(a.Name, b.Name) })
 	return g, nil
-}
-
-// validateTools checks that every tool is non-nil and has a unique, valid
-// name.
-func validateTools(tools []Tool) error {
-	seen := make(map[string]bool, len(tools))
-	for i, tool := range tools {
-		if tool == nil {
-			return fmt.Errorf("toolgateway: tool %d is nil", i)
-		}
-		def := tool.Definition()
-		if err := ValidateToolName(def.Name); err != nil {
-			return fmt.Errorf("toolgateway: tool %d: %w", i, err)
-		}
-		if seen[def.Name] {
-			return fmt.Errorf("toolgateway: duplicate tool %q", def.Name)
-		}
-		seen[def.Name] = true
-	}
-	return nil
 }
 
 // Close stops the gateway's servers and reports every one that failed to
@@ -196,8 +177,8 @@ func (g *Gateway) Close() error {
 	return closeSessions(sessions)
 }
 
-// Definitions describes the tools runs may call: granted and resolved, sorted
-// by name.
+// Definitions describes the tools runs may call: the granted ones, sorted by
+// name.
 func (g *Gateway) Definitions() []Definition {
 	return slices.Clone(g.defs)
 }
@@ -299,9 +280,9 @@ type decision struct {
 	Reasons  []string
 }
 
-// decide returns the tool to execute and the decision for call. Grant and
-// resolve come first, so policy only ever sees granted, resolvable calls and
-// cannot grant anything. Every attempt counts towards the run's call limit.
+// decide returns the tool to execute and the decision for call. The grant
+// comes first, so policy only ever sees granted calls and cannot grant
+// anything. Every attempt counts towards the run's call limit.
 func (r *Run) decide(ctx context.Context, call ToolCall) (Tool, decision) {
 	g := r.gateway
 	r.mu.Lock()
@@ -310,12 +291,9 @@ func (r *Run) decide(ctx context.Context, call ToolCall) (Tool, decision) {
 	counts := r.executed.clone()
 	r.mu.Unlock()
 
-	if !g.granted[call.Name] {
-		return nil, deny("tool not granted")
-	}
 	tool, ok := g.tools[call.Name]
 	if !ok {
-		return nil, deny("tool not resolved")
+		return nil, deny("tool not granted")
 	}
 	if attempts > g.maxToolCalls {
 		return nil, deny("tool call limit reached")

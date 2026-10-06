@@ -48,8 +48,7 @@ func TestInvariant_ModelIsNotTrusted(t *testing.T) {
 		call   string
 		reason string
 	}{
-		{"registered but not granted", "tickets_delete", "tool not granted"},
-		{"granted but not resolvable", "tickets_ghost", "tool not resolved"},
+		{"served but not granted", "tickets_delete", "tool not granted"},
 		{"empty name", "", "tool not granted"},
 		{"case variant of a granted tool", "TICKETS_READ", "tool not granted"},
 		{"path-like name", "../tickets_read", "tool not granted"},

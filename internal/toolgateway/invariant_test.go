@@ -14,8 +14,9 @@ import (
 )
 
 // TestInvariant_DefaultDeny guards trust-model guarantee 3:
-// a tool not granted to the harness is denied and never executed, and when
-// policy or approval cannot give a clear allow, the call is denied too.
+// a tool not granted to the harness is denied and never executed, a grant no
+// server serves stops the gateway from starting, and when policy or approval
+// cannot give a clear allow, the call is denied too.
 func TestInvariant_DefaultDeny(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -27,7 +28,6 @@ func TestInvariant_DefaultDeny(t *testing.T) {
 		{"no grants at all", nil, "tickets_read", "tool not granted"},
 		{"grant match is case-sensitive", []string{"tickets_read"}, "Tickets_Read", "tool not granted"},
 		{"empty tool name", []string{"tickets_read"}, "", "tool not granted"},
-		{"granted but not resolvable", []string{"tickets_read", "tickets_ghost"}, "tickets_ghost", "tool not resolved"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -38,7 +38,7 @@ func TestInvariant_DefaultDeny(t *testing.T) {
 				MaxToolCalls: 100,
 				Policy:       &gatewaytest.Policy{},
 				Granted:      tt.granted,
-				Tools:        []toolgateway.Tool{read, del},
+				Servers:      gatewaytest.Servers(read, del),
 				Audit:        audit,
 			})
 			require.NoError(t, err)
@@ -100,7 +100,7 @@ func TestInvariant_DefaultDeny(t *testing.T) {
 				Policy:       tt.policy,
 				Approver:     tt.approver,
 				Granted:      []string{"tickets_read"},
-				Tools:        []toolgateway.Tool{read},
+				Servers:      gatewaytest.Servers(read),
 				Audit:        audit,
 			})
 			require.NoError(t, err)
@@ -269,7 +269,7 @@ func TestInvariant_EveryCallAudited(t *testing.T) {
 				Policy:       policy,
 				Approver:     approver,
 				Granted:      []string{"tickets_read"},
-				Tools:        []toolgateway.Tool{read, del},
+				Servers:      gatewaytest.Servers(read, del),
 				Audit:        audit,
 			})
 			require.NoError(t, err)

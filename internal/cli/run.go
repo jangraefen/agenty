@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"strings"
 
 	"github.com/jangraefen/agenty/internal/agent"
 	"github.com/jangraefen/agenty/internal/audit"
@@ -180,9 +179,6 @@ func runHarness(ctx context.Context, logger *slog.Logger, env Env, flags runFlag
 		BaseURL:   cfg.Provider.Anthropic.BaseURL,
 	}))
 
-	if err := checkGrants(cfg, h); err != nil {
-		return "", err
-	}
 	servers := make(map[string]toolgateway.ToolServer, len(cfg.MCPServers))
 	for name, srv := range cfg.MCPServers {
 		servers[name] = env.Server(name, mcptool.Server{Command: srv.Command, Args: srv.Args, Env: resolved.MCPServerEnv[name]})
@@ -219,31 +215,12 @@ func runHarness(ctx context.Context, logger *slog.Logger, env Env, flags runFlag
 			runErr = errors.Join(runErr, cerr)
 		}
 	}()
-	offered := map[string]bool{}
 	var names []string
 	for _, def := range a.Tools() {
-		offered[def.Name] = true
 		names = append(names, def.Name)
 	}
 	logger.Debug("tools offered to the model", "tools", names)
-	for _, tool := range h.Tools {
-		if !offered[tool] {
-			logger.Warn("granted tool not found on its server; calls to it are denied", "tool", tool)
-		}
-	}
 	res, err := a.Run(ctx, flags.input)
 	logger.Info("run finished", "harness", h.Name, "run_id", res.RunID, "steps", res.Steps, "audit", flags.audit)
 	return res.Output, err
-}
-
-// checkGrants checks that an MCP server is configured for every tool the
-// harness grants.
-func checkGrants(cfg *config.Config, h *harness.Harness) error {
-	for _, tool := range h.Tools {
-		name, _, _ := strings.Cut(tool, "_")
-		if _, ok := cfg.MCPServers[name]; !ok {
-			return fmt.Errorf("harness grants %s, but no MCP server %q is configured", tool, name)
-		}
-	}
-	return nil
 }

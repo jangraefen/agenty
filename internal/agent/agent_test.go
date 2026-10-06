@@ -224,6 +224,8 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 	broken.Policy = &harness.Policy{Files: []string{"triage.rego"}, FileSources: []string{"package agenty.tool\n\ndeny contains"}}
 	brokenInline := *f.harness
 	brokenInline.Policy = &harness.Policy{Rules: "deny contains"}
+	ghost := *f.harness
+	ghost.Tools = []string{"tickets_read", "tickets_ghost"}
 	withConfig := func(change func(*agent.Config)) agent.Config {
 		cfg := f.config(m)
 		change(&cfg)
@@ -239,8 +241,7 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 		{"nil model", withConfig(func(c *agent.Config) { c.Model = nil }), "model is required"},
 		{"nil audit", withConfig(func(c *agent.Config) { c.Audit = nil }), "audit is required"},
 		{"invalid harness", withConfig(func(c *agent.Config) { c.Harness = &invalid }), "limits.max_steps"},
-		{"nil tool", withConfig(func(c *agent.Config) { c.Tools = append(c.Tools, nil) }), "tool 3 is nil"},
-		{"duplicate tool", withConfig(func(c *agent.Config) { c.Tools = append(c.Tools, f.read) }), `duplicate tool "tickets_read"`},
+		{"grant no server serves", withConfig(func(c *agent.Config) { c.Harness = &ghost }), "grant tickets_ghost: server tickets has no such tool"},
 		{"harness policy not loaded", withConfig(func(c *agent.Config) { c.Harness = &unloaded }), `harness policy "triage.rego" was not loaded`},
 		{"invalid central policy", withConfig(func(c *agent.Config) {
 			c.Policy = []policy.Module{{Name: "central.rego", Source: "package agenty.tool\n\ndeny contains"}}
@@ -311,7 +312,7 @@ func TestNew_HarnessChangesAfterNewDoNotWidenGrants(t *testing.T) {
 	a, err := agent.New(context.Background(), f.config(m))
 	require.NoError(t, err)
 
-	f.harness.Tools[2] = "tickets_delete"
+	f.harness.Tools[1] = "tickets_delete"
 	f.harness.Limits.MaxSteps = 1
 	_, err = a.Run(context.Background(), "ticket 7")
 
@@ -359,7 +360,10 @@ func TestClose_ReportsServersThatDoNotStop(t *testing.T) {
 	f := newFixture(3)
 	f.harness.Tools = []string{"files_read"}
 	cfg := f.config(model.NewScripted())
-	cfg.Servers = map[string]toolgateway.ToolServer{"files": &gatewaytest.Server{CloseErr: assert.AnError}}
+	cfg.Servers = map[string]toolgateway.ToolServer{"files": &gatewaytest.Server{
+		Tools:    []toolgateway.Tool{&gatewaytest.Tool{Name: "files_read"}},
+		CloseErr: assert.AnError,
+	}}
 	a, err := agent.New(context.Background(), cfg)
 	require.NoError(t, err)
 

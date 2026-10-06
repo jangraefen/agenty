@@ -23,11 +23,9 @@ var ErrMaxSteps = errors.New("max steps reached")
 type Config struct {
 	Harness *harness.Harness
 	Model   model.Model
-	// Tools are the in-process executors available to runs. Only those the
-	// harness grants are reachable, and only through the run's gateway.
-	Tools []toolgateway.Tool
-	// Servers are tool servers, such as MCP servers, by name. The gateway
-	// starts those that serve a granted tool; Close stops them.
+	// Servers are tool servers, such as MCP servers, by name. Every granted
+	// tool must be served by one. The gateway starts those that serve a
+	// granted tool; Close stops them.
 	Servers map[string]toolgateway.ToolServer
 	// Policy is central policy. It applies to every run, and the harness
 	// policy, if any, can only tighten it.
@@ -97,7 +95,6 @@ func New(ctx context.Context, cfg Config) (*Agent, error) {
 	gw, err := toolgateway.New(ctx, toolgateway.Config{
 		Harness:      cfg.Harness.Name,
 		Granted:      cfg.Harness.Tools,
-		Tools:        cfg.Tools,
 		Servers:      cfg.Servers,
 		MaxToolCalls: cfg.Harness.Limits.MaxToolCalls,
 		Policy:       engine,
@@ -111,7 +108,7 @@ func New(ctx context.Context, cfg Config) (*Agent, error) {
 	return &Agent{harness: *cfg.Harness, model: cfg.Model, gateway: gw}, nil
 }
 
-// Tools describes the tools runs may call: granted and found, sorted by name.
+// Tools describes the tools runs may call: the granted ones, sorted by name.
 func (a *Agent) Tools() []toolgateway.Definition {
 	return a.gateway.Definitions()
 }

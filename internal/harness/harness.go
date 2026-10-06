@@ -26,7 +26,8 @@ type Harness struct {
 	// Policy optionally tightens central policy for this harness: Rego
 	// modules in package agenty.tool, compiled together as one layer, so they
 	// may share rules with each other, but not with central policy. Load
-	// fills it from the file's policy section.
+	// fills it from the file's policy section; Validate leaves it to the
+	// policy engine, which checks the modules when it compiles them.
 	Policy []policy.Module `yaml:"-"`
 }
 

@@ -113,7 +113,7 @@ func TestNew_RejectsSecretsTooShortToRedact(t *testing.T) {
 func TestCall_RedactsSecretsWithHTMLCharacters(t *testing.T) {
 	secret := "a<b>c&d-0123"
 	for name, result := range map[string]json.RawMessage{
-		"HTML-escaped by json.Marshal": json.RawMessage(`{"v":"a<b>c&d-0123"}`),
+		"HTML-escaped by json.Marshal": json.RawMessage(`{"v":"a\u003cb\u003ec\u0026d-0123"}`),
 		"not HTML-escaped":             json.RawMessage(`{"v":"a<b>c&d-0123"}`),
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -157,14 +157,4 @@ func TestCall_ApproverSeesRedactedArgsAndReasons(t *testing.T) {
 	require.Len(t, approver.Calls, 1)
 	assert.JSONEq(t, `{"key":"[redacted]"}`, string(approver.Calls[0].Request.Args), "a person sees the arguments, never the secret")
 	assert.Equal(t, []string{"writes [redacted] to the vault"}, approver.Calls[0].Reasons)
-}
-
-func TestRedactor_String(t *testing.T) {
-	r, err := toolgateway.NewRedactor([]string{apiKey})
-	require.NoError(t, err)
-
-	assert.Equal(t, "key=[redacted] ok", r.String("key="+apiKey+" ok"))
-
-	_, err = toolgateway.NewRedactor([]string{"short"})
-	require.ErrorContains(t, err, "secret 0 is shorter than 8 characters")
 }

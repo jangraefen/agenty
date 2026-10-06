@@ -54,7 +54,7 @@ Most code is AI-written, so tests are the primary correctness guarantee:
 - **Test-driven**: write the failing test first.
 - **Scripted model**: a deterministic `Model` implementation returns predefined responses and tool calls, so the agent loop is tested without a real model. A real-model run is optional and never gating.
 - **Invariant tests**: each trust-model guarantee above has a named test that fails if it is violated.
-- **High bar for the gateway and policy code**: these are where security lives, and they get the most thorough tests (full coverage, mutation testing when it earns its keep).
+- **High bar for the gateway, policy and secret redaction code**: these are where security lives, and they get the most thorough tests (full coverage, mutation testing when it earns its keep).
 - **Table-driven tests**, `require` for preconditions, `assert` for independent checks.
 
 Gates and tooling are added when the code they protect exists, not before.

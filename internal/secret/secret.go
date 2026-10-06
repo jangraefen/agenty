@@ -1,4 +1,7 @@
-package toolgateway
+// Package secret redacts credentials. Values read from the environment are
+// secrets: the tool gateway redacts them from everything it hands on, and the
+// command line from everything it prints.
+package secret
 
 import (
 	"cmp"
@@ -12,32 +15,22 @@ import (
 
 const redacted = "[redacted]"
 
-// MinSecretLength is the shortest secret the gateway redacts: shorter values
-// would also match ordinary text.
-const MinSecretLength = 8
+// MinLength is the shortest secret a Redactor redacts: shorter values would
+// also match ordinary text.
+const MinLength = 8
 
-// Redactor replaces known secrets with "[redacted]". The gateway uses one for
-// everything it hands on: tool results, tool errors and audit records.
+// Redactor replaces known secrets with "[redacted]".
 type Redactor struct {
 	replacer *strings.Replacer
 }
 
-// validateSecrets checks that every secret is long enough to redact without
-// also matching ordinary text.
-func validateSecrets(secrets []string) error {
-	for i, s := range secrets {
-		if len(s) < MinSecretLength {
-			return fmt.Errorf("toolgateway: secret %d is shorter than %d characters", i, MinSecretLength)
-		}
-	}
-	return nil
-}
-
-// NewRedactor returns a Redactor for secrets, each at least MinSecretLength
+// NewRedactor returns a Redactor for secrets, each at least MinLength
 // characters long.
 func NewRedactor(secrets []string) (*Redactor, error) {
-	if err := validateSecrets(secrets); err != nil {
-		return nil, err
+	for i, s := range secrets {
+		if len(s) < MinLength {
+			return nil, fmt.Errorf("secret %d is shorter than %d characters", i, MinLength)
+		}
 	}
 	// Longest first: the replacer tries pairs in order, so a secret that
 	// contains another one is replaced whole.
@@ -69,9 +62,9 @@ func (r *Redactor) String(s string) string {
 	return r.replacer.Replace(s)
 }
 
-// json redacts raw JSON. If redaction breaks the JSON, for example a secret
+// JSON redacts raw JSON. If redaction breaks the JSON, for example a secret
 // that was a number, the redacted text is returned as a JSON string.
-func (r *Redactor) json(raw json.RawMessage) json.RawMessage {
+func (r *Redactor) JSON(raw json.RawMessage) json.RawMessage {
 	out := r.replacer.Replace(string(raw))
 	if out == string(raw) {
 		return raw
@@ -82,10 +75,10 @@ func (r *Redactor) json(raw json.RawMessage) json.RawMessage {
 	return must.Value(json.Marshal(out))
 }
 
-// error redacts err's message and keeps err in the chain, so callers can still
+// Error redacts err's message and keeps err in the chain, so callers can still
 // match it with errors.Is. The wrapped error's own message is not redacted:
 // print the returned error, never what it unwraps to.
-func (r *Redactor) error(err error) error {
+func (r *Redactor) Error(err error) error {
 	if err == nil {
 		return nil
 	}

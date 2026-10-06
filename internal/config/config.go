@@ -17,9 +17,8 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
-	"github.com/jangraefen/agenty/internal/harness"
 	"github.com/jangraefen/agenty/internal/policy"
-	"github.com/jangraefen/agenty/internal/toolgateway"
+	"github.com/jangraefen/agenty/internal/secret"
 )
 
 // Config is the operator configuration.
@@ -91,6 +90,18 @@ func (v *Value) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
+var _ error = (*FieldError)(nil) //nolint:errcheck // an interface guard, not a discarded error
+
+// FieldError reports an invalid field, named by its YAML path.
+type FieldError struct {
+	Field string
+	Msg   string
+}
+
+func (e *FieldError) Error() string {
+	return fmt.Sprintf("field %q: %s", e.Field, e.Msg)
+}
+
 // Load reads, parses and validates the config file at path, and reads its
 // policy files relative to it. Unknown keys are rejected.
 func Load(path string) (*Config, error) {
@@ -111,7 +122,7 @@ func Load(path string) (*Config, error) {
 	for i, name := range f.Policy.Files {
 		src, err := os.ReadFile(filepath.Join(filepath.Dir(path), name)) //nolint:gosec // G304: the config names its policy files.
 		if err != nil {
-			return nil, fmt.Errorf("config %s: %w", path, &harness.FieldError{Field: fmt.Sprintf("policy.files[%d]", i), Msg: err.Error()})
+			return nil, fmt.Errorf("config %s: %w", path, &FieldError{Field: fmt.Sprintf("policy.files[%d]", i), Msg: err.Error()})
 		}
 		c.Policy = append(c.Policy, policy.Module{Name: name, Source: string(src)})
 	}
@@ -121,7 +132,7 @@ func Load(path string) (*Config, error) {
 func (f *file) validate() error {
 	var errs []error
 	add := func(field, msg string) {
-		errs = append(errs, &harness.FieldError{Field: field, Msg: msg})
+		errs = append(errs, &FieldError{Field: field, Msg: msg})
 	}
 	checkValue := func(field string, v Value) {
 		if (v.Env == "") == (v.Value == "") {
@@ -176,9 +187,9 @@ func (c *Config) Resolve(lookup func(string) (string, bool)) (*Resolved, error) 
 		val, ok := lookup(v.Env)
 		switch {
 		case !ok || val == "":
-			errs = append(errs, &harness.FieldError{Field: field, Msg: fmt.Sprintf("environment variable %s is not set", v.Env)})
-		case len(val) < toolgateway.MinSecretLength:
-			errs = append(errs, &harness.FieldError{Field: field, Msg: fmt.Sprintf("comes from the environment, so it is redacted as a secret, but it is shorter than %d characters", toolgateway.MinSecretLength)})
+			errs = append(errs, &FieldError{Field: field, Msg: fmt.Sprintf("environment variable %s is not set", v.Env)})
+		case len(val) < secret.MinLength:
+			errs = append(errs, &FieldError{Field: field, Msg: fmt.Sprintf("comes from the environment, so it is redacted as a secret, but it is shorter than %d characters", secret.MinLength)})
 		default:
 			r.Secrets = append(r.Secrets, val)
 		}

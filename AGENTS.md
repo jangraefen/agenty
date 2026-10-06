@@ -10,7 +10,7 @@ Agenty is an open-source, self-hostable platform for building governed AI agent 
 
 - **Scope**: build the stage IDEA.md describes as next. Add a component only when that stage needs it.
 - **Language**: Go for the backend; the web frontend alone is TypeScript (React, TanStack), in its own deployable. No agent framework: Agenty owns its agent loop on the official model provider SDKs.
-- **Web stack**: gin for the API; PostgreSQL through sqlc-generated code, no ORM.
+- **Web stack**: gin for the API; PostgreSQL through sqlc.
 - **Policy**: OPA, embedded, is the only policy engine.
 - **Trust model**: every change preserves the guarantees in IDEA.md, above all: every side effect goes through the Tool Gateway, ungranted tools are denied, and credentials never reach model context or logs.
 - **Tests first**: write the failing test before the implementation. Each trust-model guarantee has a named test; extend it when touching security-relevant code. The gateway, policy and secret redaction code get the most thorough tests.
@@ -31,4 +31,4 @@ Agenty is an open-source, self-hostable platform for building governed AI agent 
 
 ## Keeping documents current
 
-When a task changes a technology choice, a trust-model guarantee, or the PoC scope, update IDEA.md in the same change.
+When a task changes a technology choice, a trust-model guarantee, or the scope of the current stage, update IDEA.md in the same change.

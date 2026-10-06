@@ -91,17 +91,16 @@ The example's central policy asks before every file change and denies dotfiles; 
 
 ## Next: the web solution
 
-The PoC held, so the next stage moves Agenty from a command line to a server with a web portal. These decisions are settled; the trust model and the core packages (gateway, policy, agent loop, redaction) carry over unchanged.
+The PoC held, so the next stage moves Agenty from a command line to a server with a web portal. These decisions are settled; the trust model carries over unchanged, and so do the gateway, policy and redaction code.
 
-- **Shape**: a Go backend (`agenty serve`) exposing a JSON API, and a separate frontend that only uses that API.
-- **Storage**: PostgreSQL replaces the JSON-lines audit file and harness files. Audit records keep the same fields.
-- **Tenancy**: one installation is one organisation, split into workspaces that own harnesses, runs and grants.
-- **Sign-in**: a hard-coded list of users in the operator config, kept as simple as possible. It is a stopgap for this stage only: OIDC replaces it before the first release and is then the only way to sign in.
-- **Harnesses**: authored in a form, with a read-only YAML view. Every save creates an immutable version, and every run records the version it ran, so an audit record always points to the exact instructions, grants and policy that applied.
-- **Central policy**: stays Rego files shipped with the operator config; the portal shows it read-only. Policy changes go through code review, not a UI editor.
-- **Runs**: executed by the backend itself, taken from a job queue in PostgreSQL, so more replicas add capacity.
-- **Approvals**: durable. A call that needs approval persists the run and stops it; approving in the portal resumes it from its stored transcript. No goroutine waits, and pending runs survive restarts. This is the main change to the agent loop.
-- **MCP servers**: reached as local processes over stdio, as today, or as remote servers over HTTP. Their credentials are held by the operator, one set per server, in the server's configuration; runs act as that service identity, not as the user.
-- **CLI**: becomes a client of the API (create harnesses, start runs, answer approvals) instead of running agents itself.
+- **Shape**: a Go backend exposing a JSON API, and a separate frontend that only uses that API.
+- **Tenancy**: workspaces within one organisation.
+- **Sign-in**: a hard-coded list of users, kept as simple as possible. It is a stopgap for this stage only: OIDC replaces it before release and is then the only way to sign in.
+- **Harnesses**: authored in a form, with a read-only YAML view. Every save creates an immutable version, and every run records the version it ran.
+- **Central policy**: stays Rego files from the operator config; the portal shows it read-only.
+- **Runs**: executed in-process by the backend, taken from a job queue in PostgreSQL.
+- **Approvals**: durable. A call that needs approval pauses the run; approving in the portal resumes it, and pending runs survive restarts. This is the main change to the agent loop.
+- **MCP servers**: reached as local processes over stdio, as today, or as remote servers over HTTP. Their credentials are held by the operator, one set per server.
+- **CLI**: becomes a client of the API instead of running agents itself.
 
 The longer-term direction stays the same: a governed catalog of tools and skills, service accounts, cost attribution, and a curated starter kit of MCP servers for common enterprise systems — all open source, with no paid edition.

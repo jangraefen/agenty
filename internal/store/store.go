@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -78,18 +79,22 @@ type HarnessVersion struct {
 
 // PutHarness stores h as the next version of its harness, after validating
 // it. If h equals the latest version, nothing is stored and that version is
-// returned, so applying an unchanged harness is a no-op.
+// returned, so applying an unchanged harness is a no-op. Concurrent puts of
+// one harness are serialized, so each gets its own version.
 func (s *Store) PutHarness(ctx context.Context, h harness.Harness) (HarnessVersion, error) {
 	if err := h.Validate(); err != nil {
 		return HarnessVersion{}, fmt.Errorf("store: invalid harness: %w", err)
 	}
-	definition := must.Value(json.Marshal(h))
+	definition := canonical(h)
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return HarnessVersion{}, fmt.Errorf("store: %w", err)
 	}
 	q := s.queries.WithTx(tx)
+	if err := q.LockHarnessName(ctx, h.Name); err != nil {
+		return HarnessVersion{}, errors.Join(fmt.Errorf("store: %w", err), tx.Rollback(ctx))
+	}
 	next := int32(1)
 	latest, err := q.LatestHarnessVersion(ctx, h.Name)
 	switch {
@@ -101,7 +106,7 @@ func (s *Store) PutHarness(ctx context.Context, h harness.Harness) (HarnessVersi
 		if err != nil {
 			return HarnessVersion{}, errors.Join(err, tx.Rollback(ctx))
 		}
-		if bytes.Equal(must.Value(json.Marshal(v.Harness)), definition) {
+		if bytes.Equal(canonical(v.Harness), definition) {
 			return v, tx.Rollback(ctx)
 		}
 		next = latest.Version + 1
@@ -114,6 +119,18 @@ func (s *Store) PutHarness(ctx context.Context, h harness.Harness) (HarnessVersi
 		return HarnessVersion{}, fmt.Errorf("store: %w", err)
 	}
 	return harnessVersion(row)
+}
+
+// canonical is the stored form of h: its JSON, with empty lists written as
+// null, so that a harness without tools or policy has one form.
+func canonical(h harness.Harness) []byte {
+	if len(h.Tools) == 0 {
+		h.Tools = nil
+	}
+	if len(h.Policy) == 0 {
+		h.Policy = nil
+	}
+	return must.Value(json.Marshal(h))
 }
 
 // Harness returns the latest version of the named harness.
@@ -240,19 +257,22 @@ var _ toolgateway.Audit = (*Store)(nil)
 
 // Record appends rec to the audit log. The record's run must exist. An error
 // means the record may not be stored, and the gateway then does not execute
-// the call.
+// the call. Content never makes recording fail: PostgreSQL rejects NUL bytes
+// and invalid UTF-8 in text, so those are replaced, and anything that is not
+// valid JSON, such as malformed arguments from a model, is stored as a JSON
+// string.
 func (s *Store) Record(ctx context.Context, rec toolgateway.Record) error {
 	err := s.queries.InsertAuditRecord(ctx, db.InsertAuditRecordParams{
-		RunID:    rec.RunID,
-		CallID:   rec.CallID,
-		Event:    string(rec.Event),
-		Tool:     rec.Tool,
-		Args:     jsonb(rec.Args),
-		Decision: string(rec.Decision),
-		Reason:   rec.Reason,
-		Approver: rec.Approver,
-		Result:   jsonb(rec.Result),
-		Error:    rec.Err,
+		RunID:    text(rec.RunID),
+		CallID:   text(rec.CallID),
+		Event:    text(string(rec.Event)),
+		Tool:     text(rec.Tool),
+		Args:     jsonText(rec.Args),
+		Decision: text(string(rec.Decision)),
+		Reason:   text(rec.Reason),
+		Approver: text(rec.Approver),
+		Result:   jsonText(rec.Result),
+		Error:    text(rec.Err),
 	})
 	if err != nil {
 		return fmt.Errorf("store: audit: %w", err)
@@ -294,18 +314,25 @@ func (s *Store) AuditRecords(ctx context.Context, runID string) ([]AuditRecord, 
 	return out, nil
 }
 
-// jsonb prepares raw JSON for a jsonb column: empty stays NULL, and anything
-// that is not valid JSON, such as malformed arguments from a model, is stored
-// as a JSON string, so that recording never fails on content.
-func jsonb(raw json.RawMessage) []byte {
-	switch {
-	case len(raw) == 0:
+// text makes s storable in a text column, which accepts neither NUL bytes
+// nor invalid UTF-8: both become U+FFFD.
+func text(s string) string {
+	return strings.ReplaceAll(strings.ToValidUTF8(s, "\uFFFD"), "\x00", "\uFFFD")
+}
+
+// jsonText makes raw storable in a json column: empty stays NULL, invalid
+// UTF-8 becomes U+FFFD, and anything that is then still not valid JSON, such
+// as text with a raw NUL byte, becomes a JSON string, where json.Marshal
+// escapes the NUL.
+func jsonText(raw json.RawMessage) []byte {
+	if len(raw) == 0 {
 		return nil
-	case json.Valid(raw):
-		return raw
-	default:
-		return must.Value(json.Marshal(string(raw)))
 	}
+	valid := []byte(strings.ToValidUTF8(string(raw), "\uFFFD"))
+	if json.Valid(valid) {
+		return valid
+	}
+	return must.Value(json.Marshal(string(valid)))
 }
 
 func notFound(what string, err error) error {

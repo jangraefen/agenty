@@ -102,3 +102,13 @@ func (q *Queries) LatestHarnessVersions(ctx context.Context) ([]HarnessVersion, 
 	}
 	return items, nil
 }
+
+const lockHarnessName = `-- name: LockHarnessName :exec
+SELECT pg_advisory_xact_lock(hashtext($1))
+`
+
+// Serializes versioning of one harness name until the transaction ends.
+func (q *Queries) LockHarnessName(ctx context.Context, hashtext string) error {
+	_, err := q.db.Exec(ctx, lockHarnessName, hashtext)
+	return err
+}

@@ -26,18 +26,20 @@ CREATE TABLE runs (
 );
 
 -- audit_records is the audit log: one row per decision, approval and result
--- the tool gateway records, with the fields of toolgateway.Record.
+-- the tool gateway records, with the fields of toolgateway.Record. args and
+-- result are json, not jsonb: json keeps the text as written (key order,
+-- duplicate keys) and accepts the \u0000 escape, which jsonb rejects.
 CREATE TABLE audit_records (
     id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     run_id      text        NOT NULL REFERENCES runs (id),
     call_id     text        NOT NULL,
     event       text        NOT NULL,
     tool        text        NOT NULL,
-    args        jsonb,
+    args        json,
     decision    text        NOT NULL,
     reason      text        NOT NULL DEFAULT '',
     approver    text        NOT NULL DEFAULT '',
-    result      jsonb,
+    result      json,
     error       text        NOT NULL DEFAULT '',
     recorded_at timestamptz NOT NULL DEFAULT now()
 );

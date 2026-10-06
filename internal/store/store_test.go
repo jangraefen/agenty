@@ -3,6 +3,8 @@ package store_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -69,6 +71,51 @@ func TestPutHarness_StoresVersions(t *testing.T) {
 	old, err := s.HarnessVersionByID(ctx, first.ID)
 	require.NoError(t, err)
 	assert.Equal(t, notes(), old.Harness, "earlier versions stay as they were")
+}
+
+func TestPutHarness_EmptyAndMissingListsAreTheSame(t *testing.T) {
+	ctx := context.Background()
+	s := storetest.New(t)
+	h := notes()
+	h.Tools, h.Policy = nil, nil
+	first, err := s.PutHarness(ctx, h)
+	require.NoError(t, err)
+
+	h.Tools, h.Policy = []string{}, []policy.Module{}
+	again, err := s.PutHarness(ctx, h)
+
+	require.NoError(t, err)
+	assert.Equal(t, first.Version, again.Version)
+}
+
+func TestPutHarness_ConcurrentPutsGetTheirOwnVersions(t *testing.T) {
+	ctx := context.Background()
+	s := storetest.New(t)
+	const n = 8
+	versions := make(chan int, n)
+	errs := make(chan error, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Go(func() {
+			h := notes()
+			h.Instructions = fmt.Sprintf("Tidy the notes, take %d.", i)
+			v, err := s.PutHarness(ctx, h)
+			errs <- err
+			versions <- v.Version
+		})
+	}
+	wg.Wait()
+	close(errs)
+	close(versions)
+
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	var got []int
+	for v := range versions {
+		got = append(got, v)
+	}
+	assert.ElementsMatch(t, []int{1, 2, 3, 4, 5, 6, 7, 8}, got)
 }
 
 func TestPutHarness_RejectsInvalidHarnesses(t *testing.T) {
@@ -217,18 +264,78 @@ func TestRecord_StoresTheAuditLog(t *testing.T) {
 	assert.JSONEq(t, `{"ok":true}`, string(got[2].Result))
 }
 
-func TestRecord_KeepsArgumentsThatAreNotJSON(t *testing.T) {
+// TestRecord_NeverFailsOnContent: PostgreSQL rejects NUL bytes and invalid
+// UTF-8 in text, and the \u0000 escape in jsonb. A result is recorded after
+// its call ran, so the record must be kept whatever a tool or model returned.
+func TestRecord_NeverFailsOnContent(t *testing.T) {
+	tests := []struct {
+		name       string
+		rec        toolgateway.Record
+		wantArgs   string
+		wantResult string
+		wantErr    string
+		wantReason string
+	}{
+		{
+			name:     "arguments that are not JSON become a JSON string",
+			rec:      toolgateway.Record{Args: json.RawMessage(`{"path":`)},
+			wantArgs: `"{\"path\":"`,
+		},
+		{
+			name:       "an escaped NUL in JSON is kept",
+			rec:        toolgateway.Record{Args: json.RawMessage(`{"a":"\u0000"}`), Result: json.RawMessage(`{"content":"bin\u0000ary"}`)},
+			wantArgs:   `{"a":"\u0000"}`,
+			wantResult: `{"content":"bin\u0000ary"}`,
+		},
+		{
+			name:       "a raw NUL makes JSON invalid, so it is kept escaped in a string",
+			rec:        toolgateway.Record{Result: json.RawMessage("\"bin\x00ary\"")},
+			wantResult: `"\"bin\u0000ary\""`,
+		},
+		{
+			name:       "invalid UTF-8 in JSON is replaced",
+			rec:        toolgateway.Record{Result: json.RawMessage("\"caf\xff\"")},
+			wantResult: "\"caf\ufffd\"",
+		},
+		{
+			name:       "NUL and invalid UTF-8 in text are replaced",
+			rec:        toolgateway.Record{Err: "read \x00 failed: \xff", Reason: "policy: \x00"},
+			wantErr:    "read \ufffd failed: \ufffd",
+			wantReason: "policy: \ufffd",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			s := storetest.New(t)
+			newRun(t, s, "r1")
+			rec := tt.rec
+			rec.RunID, rec.CallID, rec.Event, rec.Tool, rec.Decision = "r1", "c1", toolgateway.EventResult, "files_read", toolgateway.Allow
+
+			require.NoError(t, s.Record(ctx, rec), "recording never fails on content")
+
+			got, err := s.AuditRecords(ctx, "r1")
+			require.NoError(t, err)
+			require.Len(t, got, 1)
+			assert.Equal(t, tt.wantArgs, string(got[0].Args))
+			assert.Equal(t, tt.wantResult, string(got[0].Result))
+			assert.Equal(t, tt.wantErr, got[0].Err)
+			assert.Equal(t, tt.wantReason, got[0].Reason)
+		})
+	}
+}
+
+func TestRecord_KeepsJSONAsWritten(t *testing.T) {
 	ctx := context.Background()
 	s := storetest.New(t)
 	newRun(t, s, "r1")
+	args := `{"b": 1, "a": 2, "a": 3}`
 
-	err := s.Record(ctx, toolgateway.Record{RunID: "r1", CallID: "c1", Event: toolgateway.EventDecision, Tool: "files_read", Args: json.RawMessage(`{"path":`), Decision: toolgateway.Deny})
+	require.NoError(t, s.Record(ctx, toolgateway.Record{RunID: "r1", CallID: "c1", Event: toolgateway.EventDecision, Tool: "files_read", Args: json.RawMessage(args), Decision: toolgateway.Allow}))
 
-	require.NoError(t, err, "recording never fails on content")
 	got, err := s.AuditRecords(ctx, "r1")
 	require.NoError(t, err)
-	require.Len(t, got, 1)
-	assert.JSONEq(t, `"{\"path\":"`, string(got[0].Args))
+	assert.Equal(t, args, string(got[0].Args), "the audit keeps key order, spacing and duplicate keys as the model sent them")
 }
 
 // TestRecord_FailsClosed: a record the store cannot keep is an error, so the

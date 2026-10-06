@@ -147,6 +147,11 @@ func messageParam(i int, msg model.Message) (sdk.MessageParam, error) {
 			blocks = append(blocks, sdk.NewTextBlock(msg.Text))
 		}
 	case model.RoleAssistant:
+		// A reply this provider generated is replayed exactly as the API
+		// sent it: thinking blocks must come back unchanged and in place.
+		if p, ok := msg.Provider.(sdk.MessageParam); ok {
+			return p, nil
+		}
 		if msg.Text != "" {
 			blocks = append(blocks, sdk.NewTextBlock(msg.Text))
 		}
@@ -190,10 +195,13 @@ func reply(resp *sdk.Message) (model.Message, error) {
 			texts = append(texts, block.Text)
 		case "tool_use":
 			msg.ToolCalls = append(msg.ToolCalls, model.ToolCall{ID: block.ID, Name: block.Name, Args: slices.Clone(block.Input)})
+		case "thinking", "redacted_thinking":
+			// Not part of the answer; kept in msg.Provider for replay.
 		default:
 			return model.Message{}, fmt.Errorf("unsupported content block %q", block.Type)
 		}
 	}
 	msg.Text = strings.Join(texts, "\n")
+	msg.Provider = resp.ToParam()
 	return msg, nil
 }

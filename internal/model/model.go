@@ -37,6 +37,11 @@ type Message struct {
 	Text        string
 	ToolCalls   []ToolCall
 	ToolResults []ToolResult
+	// Provider is the message in the form of the provider that generated it,
+	// if it keeps one. The provider replays it unchanged on later requests,
+	// which some APIs require, for example for thinking blocks. Other code
+	// treats it as opaque.
+	Provider any
 }
 
 // ToolCall is the model asking for a tool to be called.

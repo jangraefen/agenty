@@ -6,15 +6,15 @@ import (
 	"maps"
 )
 
-// Policy decides on tool calls that are granted. A Policy can
-// only tighten: it may deny or require approval, never grant a tool.
+// Policy decides on granted tool calls. A Policy can only tighten: it may
+// deny or require approval, never grant a tool.
 type Policy interface {
 	Evaluate(ctx context.Context, req Request) (Verdict, error)
 }
 
-// Request describes one granted call to whoever decides on it:
-// policy, and an approver when policy asks for one. Its JSON form is the
-// input document policy is written against.
+// Request describes one granted call to whoever decides on it: policy, and an
+// approver when policy asks for one. Its JSON form is the input document
+// policy is written against.
 type Request struct {
 	RunID   string          `json:"run_id"`
 	Harness string          `json:"harness"`

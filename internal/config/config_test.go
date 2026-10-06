@@ -32,14 +32,14 @@ func TestLoad_Valid(t *testing.T) {
 			},
 		},
 	}, got.MCPServers)
-	assert.Equal(t, []string{"policies/central.rego"}, got.Policy.Files)
-	require.Len(t, got.Policy.FileSources, 1)
-	assert.Contains(t, got.Policy.FileSources[0], "writes need a human", "policy files are read relative to the config file")
+	require.Len(t, got.Policy, 1)
+	assert.Equal(t, "policies/central.rego", got.Policy[0].Name)
+	assert.Contains(t, got.Policy[0].Source, "writes need a human", "policy files are read relative to the config file")
 
 	minimal, err := config.Load(filepath.Join("testdata", "minimal.yaml"))
 	require.NoError(t, err)
 	assert.Empty(t, minimal.MCPServers)
-	assert.Empty(t, minimal.Policy.Files)
+	assert.Empty(t, minimal.Policy)
 }
 
 // fieldsOf returns the fields named by every harness.FieldError in err.

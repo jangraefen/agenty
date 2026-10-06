@@ -18,6 +18,7 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/jangraefen/agenty/internal/harness"
+	"github.com/jangraefen/agenty/internal/policy"
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
@@ -25,7 +26,21 @@ import (
 type Config struct {
 	Provider   Provider             `yaml:"provider"`
 	MCPServers map[string]MCPServer `yaml:"mcp_servers"`
-	Policy     Policy               `yaml:"policy"`
+	// Policy is central policy: Rego modules in package agenty.tool. Load
+	// reads them from the files the config names.
+	Policy []policy.Module `yaml:"-"`
+}
+
+// file is a config file: the config, and its policy as written.
+type file struct {
+	Config `yaml:",inline"`
+	Policy policySection `yaml:"policy"`
+}
+
+// policySection is central policy as written: Rego files relative to the
+// config file.
+type policySection struct {
+	Files []string `yaml:"files"`
 }
 
 // Provider configures the model providers. Anthropic is the only one so far.
@@ -46,14 +61,6 @@ type MCPServer struct {
 	Command string           `yaml:"command"`
 	Args    []string         `yaml:"args"`
 	Env     map[string]Value `yaml:"env"`
-}
-
-// Policy is central policy: Rego files relative to the config file.
-type Policy struct {
-	Files []string `yaml:"files"`
-	// FileSources holds the content of each of Files, in order. Load fills
-	// it; it never comes from YAML.
-	FileSources []string `yaml:"-"`
 }
 
 // Value is a configuration value: read from an environment variable, which
@@ -93,24 +100,25 @@ func Load(path string) (*Config, error) {
 	}
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
-	var c Config
-	if err := dec.Decode(&c); err != nil && !errors.Is(err, io.EOF) {
+	var f file
+	if err := dec.Decode(&f); err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("config %s: decode: %w", path, err)
 	}
-	if err := c.validate(); err != nil {
+	if err := f.validate(); err != nil {
 		return nil, fmt.Errorf("config %s: %w", path, err)
 	}
-	for i, file := range c.Policy.Files {
-		src, err := os.ReadFile(filepath.Join(filepath.Dir(path), file)) //nolint:gosec // G304: the config names its policy files.
+	c := f.Config
+	for i, name := range f.Policy.Files {
+		src, err := os.ReadFile(filepath.Join(filepath.Dir(path), name)) //nolint:gosec // G304: the config names its policy files.
 		if err != nil {
 			return nil, fmt.Errorf("config %s: %w", path, &harness.FieldError{Field: fmt.Sprintf("policy.files[%d]", i), Msg: err.Error()})
 		}
-		c.Policy.FileSources = append(c.Policy.FileSources, string(src))
+		c.Policy = append(c.Policy, policy.Module{Name: name, Source: string(src)})
 	}
 	return &c, nil
 }
 
-func (c *Config) validate() error {
+func (f *file) validate() error {
 	var errs []error
 	add := func(field, msg string) {
 		errs = append(errs, &harness.FieldError{Field: field, Msg: msg})
@@ -121,7 +129,7 @@ func (c *Config) validate() error {
 		}
 	}
 
-	if a := c.Provider.Anthropic; a == nil {
+	if a := f.Provider.Anthropic; a == nil {
 		add("provider.anthropic", "is required")
 	} else {
 		checkValue("provider.anthropic.api_key", a.APIKey)
@@ -129,8 +137,8 @@ func (c *Config) validate() error {
 			add("provider.anthropic.max_tokens", "must be greater than 0")
 		}
 	}
-	for _, name := range slices.Sorted(maps.Keys(c.MCPServers)) {
-		srv := c.MCPServers[name]
+	for _, name := range slices.Sorted(maps.Keys(f.MCPServers)) {
+		srv := f.MCPServers[name]
 		if srv.Command == "" {
 			add("mcp_servers."+name+".command", "is required")
 		}
@@ -138,8 +146,8 @@ func (c *Config) validate() error {
 			checkValue("mcp_servers."+name+".env."+key, srv.Env[key])
 		}
 	}
-	for i, file := range c.Policy.Files {
-		if file == "" {
+	for i, name := range f.Policy.Files {
+		if name == "" {
 			add(fmt.Sprintf("policy.files[%d]", i), "must not be empty")
 		}
 	}

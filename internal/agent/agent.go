@@ -60,8 +60,7 @@ type Result struct {
 // builds the tool gateway from the harness grants, which starts the tool
 // servers they need, and returns an Agent. Close the Agent to stop them. The
 // harness is copied and the gateway copies the grants, so later changes to the
-// harness do not affect the agent. A harness that names a policy must come
-// with its source.
+// harness do not affect the agent.
 func New(ctx context.Context, cfg Config) (*Agent, error) {
 	switch {
 	case cfg.Harness == nil:
@@ -75,18 +74,8 @@ func New(ctx context.Context, cfg Config) (*Agent, error) {
 		return nil, fmt.Errorf("agent: invalid harness: %w", err)
 	}
 	layers := []policy.Layer{{Name: "central", Modules: cfg.Policy}}
-	if p := cfg.Harness.Policy; p != nil {
-		var modules []policy.Module
-		for i, file := range p.Files {
-			if i >= len(p.FileSources) {
-				return nil, fmt.Errorf("agent: harness policy %q was not loaded", file)
-			}
-			modules = append(modules, policy.Module{Name: file, Source: p.FileSources[i]})
-		}
-		if p.Rules != "" {
-			modules = append(modules, policy.RulesModule(cfg.Harness.Name+" (inline policy)", p.Rules))
-		}
-		layers = append(layers, policy.Layer{Name: "harness", Modules: modules})
+	if len(cfg.Harness.Policy) > 0 {
+		layers = append(layers, policy.Layer{Name: "harness", Modules: cfg.Harness.Policy})
 	}
 	engine, err := policy.New(ctx, layers...)
 	if err != nil {

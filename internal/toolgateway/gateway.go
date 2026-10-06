@@ -2,8 +2,9 @@
 //
 // For each call the gateway checks the grant, enforces the run's tool call
 // limit, asks policy, asks an approver when policy requires one, and records
-// each decision before it executes the tool and records the result. A call is never executed unless its decision and approval have been
-// recorded, and anything short of a clear allow is a denial.
+// each decision before it executes the tool and records the result. A call is
+// never executed unless its decision and approval have been recorded, and
+// anything short of a clear allow is a denial.
 //
 // Every tool comes from a tool server, such as an MCP server. The gateway owns
 // them: it starts those that serve a granted tool and stops them on Close.
@@ -69,7 +70,7 @@ type Config struct {
 	// Each must be a tool of a server in Servers, named "<server>_<tool>".
 	Granted []string
 	// Servers are tool servers, by name. The gateway starts those that serve
-	// a granted tool, resolves calls to their tools, and stops them on Close.
+	// a granted tool, calls their tools, and stops them on Close.
 	Servers map[string]ToolServer
 	// MaxToolCalls bounds the calls of each run, denied ones included. It is
 	// required.

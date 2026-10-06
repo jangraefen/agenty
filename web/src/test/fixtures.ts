@@ -30,3 +30,34 @@ export function harnessVersion(name: string): Schemas["HarnessVersion"] {
     },
   };
 }
+
+export function auditRecord(
+  overrides: Partial<Schemas["AuditRecord"]> = {},
+): Schemas["AuditRecord"] {
+  return {
+    run_id: "run-1",
+    call_id: "call-1",
+    event: "decision",
+    tool: "files_read_file",
+    args: { path: "notes.md" },
+    decision: "allow",
+    recorded_at: "2026-10-06T10:00:05Z",
+    ...overrides,
+  };
+}
+
+export function approvalRequest(
+  overrides: Partial<Schemas["ApprovalRequest"]> = {},
+): Schemas["ApprovalRequest"] {
+  return {
+    id: "approval-1",
+    run_id: "run-1",
+    harness: "notes",
+    tool: "files_write_file",
+    args: { path: "notes.md", content: "tidy" },
+    reasons: ["file changes need approval"],
+    created_at: "2026-10-06T10:00:10Z",
+    expires_at: "2026-10-06T11:00:10Z",
+    ...overrides,
+  };
+}

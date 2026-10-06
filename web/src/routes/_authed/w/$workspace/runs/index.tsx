@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useId } from "react";
 import {
   harnessesQuery,
@@ -23,7 +23,7 @@ function runFilters(search: Record<string, unknown>): RunFilters {
   };
 }
 
-export const Route = createFileRoute("/_authed/w/$workspace/runs")({
+export const Route = createFileRoute("/_authed/w/$workspace/runs/")({
   validateSearch: runFilters,
   component: Runs,
 });
@@ -135,7 +135,13 @@ function Runs() {
               page.runs.map((run) => (
                 <tr key={run.id} className="border-b last:border-0">
                   <td className="py-2 pr-4 whitespace-nowrap">
-                    {run.harness} v{run.harness_version}
+                    <Link
+                      to="/w/$workspace/runs/$runId"
+                      params={{ workspace, runId: run.id }}
+                      className="underline-offset-4 hover:underline"
+                    >
+                      {run.harness} v{run.harness_version}
+                    </Link>
                   </td>
                   <td className="py-2 pr-4">
                     <RunStatusBadge status={run.status} />

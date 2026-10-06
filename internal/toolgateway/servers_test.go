@@ -3,7 +3,9 @@ package toolgateway_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -164,4 +166,105 @@ func TestClose_ReportsEveryServer(t *testing.T) {
 	require.ErrorContains(t, err, "server files: stop")
 	assert.Equal(t, 1, files.Closed)
 	assert.Equal(t, 1, mail.Closed, "one failure does not leave the next server running")
+}
+
+// meet returns two functions that each wait until the other has been called,
+// so two servers that call them one each prove they ran at the same time. A
+// side that waits too long fails: run one after the other, they never meet.
+func meet() (func() error, func() error) {
+	a, b := make(chan struct{}), make(chan struct{})
+	wait := func(arrive, other chan struct{}) func() error {
+		return func() error {
+			close(arrive)
+			select {
+			case <-other:
+				return nil
+			case <-time.After(5 * time.Second):
+				return errors.New("the other server never ran at the same time")
+			}
+		}
+	}
+	return wait(a, b), wait(b, a)
+}
+
+func TestNew_StartsServersInParallel(t *testing.T) {
+	cfg, files, mail := serverConfig()
+	cfg.Granted = append(cfg.Granted, "mail_send")
+	filesMeet, mailMeet := meet()
+	files.OnStart = func(context.Context) error { return filesMeet() }
+	mail.OnStart = func(context.Context) error { return mailMeet() }
+
+	gw, err := toolgateway.New(context.Background(), cfg)
+
+	require.NoError(t, err)
+	names := []string{}
+	for _, d := range gw.Definitions() {
+		names = append(names, d.Name)
+	}
+	assert.Equal(t, []string{"files_read", "mail_send"}, names)
+	require.NoError(t, gw.Close())
+}
+
+func TestClose_StopsServersInParallel(t *testing.T) {
+	cfg, files, mail := serverConfig()
+	cfg.Granted = append(cfg.Granted, "mail_send")
+	filesMeet, mailMeet := meet()
+	files.OnClose = func() { assert.NoError(t, filesMeet()) }
+	mail.OnClose = func() { assert.NoError(t, mailMeet()) }
+	gw, err := toolgateway.New(context.Background(), cfg)
+	require.NoError(t, err)
+
+	require.NoError(t, gw.Close())
+	assert.Equal(t, 1, files.Closed)
+	assert.Equal(t, 1, mail.Closed)
+}
+
+// TestNew_AStartFailureCancelsTheOtherStarts: when one server fails, the
+// starts still running are cancelled, a server that started anyway is
+// stopped, and only the real failure is reported.
+func TestNew_AStartFailureCancelsTheOtherStarts(t *testing.T) {
+	cfg, files, mail := serverConfig()
+	chat := &gatewaytest.Server{Tools: []toolgateway.Tool{&gatewaytest.Tool{Name: "chat_post"}}}
+	cfg.Servers["chat"] = chat
+	cfg.Granted = append(cfg.Granted, "mail_send", "chat_post")
+	mail.StartErr = assert.AnError
+	// chat gives up when cancelled; files ignores it and starts anyway.
+	chat.OnStart = func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	files.OnStart = func(ctx context.Context) error {
+		<-ctx.Done()
+		return nil
+	}
+
+	gw, err := toolgateway.New(context.Background(), cfg)
+
+	assert.Nil(t, gw)
+	require.ErrorIs(t, err, assert.AnError)
+	assert.NotContains(t, err.Error(), "chat", "a start cancelled because of mail is not a failure of its own")
+	assert.Equal(t, 1, files.Closed, "a server that started after the failure is stopped")
+	assert.Zero(t, chat.Closed)
+}
+
+func TestNew_CancelledStarts(t *testing.T) {
+	t.Run("cancelled by the caller", func(t *testing.T) {
+		cfg, files, _ := serverConfig()
+		files.OnStart = func(ctx context.Context) error { return ctx.Err() }
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		_, err := toolgateway.New(ctx, cfg)
+
+		require.ErrorIs(t, err, context.Canceled)
+		assert.ErrorContains(t, err, "server files: start")
+	})
+	t.Run("a server that fails with a cancellation error of its own", func(t *testing.T) {
+		cfg, files, _ := serverConfig()
+		files.StartErr = context.Canceled
+
+		_, err := toolgateway.New(context.Background(), cfg)
+
+		require.ErrorIs(t, err, context.Canceled, "a failure is never dropped as someone else's")
+	})
 }

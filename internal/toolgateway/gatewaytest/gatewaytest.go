@@ -128,6 +128,11 @@ type Server struct {
 	StartErr error
 	ToolsErr error
 	CloseErr error
+	// OnStart, if set, runs at the start of every start; an error it returns
+	// fails the start.
+	OnStart func(ctx context.Context) error
+	// OnClose, if set, runs at the start of every close.
+	OnClose func()
 
 	// StartedAs holds the name of every start.
 	StartedAs []string
@@ -135,8 +140,13 @@ type Server struct {
 }
 
 // Start records the start and returns a session, or StartErr.
-func (s *Server) Start(_ context.Context, name string) (toolgateway.ToolSession, error) {
+func (s *Server) Start(ctx context.Context, name string) (toolgateway.ToolSession, error) {
 	s.StartedAs = append(s.StartedAs, name)
+	if s.OnStart != nil {
+		if err := s.OnStart(ctx); err != nil {
+			return nil, err
+		}
+	}
 	if s.StartErr != nil {
 		return nil, s.StartErr
 	}
@@ -154,6 +164,9 @@ func (s *session) Tools(context.Context) ([]toolgateway.Tool, error) {
 }
 
 func (s *session) Close() error {
+	if s.server.OnClose != nil {
+		s.server.OnClose()
+	}
 	s.server.Closed++
 	return s.server.CloseErr
 }

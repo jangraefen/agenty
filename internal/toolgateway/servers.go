@@ -1,6 +1,7 @@
 package toolgateway
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 )
 
 // ToolServer is a source of tools the gateway starts and stops itself, such
@@ -50,40 +52,87 @@ func validateServers(servers map[string]ToolServer, tools []Tool) error {
 	return nil
 }
 
-// startServers starts, in name order, every server that serves a granted
-// tool, and returns their sessions and tools. If anything fails, the servers
-// already started are stopped.
-func startServers(ctx context.Context, servers map[string]ToolServer, granted map[string]bool) (sessions []namedSession, tools []Tool, err error) {
+// startServers starts every server that serves a granted tool, all at once,
+// and returns their sessions and tools in server name order. The first
+// failure cancels the starts still running; if anything fails, every server
+// that did start is stopped, and every failure is reported except
+// cancellations caused by an earlier one.
+func startServers(ctx context.Context, servers map[string]ToolServer, granted map[string]bool) ([]namedSession, []Tool, error) {
 	needed := map[string]bool{}
 	for tool := range granted {
 		if server, _, found := strings.Cut(tool, "_"); found && servers[server] != nil {
 			needed[server] = true
 		}
 	}
-	defer func() {
-		if err != nil {
-			err = errors.Join(err, closeSessions(sessions))
-			sessions, tools = nil, nil
-		}
-	}()
-	for _, name := range slices.Sorted(maps.Keys(needed)) {
-		session, err := servers[name].Start(ctx, name)
-		if err != nil {
-			return sessions, nil, fmt.Errorf("toolgateway: server %s: start: %w", name, err)
-		}
-		sessions = append(sessions, namedSession{name: name, session: session})
-		serverTools, err := session.Tools(ctx)
-		if err != nil {
-			return sessions, nil, fmt.Errorf("toolgateway: server %s: tools: %w", name, err)
-		}
-		for _, tool := range serverTools {
-			if tool == nil || !strings.HasPrefix(tool.Definition().Name, name+"_") {
-				return sessions, nil, fmt.Errorf("toolgateway: server %s: tool %q is not named %s_<tool>", name, toolNameOf(tool), name)
+	names := slices.Sorted(maps.Keys(needed))
+
+	startCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	results := make([]started, len(names))
+	var wg sync.WaitGroup
+	for i, name := range names {
+		wg.Go(func() {
+			results[i] = startServer(startCtx, name, servers[name])
+			if results[i].err != nil {
+				cancel()
 			}
+		})
+	}
+	wg.Wait()
+
+	var (
+		sessions []namedSession
+		tools    []Tool
+		errs     []error
+		first    error
+	)
+	for i, r := range results {
+		if r.session != nil {
+			sessions = append(sessions, namedSession{name: names[i], session: r.session})
 		}
-		tools = append(tools, serverTools...)
+		switch {
+		case r.err == nil:
+			tools = append(tools, r.tools...)
+		case ctx.Err() == nil && errors.Is(r.err, context.Canceled):
+			// Cancelled because another server failed, which is reported;
+			// unless it is the only failure, see below.
+			first = cmp.Or(first, r.err)
+		default:
+			errs = append(errs, r.err)
+		}
+	}
+	if len(errs) == 0 && first != nil {
+		errs = append(errs, first)
+	}
+	if err := errors.Join(errs...); err != nil {
+		return nil, nil, errors.Join(err, closeSessions(sessions))
 	}
 	return sessions, tools, nil
+}
+
+// started is the outcome of starting one server. A session that started is
+// set even if listing its tools failed, so it can be stopped.
+type started struct {
+	session ToolSession
+	tools   []Tool
+	err     error
+}
+
+func startServer(ctx context.Context, name string, server ToolServer) started {
+	session, err := server.Start(ctx, name)
+	if err != nil {
+		return started{err: fmt.Errorf("toolgateway: server %s: start: %w", name, err)}
+	}
+	tools, err := session.Tools(ctx)
+	if err != nil {
+		return started{session: session, err: fmt.Errorf("toolgateway: server %s: tools: %w", name, err)}
+	}
+	for _, tool := range tools {
+		if tool == nil || !strings.HasPrefix(tool.Definition().Name, name+"_") {
+			return started{session: session, err: fmt.Errorf("toolgateway: server %s: tool %q is not named %s_<tool>", name, toolNameOf(tool), name)}
+		}
+	}
+	return started{session: session, tools: tools}
 }
 
 func toolNameOf(tool Tool) string {
@@ -99,14 +148,18 @@ type namedSession struct {
 	session ToolSession
 }
 
-// closeSessions stops every session, in reverse start order, and reports
-// every failure.
+// closeSessions stops every session, all at once, and reports every failure,
+// in start order.
 func closeSessions(sessions []namedSession) error {
-	var errs []error
-	for _, s := range slices.Backward(sessions) {
-		if err := s.session.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("toolgateway: server %s: stop: %w", s.name, err))
-		}
+	errs := make([]error, len(sessions))
+	var wg sync.WaitGroup
+	for i, s := range sessions {
+		wg.Go(func() {
+			if err := s.session.Close(); err != nil {
+				errs[i] = fmt.Errorf("toolgateway: server %s: stop: %w", s.name, err)
+			}
+		})
 	}
+	wg.Wait()
 	return errors.Join(errs...)
 }

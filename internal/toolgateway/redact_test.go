@@ -21,7 +21,7 @@ const (
 
 func newRedactingRun(t *testing.T, tool *gatewaytest.Tool, audit *gatewaytest.Audit) *toolgateway.Run {
 	t.Helper()
-	gw, err := toolgateway.New(toolgateway.Config{
+	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
 		Granted:      []string{tool.Name},
 		Tools:        []toolgateway.Tool{tool},
 		MaxToolCalls: 100,
@@ -62,7 +62,7 @@ func TestCall_RedactsSecretsFromResults(t *testing.T) {
 }
 
 func TestCall_RedactedResultThatIsNoLongerJSONBecomesAString(t *testing.T) {
-	gw, err := toolgateway.New(toolgateway.Config{
+	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
 		Granted:      []string{"vault_read"},
 		Tools:        []toolgateway.Tool{&gatewaytest.Tool{Name: "vault_read", Result: json.RawMessage(`{"pin":12345678}`)}},
 		MaxToolCalls: 100,
@@ -100,7 +100,7 @@ func TestCall_RedactsSecretsFromToolErrorsAndArgs(t *testing.T) {
 
 func TestNew_RejectsSecretsTooShortToRedact(t *testing.T) {
 	for _, secret := range []string{"", "1234567"} {
-		_, err := toolgateway.New(toolgateway.Config{
+		_, err := toolgateway.New(context.Background(), toolgateway.Config{
 			MaxToolCalls: 100,
 			Policy:       &gatewaytest.Policy{},
 			Audit:        &gatewaytest.Audit{},
@@ -117,7 +117,7 @@ func TestCall_RedactsSecretsWithHTMLCharacters(t *testing.T) {
 		"not HTML-escaped":             json.RawMessage(`{"v":"a<b>c&d-0123"}`),
 	} {
 		t.Run(name, func(t *testing.T) {
-			gw, err := toolgateway.New(toolgateway.Config{
+			gw, err := toolgateway.New(context.Background(), toolgateway.Config{
 				Granted:      []string{"vault_read"},
 				Tools:        []toolgateway.Tool{&gatewaytest.Tool{Name: "vault_read", Result: result}},
 				MaxToolCalls: 100,
@@ -138,7 +138,7 @@ func TestCall_RedactsSecretsWithHTMLCharacters(t *testing.T) {
 
 func TestCall_ApproverSeesRedactedArgsAndReasons(t *testing.T) {
 	approver := &gatewaytest.Approver{Approval: toolgateway.Approval{Approved: true, Approver: "alice"}}
-	gw, err := toolgateway.New(toolgateway.Config{
+	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
 		Granted:      []string{"vault_write"},
 		Tools:        []toolgateway.Tool{&gatewaytest.Tool{Name: "vault_write"}},
 		MaxToolCalls: 100,

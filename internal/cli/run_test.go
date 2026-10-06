@@ -64,21 +64,6 @@ policy:
     }
 `
 
-// fakeServer is an MCP server as the CLI sees it.
-type fakeServer struct {
-	tools    []toolgateway.Tool
-	toolsErr error
-	closeErr error
-	closed   bool
-}
-
-func (s *fakeServer) Tools(context.Context) ([]toolgateway.Tool, error) { return s.tools, s.toolsErr }
-
-func (s *fakeServer) Close() error {
-	s.closed = true
-	return s.closeErr
-}
-
 // fixture is a working directory with a config, central policy and a
 // harness, a fake Anthropic API, and fake MCP servers.
 type fixture struct {
@@ -87,10 +72,9 @@ type fixture struct {
 	vars    map[string]string
 	stdin   string
 	tty     bool
-	servers map[string]*fakeServer
-	// started records the servers the CLI started, in order.
-	started    []mcptool.Server
-	connectErr error
+	servers map[string]*gatewaytest.Server
+	// configs records the MCP server config the CLI built for each server.
+	configs map[string]mcptool.Server
 
 	read, write, del *gatewaytest.Tool
 
@@ -109,10 +93,11 @@ func newFixture(t *testing.T, responses ...anthropictest.Response) *fixture {
 		write: &gatewaytest.Tool{Name: "files_write", Result: json.RawMessage(`{"ok":true}`)},
 		del:   &gatewaytest.Tool{Name: "files_delete", Result: json.RawMessage(`{"ok":true}`)},
 	}
-	f.servers = map[string]*fakeServer{
-		"files": {tools: []toolgateway.Tool{f.read, f.write, f.del}},
-		"mail":  {},
+	f.servers = map[string]*gatewaytest.Server{
+		"files": {Tools: []toolgateway.Tool{f.read, f.write, f.del}},
+		"mail":  {Tools: []toolgateway.Tool{&gatewaytest.Tool{Name: "mail_send"}}},
 	}
+	f.configs = map[string]mcptool.Server{}
 	f.writeFile(t, "agenty.yaml", strings.Replace(configYAML, "%s", f.api.URL, 1))
 	f.writeFile(t, "central.rego", centralRego)
 	f.writeFile(t, "harness.yaml", harnessYAML)
@@ -138,12 +123,9 @@ func (f *fixture) main(args ...string) int {
 			v, ok := f.vars[k]
 			return v, ok
 		},
-		Connect: func(_ context.Context, srv mcptool.Server) (cli.ToolServer, error) {
-			f.started = append(f.started, srv)
-			if f.connectErr != nil {
-				return nil, f.connectErr
-			}
-			return f.servers[srv.Name], nil
+		Server: func(name string, srv mcptool.Server) toolgateway.ToolServer {
+			f.configs[name] = srv
+			return f.servers[name]
 		},
 	})
 }
@@ -217,15 +199,16 @@ func TestRun_EndToEnd(t *testing.T) {
 		assert.Equal(t, runID, r["run_id"], "one run, one ID")
 	}
 	assert.Contains(t, f.stderr.String(), runID, "the log names the run, to find it in the audit log")
-	assert.Contains(t, f.stderr.String(), "tools=\"[files_read files_write files_delete]\"", "debug logs list each server's tools")
-	require.Len(t, f.started, 1, "only servers whose tools the harness grants are started")
+	assert.Contains(t, f.stderr.String(), "tools=\"[files_read files_write]\"", "debug logs list the granted tools the servers serve")
 	assert.Equal(t, mcptool.Server{
-		Name:    "files",
 		Command: "files-mcp",
 		Args:    []string{"--root", "sandbox"},
 		Env:     map[string]string{"FILES_TOKEN": filesToken},
-	}, f.started[0])
-	assert.True(t, f.servers["files"].closed, "servers are stopped when the run ends")
+	}, f.configs["files"])
+	assert.Equal(t, []string{"files"}, f.servers["files"].StartedAs)
+	assert.Empty(t, f.servers["mail"].StartedAs, "only servers whose tools the harness grants are started")
+	assert.Equal(t, 1, f.servers["files"].Closed, "servers are stopped when the run ends")
+	assert.NotContains(t, f.stderr.String(), "WARN")
 }
 
 func TestRun_Denials(t *testing.T) {
@@ -307,7 +290,7 @@ func TestInvariant_CLICredentialsNeverLeak(t *testing.T) {
 		assert.NotContains(t, string(audit), secret, "audit log")
 	}
 	assert.Equal(t, "the key is [redacted]\n", f.stdout.String())
-	assert.Equal(t, filesToken, f.started[0].Env["FILES_TOKEN"], "the server still gets its token")
+	assert.Equal(t, filesToken, f.configs["files"].Env["FILES_TOKEN"], "the server still gets its token")
 	assert.Equal(t, apiKey, f.api.Requests()[0].Header.Get("X-Api-Key"))
 }
 
@@ -326,8 +309,8 @@ func TestRun_Failures(t *testing.T) {
 		{"granted server not configured", func(f *fixture) {
 			f.writeFile(t, "harness.yaml", strings.Replace(harnessYAML, "files_write]", "files_write, chat_post]", 1))
 		}, "harness grants chat_post, but no MCP server"},
-		{"server does not start", func(f *fixture) { f.connectErr = assert.AnError }, assert.AnError.Error()},
-		{"server lists no tools", func(f *fixture) { f.servers["files"].toolsErr = assert.AnError }, assert.AnError.Error()},
+		{"server does not start", func(f *fixture) { f.servers["files"].StartErr = assert.AnError }, assert.AnError.Error()},
+		{"server lists no tools", func(f *fixture) { f.servers["files"].ToolsErr = assert.AnError }, assert.AnError.Error()},
 		{"invalid policy", func(f *fixture) { f.writeFile(t, "central.rego", "package agenty.tool\n\ndeny contains if {") }, "policy"},
 		{"audit log cannot be opened", func(f *fixture) {
 			require.NoError(t, os.Mkdir(f.path("audit.jsonl"), 0o700))
@@ -351,7 +334,7 @@ func TestRun_Failures(t *testing.T) {
 
 func TestRun_ServerCloseFailure(t *testing.T) {
 	f := newFixture(t, done(t))
-	f.servers["files"].closeErr = assert.AnError
+	f.servers["files"].CloseErr = assert.AnError
 
 	code := f.run("tidy my notes")
 
@@ -363,13 +346,13 @@ func TestRun_ServerCloseFailure(t *testing.T) {
 func TestRun_StopsServersStartedBeforeAFailure(t *testing.T) {
 	f := newFixture(t)
 	f.writeFile(t, "harness.yaml", strings.Replace(harnessYAML, "files_write]", "files_write, mail_send]", 1))
-	f.servers["mail"].toolsErr = assert.AnError
+	f.servers["mail"].ToolsErr = assert.AnError
 
 	code := f.run("tidy my notes")
 
 	assert.Equal(t, 1, code)
-	assert.True(t, f.servers["files"].closed)
-	assert.True(t, f.servers["mail"].closed)
+	assert.Equal(t, 1, f.servers["files"].Closed)
+	assert.Equal(t, 1, f.servers["mail"].Closed)
 }
 
 func TestRun_StdoutFailure(t *testing.T) {
@@ -381,8 +364,8 @@ func TestRun_StdoutFailure(t *testing.T) {
 			Stdout:    failingWriter{},
 			Stderr:    &f.stderr,
 			LookupEnv: func(k string) (string, bool) { v, ok := f.vars[k]; return v, ok },
-			Connect: func(_ context.Context, srv mcptool.Server) (cli.ToolServer, error) {
-				return f.servers[srv.Name], nil
+			Server: func(name string, _ mcptool.Server) toolgateway.ToolServer {
+				return f.servers[name]
 			},
 		})
 
@@ -417,7 +400,7 @@ func TestMain_Usage(t *testing.T) {
 			assert.Equal(t, tt.wantCode, code)
 			assert.Contains(t, f.stderr.String(), tt.wantOut)
 			assert.Empty(t, f.stdout.String())
-			assert.Empty(t, f.started)
+			assert.Empty(t, f.servers["files"].StartedAs)
 		})
 	}
 }
@@ -432,4 +415,15 @@ func TestMain_UsageWriteFailure(t *testing.T) {
 
 		assert.Equal(t, 1, code, "args %q", args)
 	}
+}
+
+func TestRun_WarnsAboutGrantsNoServerServes(t *testing.T) {
+	f := newFixture(t, done(t))
+	f.servers["files"].Tools = []toolgateway.Tool{f.read}
+
+	code := f.run("tidy my notes")
+
+	require.Equal(t, 0, code, f.stderr.String())
+	assert.Contains(t, f.stderr.String(), "granted tool not found on its server")
+	assert.Contains(t, f.stderr.String(), "tool=files_write")
 }

@@ -34,7 +34,7 @@ func TestInvariant_DefaultDeny(t *testing.T) {
 			read := &gatewaytest.Tool{Name: "tickets_read", Result: json.RawMessage(`{}`)}
 			del := &gatewaytest.Tool{Name: "tickets_delete", Result: json.RawMessage(`{}`)}
 			audit := &gatewaytest.Audit{}
-			gw, err := toolgateway.New(toolgateway.Config{
+			gw, err := toolgateway.New(context.Background(), toolgateway.Config{
 				MaxToolCalls: 100,
 				Policy:       &gatewaytest.Policy{},
 				Granted:      tt.granted,
@@ -95,7 +95,7 @@ func TestInvariant_DefaultDeny(t *testing.T) {
 		t.Run("fails closed: "+tt.name, func(t *testing.T) {
 			read := &gatewaytest.Tool{Name: "tickets_read", Result: json.RawMessage(`{}`)}
 			audit := &gatewaytest.Audit{}
-			gw, err := toolgateway.New(toolgateway.Config{
+			gw, err := toolgateway.New(context.Background(), toolgateway.Config{
 				MaxToolCalls: 100,
 				Policy:       tt.policy,
 				Approver:     tt.approver,
@@ -264,7 +264,7 @@ func TestInvariant_EveryCallAudited(t *testing.T) {
 			if tt.approver != nil {
 				approver = tt.approver
 			}
-			gw, err := toolgateway.New(toolgateway.Config{
+			gw, err := toolgateway.New(context.Background(), toolgateway.Config{
 				MaxToolCalls: 100,
 				Policy:       policy,
 				Approver:     approver,

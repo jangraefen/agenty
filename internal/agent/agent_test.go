@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/jangraefen/agenty/internal/model"
 	"github.com/jangraefen/agenty/internal/policy"
 	"github.com/jangraefen/agenty/internal/toolgateway"
+	"github.com/jangraefen/agenty/internal/toolgateway/gatewaytest"
 )
 
 func TestRun_Outcomes(t *testing.T) {
@@ -317,4 +319,49 @@ func TestNew_HarnessChangesAfterNewDoNotWidenGrants(t *testing.T) {
 	assert.Zero(t, f.del.Calls)
 	require.Len(t, f.audit.Records, 1)
 	assert.Equal(t, toolgateway.Deny, f.audit.Records[0].Decision)
+}
+
+func TestAgent_RunsServerToolsAndStopsServers(t *testing.T) {
+	f := newFixture(3)
+	f.harness.Tools = []string{"files_read"}
+	files := &gatewaytest.Server{Tools: []toolgateway.Tool{&gatewaytest.Tool{Name: "files_read", Result: json.RawMessage(`{"content":"x"}`)}}}
+	cfg := f.config(model.NewScripted(
+		model.CallTools(model.ToolCall{ID: "c1", Name: "files_read"}),
+		model.Reply("done"),
+	))
+	cfg.Servers = map[string]toolgateway.ToolServer{"files": files}
+	a, err := agent.New(context.Background(), cfg)
+	require.NoError(t, err)
+
+	res, err := a.Run(context.Background(), "read it")
+
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"content":"x"}`, res.Messages[2].ToolResults[0].Content)
+	assert.Equal(t, []string{"files"}, files.StartedAs)
+	require.Len(t, a.Tools(), 1)
+	assert.Equal(t, "files_read", a.Tools()[0].Name)
+	require.NoError(t, a.Close())
+	assert.Equal(t, 1, files.Closed)
+}
+
+func TestNew_ServerStartFailure(t *testing.T) {
+	f := newFixture(3)
+	f.harness.Tools = []string{"files_read"}
+	cfg := f.config(model.NewScripted())
+	cfg.Servers = map[string]toolgateway.ToolServer{"files": &gatewaytest.Server{StartErr: assert.AnError}}
+
+	_, err := agent.New(context.Background(), cfg)
+
+	require.ErrorIs(t, err, assert.AnError)
+}
+
+func TestClose_ReportsServersThatDoNotStop(t *testing.T) {
+	f := newFixture(3)
+	f.harness.Tools = []string{"files_read"}
+	cfg := f.config(model.NewScripted())
+	cfg.Servers = map[string]toolgateway.ToolServer{"files": &gatewaytest.Server{CloseErr: assert.AnError}}
+	a, err := agent.New(context.Background(), cfg)
+	require.NoError(t, err)
+
+	require.ErrorIs(t, a.Close(), assert.AnError)
 }

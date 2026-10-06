@@ -12,8 +12,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
-	"slices"
 	"strings"
 
 	"github.com/jangraefen/agenty/internal/agent"
@@ -40,16 +38,8 @@ Runs a harness once on INPUT and prints the answer.
 
 `
 
-// ToolServer is a started MCP server: *mcptool.Session outside of tests.
-type ToolServer interface {
-	Tools(ctx context.Context) ([]toolgateway.Tool, error)
-	Close() error
-}
-
-var _ ToolServer = (*mcptool.Session)(nil)
-
-// Env is the process around a command: its streams, its environment, and how
-// it starts MCP servers.
+// Env is the process around a command: its streams, its environment, and
+// what runs an MCP server.
 type Env struct {
 	Stdin  io.Reader
 	Stdout io.Writer
@@ -60,7 +50,9 @@ type Env struct {
 	// User names the person at the terminal; approvals record it.
 	User      string
 	LookupEnv func(string) (string, bool)
-	Connect   func(context.Context, mcptool.Server) (ToolServer, error)
+	// Server returns the tool server for a configured MCP server: srv
+	// itself outside of tests. The gateway starts it if a grant needs it.
+	Server func(name string, srv mcptool.Server) toolgateway.ToolServer
 }
 
 // Main runs the command line args, without the program name, and returns the
@@ -173,9 +165,9 @@ func fail(logger *slog.Logger, err error) int {
 	return exitFailure
 }
 
-// runHarness wires and runs the agent and returns its answer. Servers and the
-// audit log are closed before it returns, and failing to close them fails the
-// run.
+// runHarness wires and runs the agent and returns its answer. The agent's
+// servers and the audit log are closed before it returns, and failing to
+// close them fails the run.
 func runHarness(ctx context.Context, logger *slog.Logger, env Env, flags runFlags, cfg *config.Config, resolved *config.Resolved, h *harness.Harness) (output string, runErr error) {
 	if h.Model.Provider != "anthropic" {
 		return "", fmt.Errorf("model provider %q is not supported; use anthropic", h.Model.Provider)
@@ -188,35 +180,12 @@ func runHarness(ctx context.Context, logger *slog.Logger, env Env, flags runFlag
 		BaseURL:   cfg.Provider.Anthropic.BaseURL,
 	}))
 
-	names, err := grantedServers(cfg, h)
-	if err != nil {
+	if err := checkGrants(cfg, h); err != nil {
 		return "", err
 	}
-	var tools []toolgateway.Tool
-	for _, name := range names {
-		srv := cfg.MCPServers[name]
-		logger.Debug("starting MCP server", "server", name, "command", srv.Command)
-		session, err := env.Connect(ctx, mcptool.Server{Name: name, Command: srv.Command, Args: srv.Args, Env: resolved.MCPServerEnv[name]})
-		if err != nil {
-			return "", err
-		}
-		defer func() {
-			if cerr := session.Close(); cerr != nil {
-				runErr = errors.Join(runErr, fmt.Errorf("stop MCP server %s: %w", name, cerr))
-			}
-		}()
-		serverTools, err := session.Tools(ctx)
-		if err != nil {
-			return "", err
-		}
-		if logger.Enabled(ctx, slog.LevelDebug) {
-			names := make([]string, len(serverTools))
-			for i, tool := range serverTools {
-				names[i] = tool.Definition().Name
-			}
-			logger.Debug("MCP server started", "server", name, "tools", names)
-		}
-		tools = append(tools, serverTools...)
+	servers := make(map[string]toolgateway.ToolServer, len(cfg.MCPServers))
+	for name, srv := range cfg.MCPServers {
+		servers[name] = env.Server(name, mcptool.Server{Command: srv.Command, Args: srv.Args, Env: resolved.MCPServerEnv[name]})
 	}
 
 	log, err := audit.Open(flags.audit)
@@ -236,7 +205,7 @@ func runHarness(ctx context.Context, logger *slog.Logger, env Env, flags runFlag
 	a, err := agent.New(ctx, agent.Config{
 		Harness:  h,
 		Model:    m,
-		Tools:    tools,
+		Servers:  servers,
 		Policy:   central,
 		Approver: newTerminalApprover(env.Stdin, env.Stderr, env.Interactive, env.User),
 		Audit:    log,
@@ -245,22 +214,36 @@ func runHarness(ctx context.Context, logger *slog.Logger, env Env, flags runFlag
 	if err != nil {
 		return "", err
 	}
+	defer func() {
+		if cerr := a.Close(); cerr != nil {
+			runErr = errors.Join(runErr, cerr)
+		}
+	}()
+	offered := map[string]bool{}
+	var names []string
+	for _, def := range a.Tools() {
+		offered[def.Name] = true
+		names = append(names, def.Name)
+	}
+	logger.Debug("tools offered to the model", "tools", names)
+	for _, tool := range h.Tools {
+		if !offered[tool] {
+			logger.Warn("granted tool not found on its server; calls to it are denied", "tool", tool)
+		}
+	}
 	res, err := a.Run(ctx, flags.input)
 	logger.Info("run finished", "harness", h.Name, "run_id", res.RunID, "steps", res.Steps, "audit", flags.audit)
 	return res.Output, err
 }
 
-// grantedServers returns, sorted, the configured MCP servers that serve a
-// tool the harness grants: only those are started. A grant whose server is
-// not configured is an error.
-func grantedServers(cfg *config.Config, h *harness.Harness) ([]string, error) {
-	names := map[string]bool{}
+// checkGrants checks that an MCP server is configured for every tool the
+// harness grants.
+func checkGrants(cfg *config.Config, h *harness.Harness) error {
 	for _, tool := range h.Tools {
 		name, _, _ := strings.Cut(tool, "_")
 		if _, ok := cfg.MCPServers[name]; !ok {
-			return nil, fmt.Errorf("harness grants %s, but no MCP server %q is configured", tool, name)
+			return fmt.Errorf("harness grants %s, but no MCP server %q is configured", tool, name)
 		}
-		names[name] = true
 	}
-	return slices.Sorted(maps.Keys(names)), nil
+	return nil
 }

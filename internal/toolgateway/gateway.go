@@ -5,6 +5,9 @@
 // one, and records each decision before it executes the tool and records the
 // result. A call is never executed unless its decision and approval have been
 // recorded, and anything short of a clear allow is a denial.
+//
+// The gateway also owns tool servers, such as MCP servers: it starts those
+// that serve a granted tool and stops them on Close.
 package toolgateway
 
 import (
@@ -64,8 +67,11 @@ type Config struct {
 	Harness string
 	// Granted names the tools the harness may call. Anything else is denied.
 	Granted []string
-	// Tools are the executors the gateway can resolve calls to.
+	// Tools are the in-process executors the gateway can resolve calls to.
 	Tools []Tool
+	// Servers are tool servers, by name. The gateway starts those that serve
+	// a granted tool, resolves calls to their tools, and stops them on Close.
+	Servers map[string]ToolServer
 	// MaxToolCalls bounds the calls of each run, denied ones included. It is
 	// required.
 	MaxToolCalls int
@@ -96,11 +102,15 @@ type Gateway struct {
 	approver     Approver
 	audit        Audit
 	redact       *Redactor
+
+	mu       sync.Mutex
+	sessions []namedSession
 }
 
-// New returns a Gateway for cfg. The grants are copied, so later changes to
-// cfg do not affect the gateway.
-func New(cfg Config) (*Gateway, error) {
+// New returns a Gateway for cfg, after starting the servers that serve a
+// granted tool. The grants are copied, so later changes to cfg do not affect
+// the gateway. Close stops the servers.
+func New(ctx context.Context, cfg Config) (*Gateway, error) {
 	switch {
 	case cfg.Audit == nil:
 		return nil, errors.New("toolgateway: audit is required")
@@ -127,12 +137,25 @@ func New(cfg Config) (*Gateway, error) {
 	if err := validateTools(cfg.Tools); err != nil {
 		return nil, err
 	}
+	if err := validateServers(cfg.Servers, cfg.Tools); err != nil {
+		return nil, err
+	}
 	redact, err := NewRedactor(cfg.Secrets)
 	if err != nil {
 		return nil, err
 	}
 	g.redact = redact
-	for _, tool := range cfg.Tools {
+
+	sessions, serverTools, err := startServers(ctx, cfg.Servers, g.granted)
+	if err != nil {
+		return nil, err
+	}
+	tools := append(slices.Clone(cfg.Tools), serverTools...)
+	if err := validateTools(tools); err != nil {
+		return nil, errors.Join(err, closeSessions(sessions))
+	}
+	g.sessions = sessions
+	for _, tool := range tools {
 		def := tool.Definition()
 		g.tools[def.Name] = tool
 		if g.granted[def.Name] {
@@ -161,6 +184,16 @@ func validateTools(tools []Tool) error {
 		seen[def.Name] = true
 	}
 	return nil
+}
+
+// Close stops the gateway's servers and reports every one that failed to
+// stop. Calls to their tools fail afterwards. Closing again does nothing.
+func (g *Gateway) Close() error {
+	g.mu.Lock()
+	sessions := g.sessions
+	g.sessions = nil
+	g.mu.Unlock()
+	return closeSessions(sessions)
 }
 
 // Definitions describes the tools runs may call: granted and resolved, sorted

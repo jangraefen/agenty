@@ -47,6 +47,10 @@ linters:
         # Only internal/toolgateway may execute a tool.
         - pattern: ^toolgateway\.Tool\.Call$
           msg: execute tools only through the tool gateway (trust model guarantee 2)
+        # The gateway owns tool servers: only it starts them and lists their
+        # tools, so no other code holds a tool it could call.
+        - pattern: ^(toolgateway\.(ToolServer\.Start|ToolSession\.Tools)|mcptool\.(Server\.Start|Session\.Tools))$
+          msg: start tool servers and list their tools only in the tool gateway (trust model guarantee 2)
     nolintlint:
       require-explanation: true
       require-specific: true
@@ -60,6 +64,13 @@ linters:
       - path: internal/toolgateway/[^/]+\.go$
         linters: [forbidigo]
         text: execute tools only through the tool gateway
+      - path: internal/toolgateway/[^/]+\.go$
+        linters: [forbidigo]
+        text: start tool servers and list their tools only in the tool gateway
+      # mcptool's own tests exercise its sessions directly.
+      - path: internal/mcptool/[^/]+_test\.go$
+        linters: [forbidigo]
+        text: start tool servers and list their tools only in the tool gateway
 
 issues:
   # Show every finding; the defaults hide repeats and all but one per line.

@@ -19,7 +19,7 @@ func TestCall_PolicySeesTheCallAndExecutedCounts(t *testing.T) {
 	policy := &gatewaytest.Policy{Verdicts: map[string]toolgateway.Verdict{
 		"tickets_close": {Decision: toolgateway.Deny, Reasons: []string{"no closing"}},
 	}}
-	gw, err := toolgateway.New(toolgateway.Config{
+	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
 		Harness:      "triage",
 		MaxToolCalls: 100,
 		Policy:       policy,
@@ -58,7 +58,7 @@ func TestCall_PolicySeesTheCallAndExecutedCounts(t *testing.T) {
 
 func TestCall_ApproverSeesTheRequest(t *testing.T) {
 	approver := &gatewaytest.Approver{Approval: toolgateway.Approval{Approved: true, Approver: "alice"}}
-	gw, err := toolgateway.New(toolgateway.Config{
+	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
 		Harness:      "triage",
 		MaxToolCalls: 100,
 		Policy: &gatewaytest.Policy{Verdicts: map[string]toolgateway.Verdict{
@@ -92,7 +92,7 @@ func TestCall_ToolCallLimitCountsEveryAttempt(t *testing.T) {
 	read := &gatewaytest.Tool{Name: "tickets_read"}
 	policy := &gatewaytest.Policy{}
 	audit := &gatewaytest.Audit{}
-	gw, err := toolgateway.New(toolgateway.Config{
+	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
 		MaxToolCalls: 2,
 		Policy:       policy,
 		Granted:      []string{"tickets_read"},

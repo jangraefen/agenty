@@ -11,6 +11,7 @@ import (
 	"github.com/jangraefen/agenty/internal/cli"
 	"github.com/jangraefen/agenty/internal/dotenv"
 	"github.com/jangraefen/agenty/internal/mcptool"
+	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
 func main() {
@@ -37,9 +38,7 @@ func run() int {
 		Interactive: isTerminal(os.Stdin),
 		User:        u.Username,
 		LookupEnv:   os.LookupEnv,
-		Connect: func(ctx context.Context, srv mcptool.Server) (cli.ToolServer, error) {
-			return mcptool.Connect(ctx, srv)
-		},
+		Server:      func(_ string, srv mcptool.Server) toolgateway.ToolServer { return srv },
 	})
 }
 

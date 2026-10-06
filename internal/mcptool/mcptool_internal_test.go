@@ -25,7 +25,7 @@ func TestCommand_ServerGetsOnlyItsOwnEnvironment(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cmd := command(Server{Name: "tickets", Command: "tickets-mcp", Args: []string{"--read-only"}, Env: tt.env})
+			cmd := command(Server{Command: "tickets-mcp", Args: []string{"--read-only"}, Env: tt.env})
 
 			assert.Equal(t, []string{"tickets-mcp", "--read-only"}, cmd.Args)
 			assert.ElementsMatch(t, tt.want, cmd.Environ(), "Agenty's own environment, such as AGENTY_TEST_SECRET, never reaches the server")

@@ -13,6 +13,7 @@ import (
 	"github.com/jangraefen/agenty/internal/model/anthropic"
 	"github.com/jangraefen/agenty/internal/model/anthropic/anthropictest"
 	"github.com/jangraefen/agenty/internal/model/modeltest"
+	"github.com/jangraefen/agenty/internal/secret"
 	"github.com/jangraefen/agenty/internal/toolgateway/gatewaytest"
 )
 
@@ -25,6 +26,8 @@ func TestInvariant_CredentialsNeverReachModel(t *testing.T) {
 		mcpToken = "mcp-token-abcdef0123"
 	)
 	secrets := []string{apiKey, mcpToken}
+	redactor, err := secret.NewRedactor(secrets)
+	require.NoError(t, err)
 	api := anthropictest.New(t,
 		anthropictest.Reply(t, "tool_use",
 			anthropictest.ToolUseBlock("toolu_1", "vault_read", map[string]any{}),
@@ -40,11 +43,11 @@ func TestInvariant_CredentialsNeverReachModel(t *testing.T) {
 	f := newFixture(3)
 	f.harness.Tools = []string{"vault_read", "vault_login"}
 	a, err := agent.New(context.Background(), agent.Config{
-		Harness: f.harness,
-		Model:   m,
-		Servers: gatewaytest.Servers(leakyResult, leakyError),
-		Audit:   audit,
-		Secrets: secrets,
+		Harness:  f.harness,
+		Model:    m,
+		Servers:  gatewaytest.Servers(leakyResult, leakyError),
+		Audit:    audit,
+		Redactor: redactor,
 	})
 	require.NoError(t, err)
 
@@ -72,13 +75,13 @@ func TestInvariant_CredentialsNeverReachModel(t *testing.T) {
 	assertNoSecret("run result", resultJSON)
 }
 
-func TestNew_RejectsSecretsTooShortToRedact(t *testing.T) {
+func TestNew_RequiresARedactor(t *testing.T) {
 	f := newFixture(3)
 	cfg := f.config(modeltest.NewScripted())
-	cfg.Secrets = []string{"short"}
+	cfg.Redactor = nil
 
 	a, err := agent.New(context.Background(), cfg)
 
-	require.ErrorContains(t, err, "secret 0 is shorter than 8 characters")
+	require.ErrorContains(t, err, "redactor is required", "redaction is never left out by omission")
 	assert.Nil(t, a)
 }

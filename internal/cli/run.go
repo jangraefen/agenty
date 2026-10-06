@@ -143,13 +143,11 @@ func run(ctx context.Context, args []string, env Env) int {
 	if err != nil {
 		return fail(logger, err)
 	}
-	// Resolve rejects secrets too short to redact.
-	redact := must.Value(secret.NewRedactor(resolved.Secrets))
-	logger = newLogger(env.Stderr, flags.logLevel, redact)
+	logger = newLogger(env.Stderr, flags.logLevel, resolved.Redactor)
 
 	output, err := runHarness(ctx, logger, env, flags, cfg, resolved, h)
 	if output != "" {
-		if _, werr := io.WriteString(env.Stdout, redact.String(output)+"\n"); werr != nil {
+		if _, werr := io.WriteString(env.Stdout, resolved.Redactor.String(output)+"\n"); werr != nil {
 			err = errors.Join(err, fmt.Errorf("write answer: %w", werr))
 		}
 	}
@@ -203,7 +201,7 @@ func runHarness(ctx context.Context, logger *slog.Logger, env Env, flags runFlag
 		Policy:   cfg.Policy,
 		Approver: newTerminalApprover(env.Stdin, env.Stderr, env.Interactive, env.User),
 		Audit:    log,
-		Secrets:  resolved.Secrets,
+		Redactor: resolved.Redactor,
 	})
 	if err != nil {
 		return "", err

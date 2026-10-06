@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jangraefen/agenty/internal/secret"
 	"github.com/jangraefen/agenty/internal/toolgateway"
 	"github.com/jangraefen/agenty/internal/toolgateway/gatewaytest"
 )
@@ -27,7 +28,7 @@ func newRedactingRun(t *testing.T, tool *gatewaytest.Tool, audit *gatewaytest.Au
 		MaxToolCalls: 100,
 		Policy:       &gatewaytest.Policy{},
 		Audit:        audit,
-		Secrets:      []string{apiKey, apiKeyV2, quoted},
+		Redactor:     redactor(t, apiKey, apiKeyV2, quoted),
 	})
 	require.NoError(t, err)
 	return gw.Start()
@@ -68,7 +69,7 @@ func TestCall_RedactedResultThatIsNoLongerJSONBecomesAString(t *testing.T) {
 		MaxToolCalls: 100,
 		Policy:       &gatewaytest.Policy{},
 		Audit:        &gatewaytest.Audit{},
-		Secrets:      []string{"12345678"},
+		Redactor:     redactor(t, "12345678"),
 	})
 	require.NoError(t, err)
 	run := gw.Start()
@@ -98,20 +99,8 @@ func TestCall_RedactsSecretsFromToolErrorsAndArgs(t *testing.T) {
 	assert.Equal(t, "login failed for [redacted]", audit.Records[1].Err)
 }
 
-func TestNew_RejectsSecretsTooShortToRedact(t *testing.T) {
-	for _, secret := range []string{"", "1234567"} {
-		_, err := toolgateway.New(context.Background(), toolgateway.Config{
-			MaxToolCalls: 100,
-			Policy:       &gatewaytest.Policy{},
-			Audit:        &gatewaytest.Audit{},
-			Secrets:      []string{apiKey, secret},
-		})
-		require.ErrorContains(t, err, "secret 1 is shorter than 8 characters")
-	}
-}
-
 func TestCall_RedactsSecretsWithHTMLCharacters(t *testing.T) {
-	secret := "a<b>c&d-0123"
+	htmlSecret := "a<b>c&d-0123"
 	for name, result := range map[string]json.RawMessage{
 		"HTML-escaped by json.Marshal": json.RawMessage(`{"v":"a\u003cb\u003ec\u0026d-0123"}`),
 		"not HTML-escaped":             json.RawMessage(`{"v":"a<b>c&d-0123"}`),
@@ -123,7 +112,7 @@ func TestCall_RedactsSecretsWithHTMLCharacters(t *testing.T) {
 				MaxToolCalls: 100,
 				Policy:       &gatewaytest.Policy{},
 				Audit:        &gatewaytest.Audit{},
-				Secrets:      []string{secret},
+				Redactor:     redactor(t, htmlSecret),
 			})
 			require.NoError(t, err)
 			run := gw.Start()
@@ -147,7 +136,7 @@ func TestCall_ApproverSeesRedactedArgsAndReasons(t *testing.T) {
 		}},
 		Approver: approver,
 		Audit:    &gatewaytest.Audit{},
-		Secrets:  []string{apiKey},
+		Redactor: redactor(t, apiKey),
 	})
 	require.NoError(t, err)
 
@@ -157,4 +146,12 @@ func TestCall_ApproverSeesRedactedArgsAndReasons(t *testing.T) {
 	require.Len(t, approver.Calls, 1)
 	assert.JSONEq(t, `{"key":"[redacted]"}`, string(approver.Calls[0].Request.Args), "a person sees the arguments, never the secret")
 	assert.Equal(t, []string{"writes [redacted] to the vault"}, approver.Calls[0].Reasons)
+}
+
+// redactor returns a Redactor for secrets.
+func redactor(t *testing.T, secrets ...string) *secret.Redactor {
+	t.Helper()
+	r, err := secret.NewRedactor(secrets)
+	require.NoError(t, err)
+	return r
 }

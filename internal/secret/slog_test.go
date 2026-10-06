@@ -45,6 +45,17 @@ func TestHandler_RedactsSecrets(t *testing.T) {
 	assert.Contains(t, out.String(), "g.count=3", "values without a secret are kept as they are")
 }
 
+func TestHandler_KeepsTheKindOfValuesWithoutASecret(t *testing.T) {
+	r, err := secret.NewRedactor([]string{apiKey})
+	require.NoError(t, err)
+	var out bytes.Buffer
+	logger := slog.New(r.Handler(slog.NewJSONHandler(&out, nil)))
+
+	logger.Info("m", "count", 3, "ok", true, "token", apiKey)
+
+	assert.Contains(t, out.String(), `"count":3,"ok":true,"token":"[redacted]"`)
+}
+
 // lazy is a LogValuer whose value holds the secret only once resolved.
 type lazy struct{}
 

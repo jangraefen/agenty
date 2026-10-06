@@ -46,10 +46,11 @@ func newFixture(maxSteps int) *fixture {
 // config wires the fixture into an agent config for m.
 func (f *fixture) config(m model.Model) agent.Config {
 	return agent.Config{
-		Harness: f.harness,
-		Model:   m,
-		Servers: gatewaytest.Servers(f.read, f.label, f.del),
-		Audit:   f.audit,
+		Redactor: gatewaytest.NoSecrets,
+		Harness:  f.harness,
+		Model:    m,
+		Servers:  gatewaytest.Servers(f.read, f.label, f.del),
+		Audit:    f.audit,
 	}
 }
 

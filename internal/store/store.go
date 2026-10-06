@@ -354,20 +354,29 @@ type TranscriptMessage struct {
 // AppendMessage stores msg at position in the transcript of the run runID,
 // which must exist. A position is written once. As with Record, content never
 // makes storing fail: invalid UTF-8 and NUL bytes in the text are replaced,
-// and tool call arguments that are not valid JSON are kept as a JSON string.
+// and tool call arguments and provider parts that are not valid JSON are kept
+// as a JSON string. A provider part's JSON is kept as written, so the provider
+// can replay it exactly.
 func (s *Store) AppendMessage(ctx context.Context, runID string, position int, msg model.Message) error {
 	calls := make([]model.ToolCall, len(msg.ToolCalls))
 	for i, c := range msg.ToolCalls {
 		c.Args = jsonText(c.Args)
 		calls[i] = c
 	}
+	var provider string
+	var providerData []byte
+	if p := msg.Provider; p != nil {
+		provider, providerData = text(p.Name), jsonText(p.Data)
+	}
 	err := s.queries.InsertRunMessage(ctx, db.InsertRunMessageParams{
-		RunID:       text(runID),
-		Position:    int32(position), //nolint:gosec // G115: a position is bounded by the harness's max_steps.
-		Role:        text(string(msg.Role)),
-		Text:        text(msg.Text),
-		ToolCalls:   jsonList(calls),
-		ToolResults: jsonList(msg.ToolResults),
+		RunID:        text(runID),
+		Position:     int32(position), //nolint:gosec // G115: a position is bounded by the harness's max_steps.
+		Role:         text(string(msg.Role)),
+		Text:         text(msg.Text),
+		ToolCalls:    jsonList(calls),
+		ToolResults:  jsonList(msg.ToolResults),
+		Provider:     provider,
+		ProviderData: providerData,
 	})
 	if err != nil {
 		return fmt.Errorf("store: run %s: message %d: %w", runID, position, err)
@@ -403,6 +412,9 @@ func (s *Store) Transcript(ctx context.Context, runID string) ([]TranscriptMessa
 			if err := json.Unmarshal(row.ToolResults, &msg.ToolResults); err != nil {
 				return nil, fmt.Errorf("store: run %s: message %d: tool results: %w", runID, row.Position, err)
 			}
+		}
+		if row.Provider != "" {
+			msg.Provider = &model.ProviderPart{Name: row.Provider, Data: row.ProviderData}
 		}
 		out[i] = TranscriptMessage{Position: int(row.Position), Message: msg, CreatedAt: row.CreatedAt}
 	}

@@ -138,5 +138,10 @@ func (t runTranscript) Append(ctx context.Context, runID string, index int, msg 
 	for i := range msg.ToolResults {
 		msg.ToolResults[i].Content = t.redact.String(msg.ToolResults[i].Content)
 	}
+	if msg.Provider != nil {
+		p := *msg.Provider
+		p.Data = t.redact.JSON(p.Data)
+		msg.Provider = &p
+	}
 	return t.store.AppendMessage(context.WithoutCancel(ctx), runID, index, msg)
 }

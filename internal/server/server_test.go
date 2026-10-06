@@ -302,7 +302,11 @@ func TestInvariant_ServerCredentialsNeverLeak(t *testing.T) {
 	f.write.Err = errors.New("write failed with " + token)
 	f.script(
 		modeltest.CallTools(call("c1", "files_read", `{}`), call("c2", "files_write", `{"token":"`+token+`"}`)),
-		modeltest.Reply("the token is "+token),
+		modeltest.Step{Response: model.Message{
+			Role:     model.RoleAssistant,
+			Text:     "the token is " + token,
+			Provider: &model.ProviderPart{Name: "scripted", Data: json.RawMessage(`{"thinking":"I saw ` + token + `"}`)},
+		}},
 	)
 
 	run := f.startRun(t, "leak it")
@@ -335,6 +339,8 @@ func TestInvariant_ServerCredentialsNeverLeak(t *testing.T) {
 	assert.Equal(t, "the token is [redacted]", stored.Output)
 	assert.Equal(t, "the token is [redacted]", transcript[len(transcript)-1].Text)
 	assert.Contains(t, string(transcript[1].ToolCalls[1].Args), "[redacted]", "the model's own arguments are redacted too")
+	require.NotNil(t, transcript[len(transcript)-1].Provider)
+	assert.JSONEq(t, `{"thinking":"I saw [redacted]"}`, string(transcript[len(transcript)-1].Provider.Data), "so is the provider's form of a reply")
 	for _, data := range append(seen, string(storedJSON), string(auditJSON), string(transcriptJSON), f.logs.String()) {
 		assert.NotContains(t, data, token)
 	}

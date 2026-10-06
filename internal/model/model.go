@@ -40,8 +40,15 @@ type Message struct {
 	// Provider is the message in the form of the provider that generated it,
 	// if it keeps one. The provider replays it unchanged on later requests,
 	// which some APIs require, for example for thinking blocks. Other code
-	// treats it as opaque, and it is not part of the message's JSON form.
-	Provider any `json:"-"`
+	// treats it as opaque data that is stored with the message.
+	Provider *ProviderPart `json:"provider,omitempty"`
+}
+
+// ProviderPart is a message in a provider's own form, as JSON, so it can be
+// stored and replayed later. Only the provider called Name reads Data.
+type ProviderPart struct {
+	Name string          `json:"name"`
+	Data json.RawMessage `json:"data"`
 }
 
 // ToolCall is the model asking for a tool to be called.

@@ -44,11 +44,13 @@ type Run struct {
 }
 
 type RunMessage struct {
-	RunID       string
-	Position    int32
-	Role        string
-	Text        string
-	ToolCalls   []byte
-	ToolResults []byte
-	CreatedAt   time.Time
+	RunID        string
+	Position     int32
+	Role         string
+	Text         string
+	ToolCalls    []byte
+	ToolResults  []byte
+	CreatedAt    time.Time
+	Provider     string
+	ProviderData []byte
 }

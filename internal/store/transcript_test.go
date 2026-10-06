@@ -18,7 +18,11 @@ func TestTranscript_StoresMessagesInOrder(t *testing.T) {
 	newRun(t, s, "r1")
 	messages := []model.Message{
 		{Role: model.RoleUser, Text: "tidy my notes"},
-		{Role: model.RoleAssistant, Text: "Reading them.", ToolCalls: []model.ToolCall{{ID: "c1", Name: "files_read", Args: json.RawMessage(`{"path":"notes.md"}`)}}},
+		{
+			Role: model.RoleAssistant, Text: "Reading them.",
+			ToolCalls: []model.ToolCall{{ID: "c1", Name: "files_read", Args: json.RawMessage(`{"path":"notes.md"}`)}},
+			Provider:  &model.ProviderPart{Name: "anthropic", Data: json.RawMessage(`{"content": [{"type":"thinking","signature":"sig-1"}], "a": 1, "a": 2}`)},
+		},
 		{Role: model.RoleUser, ToolResults: []model.ToolResult{{CallID: "c1", Content: `{"content":"- milk"}`}, {CallID: "c2", Content: "tool call denied", IsError: true}}},
 		{Role: model.RoleAssistant, Text: "Done."},
 	}
@@ -58,7 +62,11 @@ func TestAppendMessage_NeverFailsOnContent(t *testing.T) {
 	s := storetest.New(t)
 	newRun(t, s, "r1")
 	msgs := []model.Message{
-		{Role: model.RoleAssistant, Text: "nul \x00 and \xff", ToolCalls: []model.ToolCall{{ID: "c1", Name: "files_read", Args: json.RawMessage(`{"path":`)}}},
+		{
+			Role: model.RoleAssistant, Text: "nul \x00 and \xff",
+			ToolCalls: []model.ToolCall{{ID: "c1", Name: "files_read", Args: json.RawMessage(`{"path":`)}},
+			Provider:  &model.ProviderPart{Name: "anthropic", Data: json.RawMessage(`{"broken`)},
+		},
 		{Role: model.RoleUser, ToolResults: []model.ToolResult{{CallID: "c1", Content: "bin\x00ary \xff"}}},
 	}
 
@@ -71,6 +79,8 @@ func TestAppendMessage_NeverFailsOnContent(t *testing.T) {
 	require.Len(t, got, 2)
 	assert.Equal(t, "nul � and �", got[0].Text)
 	assert.JSONEq(t, `"{\"path\":"`, string(got[0].ToolCalls[0].Args), "arguments that are not JSON are kept as a string")
+	require.NotNil(t, got[0].Provider)
+	assert.JSONEq(t, `"{\"broken"`, string(got[0].Provider.Data), "a provider part that is not JSON is kept as a string")
 	assert.Equal(t, "bin\x00ary �", got[1].ToolResults[0].Content, "inside JSON, a NUL is kept escaped")
 }
 

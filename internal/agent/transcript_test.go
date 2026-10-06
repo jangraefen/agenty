@@ -3,6 +3,7 @@ package agent_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -77,6 +78,14 @@ func TestRun_KeepsTheTranscriptOfAFailedRun(t *testing.T) {
 
 func TestRun_StopsWhenTheTranscriptCannotBeRecorded(t *testing.T) {
 	for _, failAt := range []int{0, 1, 2} {
+		t.Run(fmt.Sprintf("failing at %d", failAt), func(t *testing.T) {
+			testStopsWhenTheTranscriptCannotBeRecorded(t, failAt)
+		})
+	}
+}
+
+func testStopsWhenTheTranscriptCannotBeRecorded(t *testing.T, failAt int) {
+	{
 		f := newFixture(5)
 		m := modeltest.NewScripted(
 			modeltest.CallTools(call("c1", "tickets_read")),

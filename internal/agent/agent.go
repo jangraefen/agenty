@@ -48,7 +48,9 @@ type Config struct {
 // Transcript records the conversation of runs: the input, every model reply
 // and every set of tool results, with its index in the conversation. An
 // error ends the run before anything further happens, so a transcript never
-// misses a message the run went on from.
+// misses a message the run went on from. Messages are as the model saw and
+// wrote them, not redacted: an implementation that stores or shows them must
+// redact them itself.
 type Transcript interface {
 	Append(ctx context.Context, runID string, index int, msg model.Message) error
 }

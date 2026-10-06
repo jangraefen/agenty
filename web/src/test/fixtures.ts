@@ -61,3 +61,11 @@ export function approvalRequest(
     ...overrides,
   };
 }
+
+export function storedHarness(
+  harness: Partial<Schemas["Harness"]> = {},
+  version: Partial<Omit<Schemas["HarnessVersion"], "harness">> = {},
+): Schemas["HarnessVersion"] {
+  const base = harnessVersion(harness.name ?? "notes");
+  return { ...base, ...version, harness: { ...base.harness, ...harness } };
+}

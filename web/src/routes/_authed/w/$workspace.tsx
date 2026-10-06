@@ -88,6 +88,11 @@ function PageLinks({ workspace }: { workspace: string }) {
           </Link>
         </li>
         <li>
+          <Link to="/w/$workspace/harnesses" params={{ workspace }} className={linkClass}>
+            Harnesses
+          </Link>
+        </li>
+        <li>
           <Link
             to="/w/$workspace/approvals"
             params={{ workspace }}

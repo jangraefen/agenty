@@ -44,7 +44,8 @@ func run(ctx context.Context, args []string, env Env) int {
 		return fail(logger, "run failed", fmt.Errorf("run %s: %w", started.ID, err))
 	}
 	if finished.Output != "" {
-		if _, err := io.WriteString(env.Stdout, finished.Output+"\n"); err != nil {
+		// The model wrote the answer: escape what could steer the terminal.
+		if _, err := io.WriteString(env.Stdout, escape(finished.Output)+"\n"); err != nil {
 			return fail(logger, "run failed", fmt.Errorf("write answer: %w", err))
 		}
 	}

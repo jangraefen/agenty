@@ -88,35 +88,53 @@ func (c *client) events(ctx context.Context, runID string) (*eventStream, error)
 	if resp.StatusCode != http.StatusOK {
 		return nil, errors.Join(responseError(resp), resp.Body.Close())
 	}
-	return &eventStream{body: resp.Body, lines: bufio.NewScanner(resp.Body)}, nil
+	return newEventStream(resp.Body), nil
 }
 
-// eventStream reads server-sent events.
+// eventStream reads server-sent events. Lines have no length limit: an audit
+// event carries a tool's whole result.
 type eventStream struct {
-	body  io.ReadCloser
-	lines *bufio.Scanner
+	body io.ReadCloser
+	r    *bufio.Reader
 }
 
-// next returns the next event's name and data, or io.EOF when the stream
-// ends.
+func newEventStream(body io.ReadCloser) *eventStream {
+	return &eventStream{body: body, r: bufio.NewReader(body)}
+}
+
+// next returns the next named event's name and data, or io.EOF when the
+// stream ends. Data lines are joined with newlines; an event without a name,
+// and one the stream ends in the middle of, are dropped.
 func (s *eventStream) next() (string, []byte, error) {
 	var name string
-	var data []byte
-	for s.lines.Scan() {
-		line := s.lines.Text()
-		switch {
-		case strings.HasPrefix(line, "event:"):
-			name = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-		case strings.HasPrefix(line, "data:"):
-			data = append(data, strings.TrimPrefix(line, "data:")...)
-		case line == "" && name != "":
-			return name, data, nil
+	var data []string
+	for {
+		line, err := s.r.ReadString('\n')
+		if errors.Is(err, io.EOF) {
+			// A last line without its newline is part of an event the stream
+			// ended in the middle of.
+			return "", nil, io.EOF
+		}
+		if err != nil {
+			return "", nil, fmt.Errorf("event stream: %w", err)
+		}
+		line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+		if line == "" {
+			if name != "" {
+				return name, []byte(strings.Join(data, "\n")), nil
+			}
+			name, data = "", nil
+			continue
+		}
+		field, value, _ := strings.Cut(line, ":")
+		value = strings.TrimPrefix(value, " ")
+		switch field {
+		case "event":
+			name = value
+		case "data":
+			data = append(data, value)
 		}
 	}
-	if err := s.lines.Err(); err != nil {
-		return "", nil, fmt.Errorf("event stream: %w", err)
-	}
-	return "", nil, io.EOF
 }
 
 func (s *eventStream) Close() error {

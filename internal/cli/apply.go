@@ -37,7 +37,7 @@ func apply(ctx context.Context, args []string, env Env) int {
 	if err := c.do(ctx, http.MethodPut, "/v1/harnesses/"+url.PathEscape(h.Name), h, &v); err != nil {
 		return fail(logger, "apply failed", err)
 	}
-	if _, err := fmt.Fprintf(env.Stdout, "%s version %d\n", v.Harness.Name, v.Version); err != nil {
+	if _, err := fmt.Fprintf(env.Stdout, "%s version %d\n", h.Name, v.Version); err != nil {
 		return fail(logger, "apply failed", err)
 	}
 	return exitOK

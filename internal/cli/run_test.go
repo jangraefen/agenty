@@ -265,6 +265,30 @@ func TestRun_EndToEnd(t *testing.T) {
 	assert.NotContains(t, f.stderr.String(), "WARN")
 }
 
+func TestRun_LargeToolResults(t *testing.T) {
+	f := newFixture(t,
+		toolUse(t, "toolu_1", "files_read", map[string]any{"path": "big.md"}),
+		done(t),
+	)
+	f.read.Result = json.RawMessage(`{"content":"` + strings.Repeat("x", 256<<10) + `"}`)
+
+	code := f.run("tidy my notes")
+
+	require.Equal(t, 0, code, "an event larger than a line buffer is still read: %s", f.stderr.String())
+	assert.Equal(t, "Notes are tidy.\n", f.stdout.String())
+}
+
+// TestRun_EscapesTheAnswer: the model writes the answer, so it must not be
+// able to send terminal escape sequences.
+func TestRun_EscapesTheAnswer(t *testing.T) {
+	f := newFixture(t, anthropictest.Reply(t, "end_turn", anthropictest.TextBlock("done\x1b[2J\nnext line\tok")))
+
+	code := f.run("tidy my notes")
+
+	require.Equal(t, 0, code, f.stderr.String())
+	assert.Equal(t, "done\\u001b[2J\nnext line\tok\n", f.stdout.String())
+}
+
 func TestApply(t *testing.T) {
 	f := newFixture(t)
 	url := f.serverURL()

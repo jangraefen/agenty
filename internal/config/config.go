@@ -24,7 +24,10 @@ import (
 
 // Config is the operator configuration.
 type Config struct {
-	Provider   Provider             `yaml:"provider"`
+	Provider Provider `yaml:"provider"`
+	// Database is where the server keeps its state. Only agenty serve needs
+	// it.
+	Database   *Database            `yaml:"database"`
 	MCPServers map[string]MCPServer `yaml:"mcp_servers"`
 	// Policy is central policy: Rego modules in package agenty.tool. Load
 	// reads them from the files the config names.
@@ -54,6 +57,13 @@ type Anthropic struct {
 	MaxTokens int   `yaml:"max_tokens"`
 	// BaseURL overrides the API endpoint. Empty means Anthropic's.
 	BaseURL string `yaml:"base_url"`
+}
+
+// Database configures the server's PostgreSQL database.
+type Database struct {
+	// URL is a PostgreSQL connection URL. It usually holds a password, so
+	// read it from the environment.
+	URL Value `yaml:"url"`
 }
 
 // MCPServer is an MCP server Agenty starts over stdio.
@@ -149,6 +159,9 @@ func (f *file) validate() error {
 			add("provider.anthropic.max_tokens", "must be greater than 0")
 		}
 	}
+	if d := f.Database; d != nil {
+		checkValue("database.url", d.URL)
+	}
 	for _, name := range slices.Sorted(maps.Keys(f.MCPServers)) {
 		srv := f.MCPServers[name]
 		if srv.Command == "" {
@@ -170,6 +183,8 @@ func (f *file) validate() error {
 // configured, and the redactor for the secrets among them.
 type Resolved struct {
 	AnthropicAPIKey string
+	// DatabaseURL is empty when no database is configured.
+	DatabaseURL string
 	// MCPServerEnv holds each server's environment, by server name.
 	MCPServerEnv map[string]map[string]string
 	// Redactor redacts every value read from the environment. It is the one
@@ -199,6 +214,9 @@ func (c *Config) Resolve(lookup func(string) (string, bool)) (*Resolved, error) 
 	}
 
 	r.AnthropicAPIKey = resolve("provider.anthropic.api_key", c.Provider.Anthropic.APIKey)
+	if c.Database != nil {
+		r.DatabaseURL = resolve("database.url", c.Database.URL)
+	}
 	for _, name := range slices.Sorted(maps.Keys(c.MCPServers)) {
 		env := map[string]string{}
 		for _, key := range slices.Sorted(maps.Keys(c.MCPServers[name].Env)) {

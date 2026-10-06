@@ -3,6 +3,8 @@ provider:
     api_key: {env: ANTHROPIC_API_KEY}
     max_tokens: 4096
     base_url: http://localhost:8080
+database:
+  url: {env: DATABASE_URL}
 mcp_servers:
   tickets:
     command: tickets-mcp

@@ -63,6 +63,8 @@ func Main(ctx context.Context, args []string, env Env) int {
 	switch args[0] {
 	case "run":
 		return run(ctx, args[1:], env)
+	case "serve":
+		return serve(ctx, args[1:], env)
 	case "help", "-h", "--help":
 		return printUsage(env.Stderr, "", exitOK)
 	default:
@@ -70,8 +72,17 @@ func Main(ctx context.Context, args []string, env Env) int {
 	}
 }
 
+const commands = `usage: agenty <command> [flags]
+
+Commands:
+  run     runs a harness once on INPUT and prints the answer
+  serve   serves the HTTP API on localhost
+
+Run "agenty <command> -h" for a command's flags.
+`
+
 func printUsage(w io.Writer, msg string, code int) int {
-	if _, err := io.WriteString(w, msg+usage+"Run \"agenty run -h\" for its flags.\n"); err != nil {
+	if _, err := io.WriteString(w, msg+commands); err != nil {
 		return exitFailure
 	}
 	return code

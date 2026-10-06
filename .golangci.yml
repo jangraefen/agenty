@@ -41,6 +41,13 @@ linters:
               desc: reach PostgreSQL only through internal/store
             - pkg: github.com/pressly/goose
               desc: migrations are applied only by internal/store
+        gin:
+          # internal/server is the HTTP API; other packages stay free of
+          # the web framework.
+          files: ["$all", "!**/internal/server/**"]
+          deny:
+            - pkg: github.com/gin-gonic/gin
+              desc: serve HTTP only through internal/server
         anthropic:
           # One place builds Anthropic clients, with the SDK's environment
           # defaults turned off; a client built elsewhere could read credentials

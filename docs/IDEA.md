@@ -93,10 +93,10 @@ The example's central policy asks before every file change and denies dotfiles; 
 
 The PoC held. The next step splits the command line: a server holds the state and runs agents, and the CLI talks to it over HTTP. The trust model carries over unchanged, and so do the gateway, policy and redaction code.
 
-- **Server**: `agenty serve` exposes a JSON API and runs agents in its own process. It binds to localhost only, without authentication, until sign-in exists.
+- **Server**: `agenty serve` exposes a JSON API and runs agents in its own process. Until sign-in exists, it has no authentication: it binds to a loopback address only, and refuses requests for a non-local host or from a web page's origin, so neither another machine nor a page in the user's browser can use it.
 - **State**: PostgreSQL holds harnesses, runs and the audit log, which replaces the JSON-lines file. Every changed harness is stored as a new, immutable version, and every run records the version it ran.
 - **Harnesses**: managed through the API. The CLI uploads a harness file with its policy files resolved.
-- **Approvals**: the server streams each run's events over server-sent events. A call that needs approval waits in the server until a client posts the answer. A run does not survive a server restart.
+- **Approvals**: the server streams each run's events over server-sent events. A call that needs approval waits in the server until a client posts the answer; one that nobody answers waits until the server stops, as there is no timeout yet. A run does not survive a server restart.
 - **CLI**: a client of the API instead of running agents itself.
 
 ## Later: the web portal

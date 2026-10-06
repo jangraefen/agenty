@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/jangraefen/agenty/internal/harness"
 	"github.com/jangraefen/agenty/internal/model"
@@ -112,16 +113,43 @@ func (a *Agent) Close() error {
 	return nil
 }
 
-// Run executes the agent loop for input. Each step is one model call. Tool
-// calls go through the gateway, in a gateway run of their own; denials and tool errors are reported
-// back to the model, while model errors, audit failures and cancellation end
-// the run. If the model still asks for tools on the last allowed step, those
-// calls are not executed and Run returns ErrMaxSteps.
+// Run starts a run and executes it on input; see Run.Execute.
 func (a *Agent) Run(ctx context.Context, input string) (Result, error) {
+	return a.Start().Execute(ctx, input)
+}
+
+// Start begins a run without executing it. Its ID is known before it
+// executes, so a caller can store the run before any audit record refers to
+// it.
+func (a *Agent) Start() *Run {
+	return &Run{agent: a, gateway: a.gateway.Start()}
+}
+
+// Run is one run of an agent, in a gateway run of its own.
+type Run struct {
+	agent    *Agent
+	gateway  *toolgateway.Run
+	executed atomic.Bool
+}
+
+// ID identifies the run; every audit record of the run carries it.
+func (r *Run) ID() string {
+	return r.gateway.ID()
+}
+
+// Execute executes the agent loop for input, once. Each step is one model
+// call. Tool calls go through the run's gateway; denials and tool errors are
+// reported back to the model, while model errors, audit failures and
+// cancellation end the run. If the model still asks for tools on the last
+// allowed step, those calls are not executed and Execute returns ErrMaxSteps.
+func (r *Run) Execute(ctx context.Context, input string) (Result, error) {
 	if input == "" {
 		return Result{}, errors.New("agent: input is required")
 	}
-	run := a.gateway.Start()
+	if r.executed.Swap(true) {
+		return Result{}, errors.New("agent: run already executed")
+	}
+	a, run := r.agent, r.gateway
 	res := Result{
 		RunID:    run.ID(),
 		Messages: []model.Message{{Role: model.RoleUser, Text: input}},

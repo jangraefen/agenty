@@ -405,7 +405,8 @@ func TestMain_Usage(t *testing.T) {
 		{"no harness", []string{"run", "tidy"}, 2, "--harness is required"},
 		{"no input", []string{"run", "--harness", "h.yaml"}, 2, "exactly one input"},
 		{"two inputs", []string{"run", "--harness", "h.yaml", "a", "b"}, 2, "exactly one input"},
-		{"bad log level", []string{"run", "--harness", "h.yaml", "--log-level", "loud", "tidy"}, 2, `log level "loud"`},
+		{"bad log level", []string{"run", "--harness", "h.yaml", "--log-level", "loud", "tidy"}, 2, `invalid value "loud" for flag -log-level`},
+		{"run usage after a problem", []string{"run", "tidy"}, 2, "-audit file"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -426,7 +427,9 @@ type failingWriter struct{}
 func (failingWriter) Write([]byte) (int, error) { return 0, assert.AnError }
 
 func TestMain_UsageWriteFailure(t *testing.T) {
-	code := cli.Main(context.Background(), nil, cli.Env{Stderr: failingWriter{}})
+	for _, args := range [][]string{nil, {"run", "tidy"}} {
+		code := cli.Main(context.Background(), args, cli.Env{Stderr: failingWriter{}})
 
-	assert.Equal(t, 1, code)
+		assert.Equal(t, 1, code, "args %q", args)
+	}
 }

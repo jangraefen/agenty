@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log/slog"
 
@@ -11,15 +10,12 @@ import (
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
-// newLogger returns a logger that writes to w at level ("debug", "info",
-// "warn" or "error") and redacts r's secrets from every record.
-func newLogger(w io.Writer, level string, r *toolgateway.Redactor) (*slog.Logger, error) {
-	lvl, err := log.ParseLevel(level)
-	if err != nil {
-		return nil, fmt.Errorf("log level %q: %w", level, err)
-	}
-	h := log.NewWithOptions(w, log.Options{Level: lvl, ReportTimestamp: true})
-	return slog.New(&redactHandler{next: h, redact: r}), nil
+// newLogger returns a logger that writes to w at level and redacts r's
+// secrets from every record.
+func newLogger(w io.Writer, level slog.Level, r *toolgateway.Redactor) *slog.Logger {
+	// charmbracelet/log levels have the same values as slog's.
+	h := log.NewWithOptions(w, log.Options{Level: log.Level(level), ReportTimestamp: true})
+	return slog.New(&redactHandler{next: h, redact: r})
 }
 
 var _ slog.Handler = (*redactHandler)(nil)

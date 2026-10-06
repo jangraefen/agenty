@@ -21,8 +21,7 @@ func TestLogger_RedactsSecrets(t *testing.T) {
 	r, err := toolgateway.NewRedactor([]string{logSecret})
 	require.NoError(t, err)
 	var out bytes.Buffer
-	logger, err := newLogger(&out, "debug", r)
-	require.NoError(t, err)
+	logger := newLogger(&out, slog.LevelDebug, r)
 
 	logger.With("bound", "with "+logSecret).WithGroup("g").Info("message "+logSecret,
 		"string", logSecret,
@@ -41,8 +40,7 @@ func TestNewLogger_Levels(t *testing.T) {
 	r, err := toolgateway.NewRedactor(nil)
 	require.NoError(t, err)
 	var out bytes.Buffer
-	logger, err := newLogger(&out, "warn", r)
-	require.NoError(t, err)
+	logger := newLogger(&out, slog.LevelWarn, r)
 
 	logger.Info("hidden")
 	logger.Warn("shown")
@@ -50,7 +48,4 @@ func TestNewLogger_Levels(t *testing.T) {
 	assert.NotContains(t, out.String(), "hidden")
 	assert.Contains(t, out.String(), "shown")
 	assert.True(t, logger.Handler().Enabled(context.Background(), slog.LevelWarn))
-
-	_, err = newLogger(&out, "loud", r)
-	require.ErrorContains(t, err, `log level "loud"`)
 }

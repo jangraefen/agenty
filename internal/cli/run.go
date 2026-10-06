@@ -88,8 +88,9 @@ func printUsage(w io.Writer, msg string, code int) int {
 
 // runFlags are the flags of "agenty run".
 type runFlags struct {
-	config, harness, audit, logLevel string
-	input                            string
+	config, harness, audit string
+	logLevel               slog.Level
+	input                  string
 }
 
 func parseRunFlags(args []string, stderr io.Writer) (runFlags, int, bool) {
@@ -104,7 +105,7 @@ func parseRunFlags(args []string, stderr io.Writer) (runFlags, int, bool) {
 	fs.StringVar(&f.config, "config", "agenty.yaml", "operator config `file`: model provider, MCP servers, central policy")
 	fs.StringVar(&f.harness, "harness", "", "harness `file` to run (required)")
 	fs.StringVar(&f.audit, "audit", "audit.jsonl", "audit log `file`, appended to")
-	fs.StringVar(&f.logLevel, "log-level", "info", "log `level`: debug, info, warn or error")
+	fs.TextVar(&f.logLevel, "log-level", slog.LevelInfo, "log `level`: debug, info, warn or error")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return f, exitOK, false
@@ -119,7 +120,12 @@ func parseRunFlags(args []string, stderr io.Writer) (runFlags, int, bool) {
 		problem = "exactly one input is required; quote it if it has spaces"
 	}
 	if problem != "" {
-		return f, printUsage(stderr, "agenty run: "+problem+"\n", exitUsage), false
+		// Report it the way the flag package reports a bad flag.
+		if _, err := fmt.Fprintln(stderr, "agenty run:", problem); err != nil {
+			return f, exitFailure, false
+		}
+		fs.Usage()
+		return f, exitUsage, false
 	}
 	f.input = fs.Arg(0)
 	return f, exitOK, true
@@ -132,10 +138,7 @@ func run(ctx context.Context, args []string, env Env) int {
 	}
 	// No secret is known before the config is resolved, so this logger
 	// redacts nothing; it only reports failures to get that far.
-	logger, err := newLogger(env.Stderr, flags.logLevel, must.Value(toolgateway.NewRedactor(nil)))
-	if err != nil {
-		return printUsage(env.Stderr, "agenty run: "+err.Error()+"\n", exitUsage)
-	}
+	logger := newLogger(env.Stderr, flags.logLevel, must.Value(toolgateway.NewRedactor(nil)))
 
 	cfg, err := config.Load(flags.config)
 	if err != nil {
@@ -151,7 +154,7 @@ func run(ctx context.Context, args []string, env Env) int {
 	}
 	// Resolve rejects secrets too short to redact.
 	redact := must.Value(toolgateway.NewRedactor(resolved.Secrets))
-	logger = must.Value(newLogger(env.Stderr, flags.logLevel, redact))
+	logger = newLogger(env.Stderr, flags.logLevel, redact)
 
 	output, err := runHarness(ctx, logger, env, flags, cfg, resolved, h)
 	if output != "" {

@@ -157,3 +157,8 @@ func TestResolve_Errors(t *testing.T) {
 		})
 	}
 }
+
+func TestFieldError_Error(t *testing.T) {
+	err := &config.FieldError{Field: "provider.anthropic.max_tokens", Msg: "must be greater than 0"}
+	assert.Equal(t, `field "provider.anthropic.max_tokens": must be greater than 0`, err.Error())
+}

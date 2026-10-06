@@ -113,7 +113,7 @@ func TestNew_RejectsSecretsTooShortToRedact(t *testing.T) {
 func TestCall_RedactsSecretsWithHTMLCharacters(t *testing.T) {
 	secret := "a<b>c&d-0123"
 	for name, result := range map[string]json.RawMessage{
-		"HTML-escaped by json.Marshal": json.RawMessage(`{"v":"a<b>c&d-0123"}`),
+		"HTML-escaped by json.Marshal": json.RawMessage(`{"v":"a\u003cb\u003ec\u0026d-0123"}`),
 		"not HTML-escaped":             json.RawMessage(`{"v":"a<b>c&d-0123"}`),
 	} {
 		t.Run(name, func(t *testing.T) {

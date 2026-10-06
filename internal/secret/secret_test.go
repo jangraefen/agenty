@@ -16,11 +16,14 @@ const (
 	apiKeyV2 = "sk-ant-key-0123456789-v2"
 	quoted   = `pa"ss\word-123`
 	html     = "a<b>c&d-0123"
+	// quotedHTML needs JSON escaping for its quote and HTML escaping for <, >
+	// and &, so it has three forms.
+	quotedHTML = `q"<x>&-0123`
 )
 
 func newRedactor(t *testing.T) *secret.Redactor {
 	t.Helper()
-	r, err := secret.NewRedactor([]string{apiKey, apiKeyV2, quoted, html})
+	r, err := secret.NewRedactor([]string{apiKey, apiKeyV2, quoted, html, quotedHTML})
 	require.NoError(t, err)
 	return r
 }
@@ -43,9 +46,12 @@ func TestRedactor_String(t *testing.T) {
 		{"no secret", "nothing to hide", "nothing to hide"},
 		{"plain", "key=" + apiKey + " ok", "key=[redacted] ok"},
 		{"a secret containing another is replaced whole", "key=" + apiKeyV2, "key=[redacted]"},
+		{"raw, with characters JSON escapes", "p=" + quoted, "p=[redacted]"},
 		{"JSON-escaped", `{"p":"pa\"ss\\word-123"}`, `{"p":"[redacted]"}`},
-		{"HTML-escaped by json.Marshal", `"a<b>c&d-0123"`, `"[redacted]"`},
+		{"HTML-escaped by json.Marshal", `"a\u003cb\u003ec\u0026d-0123"`, `"[redacted]"`},
 		{"not HTML-escaped", html, "[redacted]"},
+		{"JSON-escaped by an encoder that does not escape HTML", `"q\"<x>&-0123"`, `"[redacted]"`},
+		{"JSON- and HTML-escaped", `"q\"\u003cx\u003e\u0026-0123"`, `"[redacted]"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

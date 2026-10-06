@@ -1,4 +1,4 @@
-# Generates the API's types from openapi.yaml: go generate ./internal/api/
+# Generates the API's types from schema/openapi.yaml: go generate ./internal/api/
 package: api
 output: api.gen.go
 generate:

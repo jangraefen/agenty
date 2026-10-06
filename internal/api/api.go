@@ -1,11 +1,11 @@
 // Package api holds the JSON types of Agenty's HTTP API, shared by the
-// server and its clients. openapi.yaml defines the API: its routes, and the
-// types generated from it into api.gen.go. This file adds what the spec
+// server and its clients. schema/openapi.yaml at the module root defines the
+// API: its routes, and the types generated from it into api.gen.go. This file adds what the spec
 // cannot express in Go: the event names of a run's stream, and conversions
 // from and to the platform's own types.
 package api
 
-//go:generate go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0 -config oapi-codegen.yaml openapi.yaml
+//go:generate go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0 -config oapi-codegen.yaml ../../schema/openapi.yaml
 
 import (
 	"time"

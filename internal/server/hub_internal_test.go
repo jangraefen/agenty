@@ -27,9 +27,9 @@ func TestHub_WithdrawHonoursAnAcceptedAnswer(t *testing.T) {
 	assert.True(t, answered)
 	assert.Equal(t, approved, got)
 
-	h.pending["a2"] = pendingApproval{answer: make(chan toolgateway.Approval, 1)}
-	p2 := h.pending["a2"]
+	p2 := pendingApproval{answer: make(chan toolgateway.Approval, 1)}
 	p2.req.ID = "a2"
+	h.pending["a2"] = p2
 	_, answered = h.withdraw(p2)
 	assert.False(t, answered)
 	assert.False(t, h.answer("a2", approved), "a withdrawn request accepts no answer")
@@ -64,5 +64,37 @@ func TestHub_ApproveReportsTheCancelCause(t *testing.T) {
 
 	var by cancelledBy
 	require.ErrorAs(t, err, &by)
+	assert.Equal(t, cancelledBy("bob"), by)
+}
+
+// TestHub_CancellationWinsOverAnAnswer: an answer accepted at the moment the
+// run is cancelled is not used; the call fails with the cancel cause.
+func TestHub_CancellationWinsOverAnAnswer(t *testing.T) {
+	h := newHub("home", "notes", time.Hour)
+	ctx, cancel := context.WithCancelCause(context.Background())
+	type result struct {
+		a   toolgateway.Approval
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		a, err := h.Approve(ctx, toolgateway.Request{}, nil)
+		done <- result{a, err}
+	}()
+	require.Eventually(t, func() bool { return len(h.waiting()) == 1 }, 5*time.Second, time.Millisecond)
+
+	// Answer and cancel at once: under the hub's lock, so Approve sees both.
+	h.mu.Lock()
+	for id, p := range h.pending {
+		delete(h.pending, id)
+		p.answer <- toolgateway.Approval{Approved: true, Approver: "alice"}
+	}
+	cancel(cancelledBy("bob"))
+	h.mu.Unlock()
+
+	r := <-done
+	assert.Equal(t, toolgateway.Approval{}, r.a)
+	var by cancelledBy
+	require.ErrorAs(t, r.err, &by)
 	assert.Equal(t, cancelledBy("bob"), by)
 }

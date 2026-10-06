@@ -97,9 +97,8 @@ func (h *hub) Approve(ctx context.Context, req toolgateway.Request, reasons []st
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
-		if a, answered := h.withdraw(p); answered {
-			return a, nil
-		}
+		// Cancellation wins over an answer accepted at the same moment.
+		h.withdraw(p)
 		return toolgateway.Approval{}, context.Cause(ctx)
 	case <-timer.C:
 		if a, answered := h.withdraw(p); answered {
@@ -107,13 +106,17 @@ func (h *hub) Approve(ctx context.Context, req toolgateway.Request, reasons []st
 		}
 		return toolgateway.Approval{Reason: "no answer within " + duration(h.timeout)}, nil
 	case a := <-p.answer:
+		if ctx.Err() != nil {
+			// Both were ready, and select picked the answer.
+			return toolgateway.Approval{}, context.Cause(ctx)
+		}
 		return a, nil
 	}
 }
 
 // withdraw takes p off the pending requests, so no answer is accepted from
-// now on. If an answer was accepted before, it returns that answer: the
-// client was told it counts.
+// now on. If an answer was accepted before, it returns that answer; a
+// request that timed out honours it, as the client was told it counts.
 func (h *hub) withdraw(p pendingApproval) (toolgateway.Approval, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

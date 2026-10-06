@@ -151,6 +151,9 @@ func (f *fixture) do(t *testing.T, method, path string, body, out any) int {
 	}
 	req, err := http.NewRequestWithContext(context.Background(), method, f.http.URL+path, r)
 	require.NoError(t, err)
+	if r != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, resp.Body.Close()) }()

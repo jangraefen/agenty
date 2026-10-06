@@ -408,3 +408,85 @@ func TestRun_GatewayStopsAToolServerThatDoesNotStop(t *testing.T) {
 	assert.Contains(t, finished.Error, "still running")
 	assert.Equal(t, "done", finished.Output)
 }
+
+// TestInvariant_ServerRefusesNonLocalRequests guards the server's only access
+// control until it has sign-in: requests must be for a local host and must
+// not come from a web page of another origin, so neither a cross-site form
+// nor a DNS-rebound page can start runs, store harnesses or answer approvals.
+func TestInvariant_ServerRefusesNonLocalRequests(t *testing.T) {
+	f := newFixture(t, options{})
+	f.putNotes(t)
+	local := strings.TrimPrefix(f.http.URL, "http://")
+	body := `{"harness":"notes","input":"tidy"}`
+	tests := []struct {
+		name        string
+		host        string
+		origin      string
+		contentType string
+		wantStatus  int
+	}{
+		{"foreign host, as after DNS rebinding", "attacker.example:8080", "", "application/json", http.StatusForbidden},
+		{"foreign host on a loopback port", "attacker.example:" + strings.Split(local, ":")[1], "", "application/json", http.StatusForbidden},
+		{"foreign origin, as from a cross-site form", local, "http://attacker.example", "text/plain", http.StatusForbidden},
+		{"foreign origin with JSON", local, "http://attacker.example", "application/json", http.StatusForbidden},
+		{"another local origin", local, "http://localhost:1234", "application/json", http.StatusForbidden},
+		{"opaque origin", local, "null", "application/json", http.StatusForbidden},
+		{"not JSON", local, "", "text/plain", http.StatusUnsupportedMediaType},
+		{"form", local, "", "application/x-www-form-urlencoded", http.StatusUnsupportedMediaType},
+		{"no content type", local, "", "", http.StatusUnsupportedMediaType},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, f.http.URL+"/v1/runs", strings.NewReader(body))
+			require.NoError(t, err)
+			req.Host = tt.host
+			if tt.origin != "" {
+				req.Header.Set("Origin", tt.origin)
+			}
+			if tt.contentType != "" {
+				req.Header.Set("Content-Type", tt.contentType)
+			}
+
+			resp, err := http.DefaultClient.Do(req)
+			require.NoError(t, err)
+			require.NoError(t, resp.Body.Close())
+
+			assert.Equal(t, tt.wantStatus, resp.StatusCode)
+		})
+	}
+	n, err := f.store.FailRunningRuns(context.Background(), "check")
+	require.NoError(t, err)
+	assert.Zero(t, n, "no refused request started a run")
+
+	for _, ok := range []struct{ host, origin string }{
+		{local, ""},
+		{local, "http://" + local},
+		{"localhost:" + strings.Split(local, ":")[1], ""},
+	} {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, f.http.URL+"/v1/harnesses", nil)
+		require.NoError(t, err)
+		req.Host = ok.host
+		if ok.origin != "" {
+			req.Header.Set("Origin", ok.origin)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+		assert.Equal(t, http.StatusOK, resp.StatusCode, "%+v", ok)
+	}
+}
+
+func TestCreateRun_RefusedAfterClose(t *testing.T) {
+	f := newFixture(t, options{})
+	f.putNotes(t)
+	f.server.Close()
+
+	var resp api.Error
+	status := f.do(t, http.MethodPost, "/v1/runs", api.CreateRun{Harness: "notes", Input: "tidy"}, &resp)
+
+	assert.Equal(t, http.StatusServiceUnavailable, status)
+	assert.Contains(t, resp.Error, "server is stopping")
+	n, err := f.store.FailRunningRuns(context.Background(), "check")
+	require.NoError(t, err)
+	assert.Zero(t, n, "no run was stored")
+}

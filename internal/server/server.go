@@ -9,7 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"mime"
+	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -53,9 +57,14 @@ type Server struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
-	mu   sync.Mutex
-	runs map[string]*hub
+	mu sync.Mutex
+	// closed is set by Close; no run starts after it.
+	closed bool
+	runs   map[string]*hub
 }
+
+// errClosed is returned when a run is started on a closed server.
+var errClosed = errors.New("the server is stopping")
 
 // New returns a Server for cfg. Runs left running by an earlier server cannot
 // continue, so New marks them as failed.
@@ -104,8 +113,11 @@ func (s *Server) Handler() http.Handler {
 }
 
 // Close cancels every run and waits until each has been recorded as finished.
-// Event streams end with it.
+// Event streams end with it, and no run starts after it.
 func (s *Server) Close() {
+	s.mu.Lock()
+	s.closed = true
+	s.mu.Unlock()
 	s.cancel()
 	s.wg.Wait()
 }
@@ -113,7 +125,7 @@ func (s *Server) Close() {
 func (s *Server) routes() *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(gin.Recovery(), s.logRequests)
+	r.Use(gin.Recovery(), s.logRequests, s.localOnly)
 	v1 := r.Group("/v1")
 	v1.PUT("/harnesses/:name", s.putHarness)
 	v1.GET("/harnesses", s.listHarnesses)
@@ -124,6 +136,39 @@ func (s *Server) routes() *gin.Engine {
 	v1.GET("/runs/:id/events", s.streamEvents)
 	v1.POST("/runs/:id/approvals/:approval", s.answerApproval)
 	return r
+}
+
+// localOnly refuses requests that are not for a local host, or that a web
+// page of any origin sent. Until the API has sign-in, these checks and the
+// loopback address are its only access control: without them, a DNS-rebound
+// page could use the API as its own, and any page could post to it
+// cross-site. Clients such as the CLI send no Origin.
+func (s *Server) localOnly(c *gin.Context) {
+	if !isLocalHost(c.Request.Host) {
+		s.fail(c, http.StatusForbidden, fmt.Errorf("host %q is not local", c.Request.Host))
+		return
+	}
+	if origin := c.GetHeader("Origin"); origin != "" {
+		u, err := url.Parse(origin)
+		if err != nil || u.Host != c.Request.Host {
+			s.fail(c, http.StatusForbidden, fmt.Errorf("requests from origin %q are not accepted", origin))
+			return
+		}
+	}
+	c.Next()
+}
+
+// isLocalHost reports whether host, with or without a port, is localhost or
+// a loopback address.
+func isLocalHost(host string) bool {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip != nil && ip.IsLoopback()
 }
 
 func (s *Server) logRequests(c *gin.Context) {
@@ -151,8 +196,24 @@ func (s *Server) failStore(c *gin.Context, err error) {
 	s.fail(c, http.StatusInternalServerError, err)
 }
 
+// errNotJSON is returned for a body that is not declared as JSON. Requiring
+// the content type keeps cross-site forms, which cannot send JSON without a
+// preflight, out.
+var errNotJSON = errors.New("the request body must be application/json")
+
+func (s *Server) failDecode(c *gin.Context, err error) {
+	if errors.Is(err, errNotJSON) {
+		s.fail(c, http.StatusUnsupportedMediaType, err)
+		return
+	}
+	s.fail(c, http.StatusBadRequest, err)
+}
+
 // decode reads the JSON body into v, rejecting unknown fields.
 func decode(c *gin.Context, v any) error {
+	if mt, _, err := mime.ParseMediaType(c.GetHeader("Content-Type")); err != nil || mt != "application/json" {
+		return errNotJSON
+	}
 	dec := json.NewDecoder(c.Request.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
@@ -164,7 +225,7 @@ func decode(c *gin.Context, v any) error {
 func (s *Server) putHarness(c *gin.Context) {
 	var h harness.Harness
 	if err := decode(c, &h); err != nil {
-		s.fail(c, http.StatusBadRequest, err)
+		s.failDecode(c, err)
 		return
 	}
 	if h.Name != c.Param("name") {
@@ -217,7 +278,7 @@ func harnessVersion(v store.HarnessVersion) api.HarnessVersion {
 func (s *Server) createRun(c *gin.Context) {
 	var req api.CreateRun
 	if err := decode(c, &req); err != nil {
-		s.fail(c, http.StatusBadRequest, err)
+		s.failDecode(c, err)
 		return
 	}
 	if req.Input == "" {
@@ -229,9 +290,9 @@ func (s *Server) createRun(c *gin.Context) {
 		s.failStore(c, err)
 		return
 	}
-	id, err := s.start(v, req.Input)
+	id, status, err := s.start(v, req.Input)
 	if err != nil {
-		s.fail(c, http.StatusUnprocessableEntity, fmt.Errorf("cannot start run: %w", err))
+		s.fail(c, status, fmt.Errorf("cannot start run: %w", err))
 		return
 	}
 	run, err := s.cfg.Store.Run(c.Request.Context(), id)
@@ -243,12 +304,14 @@ func (s *Server) createRun(c *gin.Context) {
 }
 
 // start builds an agent for the harness version, which starts the MCP servers
-// it needs, stores the run, and executes it in the background.
-func (s *Server) start(v store.HarnessVersion, input string) (string, error) {
+// it needs, stores the run, and executes it in the background. On error it
+// also returns the status to respond with: 422 for a harness that cannot run,
+// 503 when the server is stopping, 500 otherwise.
+func (s *Server) start(v store.HarnessVersion, input string) (string, int, error) {
 	h := v.Harness
 	m, err := s.cfg.NewModel(h.Model)
 	if err != nil {
-		return "", err
+		return "", http.StatusUnprocessableEntity, err
 	}
 	servers := make(map[string]toolgateway.ToolServer, len(s.cfg.Operator.MCPServers))
 	for name, srv := range s.cfg.Operator.MCPServers {
@@ -265,22 +328,32 @@ func (s *Server) start(v store.HarnessVersion, input string) (string, error) {
 		Redactor: s.cfg.Resolved.Redactor,
 	})
 	if err != nil {
-		return "", err
+		return "", http.StatusUnprocessableEntity, err
 	}
 	run := a.Start()
 	// Register the run's hub before storing it, so a stored running run of
-	// this server always has an event stream.
+	// this server always has an event stream. Registering under the lock
+	// Close takes means no run starts once Close has begun waiting.
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return "", http.StatusServiceUnavailable, errors.Join(errClosed, a.Close())
+	}
 	s.runs[run.ID()] = hub
+	s.wg.Add(1)
 	s.mu.Unlock()
 	if err := s.cfg.Store.CreateRun(s.ctx, run.ID(), v.ID, input); err != nil {
 		s.mu.Lock()
 		delete(s.runs, run.ID())
 		s.mu.Unlock()
-		return "", errors.Join(err, a.Close())
+		s.wg.Done()
+		return "", http.StatusInternalServerError, errors.Join(err, a.Close())
 	}
-	s.wg.Go(func() { s.execute(a, run, hub, input) })
-	return run.ID(), nil
+	go func() {
+		defer s.wg.Done()
+		s.execute(a, run, hub, input)
+	}()
+	return run.ID(), 0, nil
 }
 
 // execute runs the agent, stops its MCP servers, records how the run ended,
@@ -384,7 +457,8 @@ func (s *Server) streamEvents(c *gin.Context) {
 		case <-c.Request.Context().Done():
 			return
 		case <-s.ctx.Done():
-			// The run ends too; wait for its last event.
+			// The run ends too, promptly; wait for its last event rather
+			// than the client.
 			<-changed
 		}
 	}
@@ -421,7 +495,7 @@ func (s *Server) replayEvents(c *gin.Context, id string) {
 func (s *Server) answerApproval(c *gin.Context) {
 	var answer api.Answer
 	if err := decode(c, &answer); err != nil {
-		s.fail(c, http.StatusBadRequest, err)
+		s.failDecode(c, err)
 		return
 	}
 	if answer.Approver == "" {

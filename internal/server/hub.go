@@ -74,6 +74,8 @@ func (h *hub) Approve(ctx context.Context, req toolgateway.Request, reasons []st
 	h.publish(event{api.EventApproval, api.ApprovalRequest{ID: id, Harness: req.Harness, Tool: req.Tool, Args: req.Args, Reasons: reasons}})
 	select {
 	case <-ctx.Done():
+		// An answer that arrives now is accepted but unused: the call is
+		// denied as cancelled.
 		return toolgateway.Approval{}, ctx.Err()
 	case a := <-answer:
 		return a, nil

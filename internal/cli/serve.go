@@ -91,6 +91,11 @@ func serve(ctx context.Context, args []string, env Env) int {
 	if err != nil {
 		return failServe(logger, err)
 	}
+	// A name such as localhost is resolved when listening; check what it
+	// resolved to.
+	if err := checkLoopback(ln.Addr().String()); err != nil {
+		return failServe(logger, errors.Join(err, ln.Close()))
+	}
 	httpServer := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	served := make(chan error, 1)
 	go func() { served <- httpServer.Serve(ln) }()

@@ -485,9 +485,7 @@ func TestInvariant_ServerRefusesNonLocalRequests(t *testing.T) {
 				req.Header.Set("Content-Type", tt.contentType)
 			}
 
-			resp, err := http.DefaultClient.Do(req)
-			require.NoError(t, err)
-			require.NoError(t, resp.Body.Close())
+			resp, _ := doChecked(t, req)
 
 			assert.Equal(t, tt.wantStatus, resp.StatusCode)
 			if tt.origin != origin {
@@ -511,9 +509,7 @@ func TestInvariant_ServerRefusesNonLocalRequests(t *testing.T) {
 		if ok.origin != "" {
 			req.Header.Set("Origin", ok.origin)
 		}
-		resp, err := http.DefaultClient.Do(req)
-		require.NoError(t, err)
-		require.NoError(t, resp.Body.Close())
+		resp, _ := doChecked(t, req)
 		assert.Equal(t, http.StatusOK, resp.StatusCode, "%+v", ok)
 		assert.Equal(t, ok.origin, resp.Header.Get("Access-Control-Allow-Origin"), "only the configured origin's pages may read the response")
 		assert.Contains(t, resp.Header.Values("Vary"), "Origin")
@@ -539,9 +535,7 @@ func TestCORS_Preflight(t *testing.T) {
 			req.Header.Set("Access-Control-Request-Method", http.MethodPost)
 			req.Header.Set("Access-Control-Request-Headers", "authorization, content-type")
 
-			resp, err := http.DefaultClient.Do(req)
-			require.NoError(t, err)
-			require.NoError(t, resp.Body.Close())
+			resp, _ := doChecked(t, req)
 
 			assert.Equal(t, tt.wantStatus, resp.StatusCode, "a preflight carries no token, and needs none")
 			assert.Equal(t, tt.wantAllow, resp.Header.Get("Access-Control-Allow-Origin"))
@@ -600,11 +594,9 @@ func TestInvariant_ServerRequiresSignIn(t *testing.T) {
 					req.Header.Set("Authorization", cred.header)
 				}
 
-				resp, err := http.DefaultClient.Do(req)
-				require.NoError(t, err)
-				defer func() { assert.NoError(t, resp.Body.Close()) }()
+				resp, got := doChecked(t, req)
 				var e api.Error
-				require.NoError(t, json.NewDecoder(resp.Body).Decode(&e))
+				require.NoError(t, json.Unmarshal(got, &e))
 
 				assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 				assert.True(t, strings.HasPrefix(resp.Header.Get("WWW-Authenticate"), "Bearer"))

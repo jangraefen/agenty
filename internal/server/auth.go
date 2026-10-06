@@ -60,13 +60,15 @@ func (s *Server) authenticate(c *gin.Context) {
 }
 
 // member refuses the request unless the signed-in user is a member of the
-// workspace it names, if it names one. Any other workspace is not found,
-// whether it exists or not, so no one learns the names of workspaces they
-// are not in. It runs in the generated routes, after their parameters are
-// read.
+// workspace it names, if its route is in a workspace. Any other workspace is
+// not found, whether it exists or not, so no one learns the names of
+// workspaces they are not in. It runs in the generated routes, after their
+// parameters are read; a route under /v1/workspaces/ that does not name its
+// workspace {workspace} is refused.
 func (s *Server) member(c *gin.Context) {
 	ws, ok := c.Params.Get("workspace")
-	if ok && !slices.Contains(s.cfg.Operator.Workspaces[ws].Members, c.GetString(userKey)) {
+	inWorkspace := strings.HasPrefix(c.FullPath(), "/v1/workspaces/")
+	if (ok || inWorkspace) && !slices.Contains(s.cfg.Operator.Workspaces[ws].Members, c.GetString(userKey)) {
 		s.fail(c, http.StatusNotFound, fmt.Errorf("workspace %s: not found", ws))
 	}
 }

@@ -22,7 +22,6 @@ type terminalApprover struct {
 	// interactive is false when stdin is not a terminal: piped input is not a
 	// person, so every call is rejected without reading it.
 	interactive bool
-	user        string
 
 	in    io.Reader
 	start sync.Once
@@ -35,8 +34,8 @@ type line struct {
 	err  error
 }
 
-func newTerminalApprover(in io.Reader, out io.Writer, interactive bool, user string) *terminalApprover {
-	return &terminalApprover{in: in, out: out, interactive: interactive, user: user, lines: make(chan line)}
+func newTerminalApprover(in io.Reader, out io.Writer, interactive bool) *terminalApprover {
+	return &terminalApprover{in: in, out: out, interactive: interactive, lines: make(chan line)}
 }
 
 // Approve shows the call of run runID and reads the answer: "y" or "yes"
@@ -57,21 +56,21 @@ func (a *terminalApprover) Approve(ctx context.Context, runID string, req api.Ap
 		return api.Answer{}, fmt.Errorf("approval prompt: %w", err)
 	}
 	if !a.interactive {
-		return api.Answer{Approver: a.user, Reason: "stdin is not a terminal, so no one can approve"}, nil
+		return api.Answer{Reason: "stdin is not a terminal, so no one can approve"}, nil
 	}
 
 	answer, err := a.readLine(ctx)
 	switch {
 	case errors.Is(err, io.EOF):
-		return api.Answer{Approver: a.user, Reason: "no answer at the terminal"}, nil
+		return api.Answer{Reason: "no answer at the terminal"}, nil
 	case err != nil:
 		return api.Answer{}, fmt.Errorf("approval answer: %w", err)
 	}
 	switch strings.ToLower(strings.TrimSpace(answer)) {
 	case "y", "yes":
-		return api.Answer{Approved: true, Approver: a.user, Reason: "approved at the terminal"}, nil
+		return api.Answer{Approved: true, Reason: "approved at the terminal"}, nil
 	default:
-		return api.Answer{Approver: a.user, Reason: "rejected at the terminal"}, nil
+		return api.Answer{Reason: "rejected at the terminal"}, nil
 	}
 }
 

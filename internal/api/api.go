@@ -1,19 +1,23 @@
 // Package api holds the JSON types of Agenty's HTTP API, shared by the
 // server and its clients.
 //
-// The API lives under /v1:
+// The API lives under /v1. Every request signs in with a user's bearer token,
+// "Authorization: Bearer TOKEN". Harnesses and runs live in workspaces, under
+// /v1/workspaces/{ws}; a workspace the user is not a member of is not found.
 //
-//	PUT  /v1/harnesses/{name}                   store a harness as its next version
-//	GET  /v1/harnesses                          latest version of every harness
-//	GET  /v1/harnesses/{name}                   latest version of one harness
-//	POST /v1/runs                               start a run
-//	GET  /v1/runs/{id}                          a run
-//	GET  /v1/runs/{id}/audit                    a run's audit records
-//	GET  /v1/runs/{id}/transcript               a run's conversation with the model
-//	GET  /v1/runs/{id}/events                   a run's events, as server-sent events
-//	POST /v1/runs/{id}/approvals/{approval}     answer an approval request
+//	GET  /v1/me                                     the signed-in user and their workspaces
+//	PUT  {ws}/harnesses/{name}                      store a harness as its next version
+//	GET  {ws}/harnesses                             latest version of every harness
+//	GET  {ws}/harnesses/{name}                      latest version of one harness
+//	POST {ws}/runs                                  start a run
+//	GET  {ws}/runs/{id}                             a run
+//	GET  {ws}/runs/{id}/audit                       a run's audit records
+//	GET  {ws}/runs/{id}/transcript                  a run's conversation with the model
+//	GET  {ws}/runs/{id}/events                      a run's events, as server-sent events
+//	POST {ws}/runs/{id}/approvals/{approval}        answer an approval request
 //
-// Errors are returned as an Error with a 4xx or 5xx status.
+// Errors are returned as an Error with a 4xx or 5xx status: 401 without a
+// valid token, 404 for anything not found, workspaces included.
 package api
 
 import (
@@ -30,6 +34,12 @@ type Error struct {
 	Error string `json:"error"`
 }
 
+// Me is the signed-in user, and the workspaces they are a member of, sorted.
+type Me struct {
+	User       string   `json:"user"`
+	Workspaces []string `json:"workspaces"`
+}
+
 // HarnessVersion is one stored version of a harness.
 type HarnessVersion struct {
 	ID        int64           `json:"id"`
@@ -38,7 +48,7 @@ type HarnessVersion struct {
 	CreatedAt time.Time       `json:"created_at"`
 }
 
-// CreateRun is the body of POST /v1/runs: the harness to run, by name, and
+// CreateRun is the body of POST {ws}/runs: the harness to run, by name, and
 // the input to run it on. The run uses the harness's latest version.
 type CreateRun struct {
 	Harness string `json:"harness"`
@@ -54,15 +64,17 @@ const (
 
 // Run is a run of a harness version.
 type Run struct {
-	ID               string     `json:"id"`
-	HarnessVersionID int64      `json:"harness_version_id"`
-	Input            string     `json:"input"`
-	Status           string     `json:"status"`
-	Output           string     `json:"output"`
-	Steps            int        `json:"steps"`
-	Error            string     `json:"error,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
-	FinishedAt       *time.Time `json:"finished_at,omitempty"`
+	ID               string `json:"id"`
+	HarnessVersionID int64  `json:"harness_version_id"`
+	// StartedBy names the user who started the run.
+	StartedBy  string     `json:"started_by"`
+	Input      string     `json:"input"`
+	Status     string     `json:"status"`
+	Output     string     `json:"output"`
+	Steps      int        `json:"steps"`
+	Error      string     `json:"error,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
 }
 
 // AuditRecord is a recorded audit record.
@@ -101,11 +113,9 @@ type ApprovalRequest struct {
 	Reasons []string        `json:"reasons"`
 }
 
-// Answer is the body of an answer to an approval request.
+// Answer is the body of an answer to an approval request. The signed-in user
+// is recorded in the audit log as the approver.
 type Answer struct {
-	Approved bool `json:"approved"`
-	// Approver names who answered. It is required and recorded in the audit
-	// log. Until the API has sign-in, it is whatever the client says.
-	Approver string `json:"approver"`
+	Approved bool   `json:"approved"`
 	Reason   string `json:"reason,omitempty"`
 }

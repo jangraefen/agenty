@@ -76,15 +76,16 @@ func TestServe_ServesTheAPIUntilStopped(t *testing.T) {
 		return m != nil
 	}, 10*time.Second, 20*time.Millisecond, "the server logs where it listens")
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v1/harnesses", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v1/me", nil)
 	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+aliceToken)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	var harnesses []api.HarnessVersion
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&harnesses))
+	var me api.Me
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&me))
 	require.NoError(t, resp.Body.Close())
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Empty(t, harnesses)
+	assert.Equal(t, api.Me{User: "alice", Workspaces: []string{"home"}}, me)
 
 	cancel()
 	select {
@@ -94,6 +95,7 @@ func TestServe_ServesTheAPIUntilStopped(t *testing.T) {
 		t.Fatal("serve did not stop")
 	}
 	assert.NotContains(t, stderr.String(), url, "the database URL holds a password and is redacted")
+	assert.Contains(t, stderr.String(), "user=alice", "requests log who made them")
 }
 
 func TestServe_Failures(t *testing.T) {
@@ -109,6 +111,11 @@ func TestServe_Failures(t *testing.T) {
 		{"host name", []string{"--addr", "example.com:80"}, nil, 1, "listens on a loopback address only"},
 		{"malformed address", []string{"--addr", "127.0.0.1"}, nil, 1, "--addr"},
 		{"no database", nil, nil, 1, "database.url is required to serve"},
+		{"no users", nil, func(f *fixture) {
+			cfg := strings.Replace(configYAML, "%s", f.api.URL, 1)
+			f.writeFile(t, "agenty.yaml", cfg[:strings.Index(cfg, "users:")]+cfg[strings.Index(cfg, "policy:"):]+databaseYAML)
+			f.vars["DATABASE_URL"] = "postgres://nobody:secret-password-1@127.0.0.1:1/none?connect_timeout=1"
+		}, 1, "no one could sign in"},
 		{"malformed config", nil, func(f *fixture) { f.writeFile(t, "agenty.yaml", "{") }, 1, "agenty.yaml"},
 		{"unset database variable", nil, func(f *fixture) {
 			f.writeFile(t, "agenty.yaml", strings.Replace(configYAML, "%s", f.api.URL, 1)+databaseYAML)

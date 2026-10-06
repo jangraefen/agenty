@@ -15,18 +15,39 @@ import (
 	"github.com/jangraefen/agenty/internal/api"
 )
 
-// client calls the API of an agenty server.
+// client calls the API of an agenty server as a user, in a workspace.
 type client struct {
-	base string
-	http *http.Client
+	base      string
+	token     string
+	workspace string
+	http      *http.Client
 }
 
-func newClient(server string) (*client, error) {
-	u, err := url.Parse(server)
+func newClient(flags clientFlags) (*client, error) {
+	u, err := url.Parse(flags.server)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return nil, fmt.Errorf("--server %q: must be an http or https URL", server)
+		return nil, fmt.Errorf("--server %q: must be an http or https URL", flags.server)
 	}
-	return &client{base: strings.TrimSuffix(server, "/"), http: http.DefaultClient}, nil
+	return &client{base: strings.TrimSuffix(flags.server, "/"), token: flags.token, workspace: flags.workspace, http: http.DefaultClient}, nil
+}
+
+// path returns the API path of a path in the client's workspace.
+func (c *client) path(elems ...string) string {
+	p := "/v1/workspaces/" + url.PathEscape(c.workspace)
+	for _, e := range elems {
+		p += "/" + url.PathEscape(e)
+	}
+	return p
+}
+
+// newRequest returns a request that signs in with the client's token.
+func (c *client) newRequest(ctx context.Context, method, path string, body io.Reader) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.base+path, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	return req, nil
 }
 
 // do sends in as JSON, if not nil, and decodes the response into out, if not
@@ -41,7 +62,7 @@ func (c *client) do(ctx context.Context, method, path string, in, out any) (err 
 		}
 		body = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.base+path, body)
+	req, err := c.newRequest(ctx, method, path, body)
 	if err != nil {
 		return fmt.Errorf("%s %s: %w", method, path, err)
 	}
@@ -76,8 +97,8 @@ func responseError(resp *http.Response) error {
 
 // events opens a run's event stream. Close it when done.
 func (c *client) events(ctx context.Context, runID string) (*eventStream, error) {
-	path := "/v1/runs/" + url.PathEscape(runID) + "/events"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+path, nil)
+	path := c.path("runs", runID, "events")
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("GET %s: %w", path, err)
 	}

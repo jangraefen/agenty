@@ -10,7 +10,7 @@ import (
 )
 
 const harnessVersionByID = `-- name: HarnessVersionByID :one
-SELECT id, name, version, definition, created_at FROM harness_versions
+SELECT id, name, version, definition, created_at, workspace FROM harness_versions
 WHERE id = $1
 `
 
@@ -23,24 +23,31 @@ func (q *Queries) HarnessVersionByID(ctx context.Context, id int64) (HarnessVers
 		&i.Version,
 		&i.Definition,
 		&i.CreatedAt,
+		&i.Workspace,
 	)
 	return i, err
 }
 
 const insertHarnessVersion = `-- name: InsertHarnessVersion :one
-INSERT INTO harness_versions (name, version, definition)
-VALUES ($1, $2, $3)
-RETURNING id, name, version, definition, created_at
+INSERT INTO harness_versions (workspace, name, version, definition)
+VALUES ($1, $2, $3, $4)
+RETURNING id, name, version, definition, created_at, workspace
 `
 
 type InsertHarnessVersionParams struct {
+	Workspace  string
 	Name       string
 	Version    int32
 	Definition []byte
 }
 
 func (q *Queries) InsertHarnessVersion(ctx context.Context, arg InsertHarnessVersionParams) (HarnessVersion, error) {
-	row := q.db.QueryRow(ctx, insertHarnessVersion, arg.Name, arg.Version, arg.Definition)
+	row := q.db.QueryRow(ctx, insertHarnessVersion,
+		arg.Workspace,
+		arg.Name,
+		arg.Version,
+		arg.Definition,
+	)
 	var i HarnessVersion
 	err := row.Scan(
 		&i.ID,
@@ -48,19 +55,25 @@ func (q *Queries) InsertHarnessVersion(ctx context.Context, arg InsertHarnessVer
 		&i.Version,
 		&i.Definition,
 		&i.CreatedAt,
+		&i.Workspace,
 	)
 	return i, err
 }
 
 const latestHarnessVersion = `-- name: LatestHarnessVersion :one
-SELECT id, name, version, definition, created_at FROM harness_versions
-WHERE name = $1
+SELECT id, name, version, definition, created_at, workspace FROM harness_versions
+WHERE workspace = $1 AND name = $2
 ORDER BY version DESC
 LIMIT 1
 `
 
-func (q *Queries) LatestHarnessVersion(ctx context.Context, name string) (HarnessVersion, error) {
-	row := q.db.QueryRow(ctx, latestHarnessVersion, name)
+type LatestHarnessVersionParams struct {
+	Workspace string
+	Name      string
+}
+
+func (q *Queries) LatestHarnessVersion(ctx context.Context, arg LatestHarnessVersionParams) (HarnessVersion, error) {
+	row := q.db.QueryRow(ctx, latestHarnessVersion, arg.Workspace, arg.Name)
 	var i HarnessVersion
 	err := row.Scan(
 		&i.ID,
@@ -68,17 +81,19 @@ func (q *Queries) LatestHarnessVersion(ctx context.Context, name string) (Harnes
 		&i.Version,
 		&i.Definition,
 		&i.CreatedAt,
+		&i.Workspace,
 	)
 	return i, err
 }
 
 const latestHarnessVersions = `-- name: LatestHarnessVersions :many
-SELECT DISTINCT ON (name) id, name, version, definition, created_at FROM harness_versions
+SELECT DISTINCT ON (name) id, name, version, definition, created_at, workspace FROM harness_versions
+WHERE workspace = $1
 ORDER BY name, version DESC
 `
 
-func (q *Queries) LatestHarnessVersions(ctx context.Context) ([]HarnessVersion, error) {
-	rows, err := q.db.Query(ctx, latestHarnessVersions)
+func (q *Queries) LatestHarnessVersions(ctx context.Context, workspace string) ([]HarnessVersion, error) {
+	rows, err := q.db.Query(ctx, latestHarnessVersions, workspace)
 	if err != nil {
 		return nil, err
 	}
@@ -92,6 +107,7 @@ func (q *Queries) LatestHarnessVersions(ctx context.Context) ([]HarnessVersion, 
 			&i.Version,
 			&i.Definition,
 			&i.CreatedAt,
+			&i.Workspace,
 		); err != nil {
 			return nil, err
 		}
@@ -107,7 +123,8 @@ const lockHarnessName = `-- name: LockHarnessName :exec
 SELECT pg_advisory_xact_lock(hashtext($1))
 `
 
-// Serializes versioning of one harness name until the transaction ends.
+// Serializes versioning of one harness until the transaction ends. The key
+// is the workspace and harness name, joined by a character neither has.
 func (q *Queries) LockHarnessName(ctx context.Context, hashtext string) error {
 	_, err := q.db.Exec(ctx, lockHarnessName, hashtext)
 	return err

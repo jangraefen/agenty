@@ -34,7 +34,7 @@ func parseServeFlags(args []string, stderr io.Writer) (serveFlags, int, bool) {
 		}
 	}
 	fs.StringVar(&f.config, "config", "agenty.yaml", "operator config `file`: model provider, database, MCP servers, central policy")
-	fs.StringVar(&f.addr, "addr", "127.0.0.1:8080", "`address` to listen on; a loopback address, as the API has no sign-in yet")
+	fs.StringVar(&f.addr, "addr", "127.0.0.1:8080", "`address` to listen on; a loopback address, as the API has no TLS yet")
 	fs.TextVar(&f.logLevel, "log-level", slog.LevelInfo, "log `level`: debug, info, warn or error")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -73,6 +73,9 @@ func serve(ctx context.Context, args []string, env Env) int {
 	logger = newLogger(env.Stderr, flags.logLevel, resolved.Redactor)
 	if resolved.DatabaseURL == "" {
 		return fail(logger, "serve failed", errors.New("config: database.url is required to serve"))
+	}
+	if len(cfg.Users) == 0 {
+		return fail(logger, "serve failed", errors.New("config: users: none are configured, so no one could sign in"))
 	}
 
 	st, err := store.Open(ctx, resolved.DatabaseURL)
@@ -119,14 +122,15 @@ func serve(ctx context.Context, args []string, env Env) int {
 }
 
 // checkLoopback refuses any address but a loopback one: until the API has
-// sign-in, only the local machine may reach it.
+// TLS, only the local machine may reach it, so tokens never cross a network
+// unencrypted.
 func checkLoopback(addr string) error {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return fmt.Errorf("--addr: %w", err)
 	}
 	if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) {
-		return fmt.Errorf("--addr %s: the API has no sign-in yet, so it listens on a loopback address only, such as 127.0.0.1", addr)
+		return fmt.Errorf("--addr %s: the API has no TLS yet, so it listens on a loopback address only, such as 127.0.0.1", addr)
 	}
 	return nil
 }

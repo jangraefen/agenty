@@ -13,5 +13,14 @@ mcp_servers:
   files:
     command: npx
     args: [-y, "@modelcontextprotocol/server-filesystem@2026.8.31", ./sandbox]
+# Who may use the API. Each user signs in with a bearer token of at least 32
+# characters, read from the environment, such as one from: openssl rand -hex 32
+users:
+  demo:
+    token: {env: AGENTY_TOKEN}
+# Harnesses and runs live in workspaces; only members see one.
+workspaces:
+  notes:
+    members: [demo]
 policy:
   files: [policies/central.rego]

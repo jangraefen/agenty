@@ -8,7 +8,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 
 	"github.com/jangraefen/agenty/internal/api"
 	"github.com/jangraefen/agenty/internal/must"
@@ -19,27 +18,30 @@ import (
 const runUsage = `usage: agenty run [flags] HARNESS INPUT
 
 Runs the latest version of HARNESS on INPUT on the server, asks at the
-terminal when a call needs approval, and prints the answer.
+terminal when a call needs approval, and prints the answer. Approvals are
+recorded as given by the signed-in user.
 `
 
 func run(ctx context.Context, args []string, env Env) int {
-	flags, rest, code, ok := parseClientFlags("run", runUsage, 2, args, env.Stderr)
+	flags, rest, code, ok := parseClientFlags("run", runUsage, 2, args, env)
 	if !ok {
 		return code
 	}
-	// The client knows no secret; the server redacts what it sends.
-	logger := newLogger(env.Stderr, flags.logLevel, must.Value(secret.NewRedactor(nil)))
-	c, err := newClient(flags.server)
+	logger, err := clientLogger(env, flags)
+	if err != nil {
+		return fail(logger, "run failed", err)
+	}
+	c, err := newClient(flags)
 	if err != nil {
 		return fail(logger, "run failed", err)
 	}
 	var started api.Run
-	if err := c.do(ctx, http.MethodPost, "/v1/runs", api.CreateRun{Harness: rest[0], Input: rest[1]}, &started); err != nil {
+	if err := c.do(ctx, http.MethodPost, c.path("runs"), api.CreateRun{Harness: rest[0], Input: rest[1]}, &started); err != nil {
 		return fail(logger, "run failed", err)
 	}
 	logger.Info("run started", "harness", rest[0], "run_id", started.ID)
 
-	finished, err := follow(ctx, logger, c, started.ID, newTerminalApprover(env.Stdin, env.Stderr, env.Interactive, env.User))
+	finished, err := follow(ctx, logger, c, started.ID, newTerminalApprover(env.Stdin, env.Stderr, env.Interactive))
 	if err != nil {
 		return fail(logger, "run failed", fmt.Errorf("run %s: %w", started.ID, err))
 	}
@@ -94,8 +96,7 @@ func follow(ctx context.Context, logger *slog.Logger, c *client, runID string, a
 			if err != nil {
 				return api.Run{}, err
 			}
-			path := "/v1/runs/" + url.PathEscape(runID) + "/approvals/" + url.PathEscape(req.ID)
-			if err := c.do(ctx, http.MethodPost, path, answer, nil); err != nil {
+			if err := c.do(ctx, http.MethodPost, c.path("runs", runID, "approvals", req.ID), answer, nil); err != nil {
 				return api.Run{}, err
 			}
 		case api.EventFinished:
@@ -105,6 +106,16 @@ func follow(ctx context.Context, logger *slog.Logger, c *client, runID string, a
 			return finished, nil
 		}
 	}
+}
+
+// clientLogger returns the logger of a client command. The client's only
+// secret is its token; the server redacts what it sends.
+func clientLogger(env Env, flags clientFlags) (*slog.Logger, error) {
+	redactor, err := secret.NewRedactor([]string{flags.token})
+	if err != nil {
+		return newLogger(env.Stderr, flags.logLevel, must.Value(secret.NewRedactor(nil))), fmt.Errorf("%s: %w", tokenVar, err)
+	}
+	return newLogger(env.Stderr, flags.logLevel, redactor), nil
 }
 
 func fail(logger *slog.Logger, msg string, err error) int {

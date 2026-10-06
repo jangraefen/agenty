@@ -85,11 +85,14 @@ The API server below has since replaced this standalone command; the operator co
 
 The PoC held. The next step splits the command line: a server holds the state and runs agents, and the CLI talks to it over HTTP. The trust model carries over unchanged, and so do the gateway, policy and redaction code.
 
-- **Server**: `agenty serve` exposes a JSON API and runs agents in its own process. Until sign-in exists, it has no authentication: it binds to a loopback address only, and refuses requests for a non-local host or from a web page's origin, so neither another machine nor a page in the user's browser can use it.
-- **State**: PostgreSQL holds harnesses, runs, the audit log, which replaces the JSON-lines file, and each run's transcript: its conversation with the model, recorded message by message as the run goes, with secrets redacted. Each model reply is also kept in the provider's own form, such as Anthropic's thinking blocks, so a stored conversation can be sent to the model again exactly. Every changed harness is stored as a new, immutable version, and every run records the version it ran.
+- **Server**: `agenty serve` exposes a JSON API and runs agents in its own process. Until it has TLS, it binds to a loopback address only, so tokens never cross a network unencrypted, and it refuses requests for a non-local host, so a DNS-rebound page cannot use it as its own.
+- **Sign-in**: a stopgap until OIDC. The operator config lists the users, each with a bearer token of at least 32 characters read from the environment, and redacted like every other secret. Every request must carry a user's token, which the server compares in constant time. There is one role: a user may do everything in the workspaces they are a member of.
+- **Workspaces**: harnesses and runs belong to a workspace, and a harness name is unique within one. The operator config lists the workspaces and their members; the API lives under `/v1/workspaces/{ws}`, and a workspace the user is not a member of is not found, as is a run asked for in another workspace than its own. `GET /v1/me` names the user and their workspaces. Harnesses stored before workspaces existed moved to a workspace named `default`.
+- **Browsers**: only pages of the origins the operator config lists under `cors` may call the API; requests from any other page are refused.
+- **State**: PostgreSQL holds harnesses, runs, the audit log, which replaces the JSON-lines file, and each run's transcript: its conversation with the model, recorded message by message as the run goes, with secrets redacted. Each model reply is also kept in the provider's own form, such as Anthropic's thinking blocks, so a stored conversation can be sent to the model again as it was, except where a secret was redacted from it. Every changed harness is stored as a new, immutable version, and every run records the version it ran.
 - **Harnesses**: managed through the API. The CLI uploads a harness file with its policy files resolved.
-- **Approvals**: the server streams each run's events over server-sent events. A call that needs approval waits in the server until a client posts the answer; one that nobody answers waits until the server stops, as there is no timeout yet. A run does not survive a server restart.
-- **CLI**: a client of the API instead of running agents itself.
+- **Approvals**: the server streams each run's events over server-sent events. A call that needs approval waits in the server until a member of the run's workspace posts the answer, and the audit log records that signed-in user as the approver. One that nobody answers waits until the server stops, as there is no timeout yet. A run does not survive a server restart. Each run records the user who started it.
+- **CLI**: a client of the API instead of running agents itself. It signs in with the token in `AGENTY_TOKEN`, never a flag, and works in the workspace given by `--workspace` or `AGENTY_WORKSPACE`.
 
 To try it (needs [Task](https://taskfile.dev), Docker for the database, Node.js for the example's filesystem MCP server, and `ANTHROPIC_API_KEY` in the environment or a `.env` file at the module root):
 
@@ -100,15 +103,15 @@ task demo    # in a second terminal: applies the notes harness and runs it
 
 `task --list` shows the other tasks: `test`, `lint`, `check` (what CI checks), and the database's `db`, `db:stop` and `db:reset`. MCP servers inherit only `PATH`; behind an HTTP proxy, set its variables in the server's `env` in `agenty.yaml`.
 
-The example's central policy asks before every file change and denies dotfiles; its harness allows one rewrite per run. `agenty run` asks at the terminal, and the audit log of a run is at `GET /v1/runs/{id}/audit`.
+The example's central policy asks before every file change and denies dotfiles; its harness allows one rewrite per run. The example's user `demo` works in the workspace `notes`, signing in with `AGENTY_TOKEN`, which the Taskfile sets to a fixed local token unless the environment or `.env` sets another. `agenty run` asks at the terminal, and the audit log of a run is at `GET /v1/workspaces/notes/runs/{id}/audit`.
 
 ## Later: the web portal
 
 Decided for the stage after the API server:
 
 - **Frontend**: the separate web frontend above, using only the JSON API. Harnesses are authored in a form, with a read-only YAML view.
-- **Tenancy**: workspaces within one organisation.
-- **Sign-in**: a hard-coded list of users, kept as simple as possible, as a stopgap: OIDC replaces it before release and is then the only way to sign in.
+- **Tenancy**: workspaces within one organisation, as the API server has them.
+- **Sign-in**: the API server's configured users and tokens are the stopgap: OIDC replaces them before release and is then the only way to sign in.
 - **Central policy**: stays Rego files from the operator config; the portal shows it read-only.
 - **Runs**: executed in-process by the backend, taken from a job queue in PostgreSQL.
 - **Approvals**: durable. A call that needs approval pauses the run; approving resumes it, and pending runs survive restarts.

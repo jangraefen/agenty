@@ -14,3 +14,15 @@ mcp_servers:
       LOG_LEVEL: {value: info}
 policy:
   files: [policies/central.rego]
+users:
+  alice:
+    token: {env: ALICE_TOKEN}
+  bob:
+    token: {env: BOB_TOKEN}
+workspaces:
+  notes:
+    members: [alice, bob]
+  ops:
+    members: [bob]
+cors:
+  origins: ["http://localhost:5173"]

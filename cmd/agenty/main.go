@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"os/user"
 
 	"github.com/jangraefen/agenty/internal/cli"
 	"github.com/jangraefen/agenty/internal/dotenv"
@@ -27,16 +26,11 @@ func run() int {
 	if err := dotenv.Load("."); err != nil {
 		return failed(err)
 	}
-	u, err := user.Current()
-	if err != nil {
-		return failed(err)
-	}
 	return cli.Main(ctx, os.Args[1:], cli.Env{
 		Stdin:       os.Stdin,
 		Stdout:      os.Stdout,
 		Stderr:      os.Stderr,
 		Interactive: isTerminal(os.Stdin),
-		User:        u.Username,
 		LookupEnv:   os.LookupEnv,
 		Server:      func(_ string, srv mcptool.Server) toolgateway.ToolServer { return srv },
 	})

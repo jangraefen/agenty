@@ -53,6 +53,8 @@ func TestAppendMessage_Rejects(t *testing.T) {
 	require.Error(t, s.AppendMessage(ctx, "r1", 0, model.Message{Role: model.RoleUser, Text: "again"}), "a position is written once")
 	require.Error(t, s.AppendMessage(ctx, "ghost", 0, model.Message{Role: model.RoleUser, Text: "x"}), "messages belong to a stored run")
 	require.Error(t, s.AppendMessage(ctx, "r1", 1, model.Message{Role: "system", Text: "x"}), "roles are user or assistant")
+	require.ErrorContains(t, s.AppendMessage(ctx, "r1", 1, model.Message{Role: model.RoleAssistant, Provider: &model.ProviderPart{Data: json.RawMessage(`{}`)}}), "provider part without a name",
+		"a provider part names its provider, or it could not be read back")
 }
 
 // TestAppendMessage_NeverFailsOnContent: what a model or tool wrote must not

@@ -32,6 +32,15 @@ func TestLoad_Valid(t *testing.T) {
 			},
 		},
 	}, got.MCPServers)
+	assert.Equal(t, map[string]config.User{
+		"alice": {Token: config.Value{Env: "ALICE_TOKEN"}},
+		"bob":   {Token: config.Value{Env: "BOB_TOKEN"}},
+	}, got.Users)
+	assert.Equal(t, map[string]config.Workspace{
+		"notes": {Members: []string{"alice", "bob"}},
+		"ops":   {Members: []string{"bob"}},
+	}, got.Workspaces)
+	assert.Equal(t, config.CORS{Origins: []string{"http://localhost:5173"}}, got.CORS)
 	require.Len(t, got.Policy, 1)
 	assert.Equal(t, "policies/central.rego", got.Policy[0].Name)
 	assert.Contains(t, got.Policy[0].Source, "writes need a human", "policy files are read relative to the config file")
@@ -41,6 +50,8 @@ func TestLoad_Valid(t *testing.T) {
 	assert.Nil(t, minimal.Database, "only the server needs a database")
 	assert.Empty(t, minimal.MCPServers)
 	assert.Empty(t, minimal.Policy)
+	assert.Empty(t, minimal.Users)
+	assert.Empty(t, minimal.Workspaces)
 }
 
 // fieldsOf returns the fields named by every config.FieldError in err.
@@ -67,6 +78,7 @@ func fieldsOf(err error) []string {
 }
 
 func TestLoad_InvalidFields(t *testing.T) {
+	const provider = "provider: {anthropic: {api_key: {env: K}, max_tokens: 1}}\n"
 	tests := []struct {
 		name       string
 		yaml       string
@@ -81,6 +93,16 @@ func TestLoad_InvalidFields(t *testing.T) {
 		{"database url with neither", "provider: {anthropic: {api_key: {env: K}, max_tokens: 1}}\ndatabase: {url: {}}", []string{"database.url"}},
 		{"empty policy file name", "provider: {anthropic: {api_key: {env: K}, max_tokens: 1}}\npolicy: {files: [\"\"]}", []string{"policy.files[0]"}},
 		{"missing policy file", "provider: {anthropic: {api_key: {env: K}, max_tokens: 1}}\npolicy: {files: [nope.rego]}", []string{"policy.files[0]"}},
+		{"user token written into the file", provider + "users: {alice: {token: {value: alice-token-0123456789012345678901}}}", []string{"users.alice.token"}},
+		{"user without a token", provider + "users: {alice: {}}", []string{"users.alice.token"}},
+		{"user name that is not a slug", provider + "users: {Alice: {token: {env: T}}}", []string{"users.Alice"}},
+		{"workspace name that is not a slug", provider + "workspaces: {My Notes: {members: []}}", []string{"workspaces.My Notes"}},
+		{"member who is not a user", provider + "users: {alice: {token: {env: T}}}\nworkspaces: {notes: {members: [alice, mallory]}}", []string{"workspaces.notes.members[1]"}},
+		{"member listed twice", provider + "users: {alice: {token: {env: T}}}\nworkspaces: {notes: {members: [alice, alice]}}", []string{"workspaces.notes.members[1]"}},
+		{"origin with a path", provider + "cors: {origins: [\"http://localhost:5173/\"]}", []string{"cors.origins[0]"}},
+		{"origin without a scheme", provider + "cors: {origins: [localhost:5173]}", []string{"cors.origins[0]"}},
+		{"wildcard origin", provider + "cors: {origins: [\"*\"]}", []string{"cors.origins[0]"}},
+		{"origin with another scheme", provider + "cors: {origins: [\"ftp://localhost\"]}", []string{"cors.origins[0]"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -128,7 +150,7 @@ func TestLoad_InvalidDocuments(t *testing.T) {
 func TestResolve_ReadsTheEnvironmentAndRedactsItsSecrets(t *testing.T) {
 	cfg, err := config.Load(filepath.Join("testdata", "full.yaml"))
 	require.NoError(t, err)
-	env := map[string]string{"ANTHROPIC_API_KEY": "sk-ant-key-0123456789", "TICKETS_TOKEN": "tickets-token-0123", "DATABASE_URL": "postgres://agenty:db-password-0123@localhost/agenty"}
+	env := fullEnv()
 
 	got, err := cfg.Resolve(func(k string) (string, bool) { v, ok := env[k]; return v, ok })
 
@@ -136,29 +158,55 @@ func TestResolve_ReadsTheEnvironmentAndRedactsItsSecrets(t *testing.T) {
 	assert.Equal(t, "sk-ant-key-0123456789", got.AnthropicAPIKey)
 	assert.Equal(t, "postgres://agenty:db-password-0123@localhost/agenty", got.DatabaseURL)
 	assert.Equal(t, map[string]map[string]string{"tickets": {"TICKETS_TOKEN": "tickets-token-0123", "LOG_LEVEL": "info"}}, got.MCPServerEnv)
+	assert.Equal(t, map[string]string{"alice": env["ALICE_TOKEN"], "bob": env["BOB_TOKEN"]}, got.UserTokens)
+	assert.Equal(t, "[redacted]", got.Redactor.String(env["ALICE_TOKEN"]), "user tokens are secrets")
 	assert.Equal(t, "[redacted] [redacted] [redacted] info", got.Redactor.String("sk-ant-key-0123456789 tickets-token-0123 postgres://agenty:db-password-0123@localhost/agenty info"),
 		"everything read from the environment is a secret; plain values are not")
+}
+
+// fullEnv is an environment that sets every variable full.yaml reads.
+func fullEnv() map[string]string {
+	return map[string]string{
+		"ANTHROPIC_API_KEY": "sk-ant-key-0123456789",
+		"TICKETS_TOKEN":     "tickets-token-0123",
+		"DATABASE_URL":      "postgres://agenty:db-password-0123@localhost/agenty",
+		"ALICE_TOKEN":       "alice-token-0123456789abcdefghijklmn",
+		"BOB_TOKEN":         "bob-token-0123456789abcdefghijklmnop",
+	}
 }
 
 func TestResolve_Errors(t *testing.T) {
 	cfg, err := config.Load(filepath.Join("testdata", "full.yaml"))
 	require.NoError(t, err)
 	tests := []struct {
-		name      string
-		env       map[string]string
-		wantField string
-		wantErr   string
+		name       string
+		set        map[string]string
+		unset      string
+		wantFields []string
+		wantErr    string
 	}{
-		{"missing variable", map[string]string{"TICKETS_TOKEN": "tickets-token-0123", "DATABASE_URL": "postgres://agenty:db-password-0123@localhost/agenty"}, "provider.anthropic.api_key", "ANTHROPIC_API_KEY is not set"},
-		{"empty variable", map[string]string{"ANTHROPIC_API_KEY": "", "TICKETS_TOKEN": "tickets-token-0123", "DATABASE_URL": "postgres://agenty:db-password-0123@localhost/agenty"}, "provider.anthropic.api_key", "ANTHROPIC_API_KEY is not set"},
-		{"secret too short to redact", map[string]string{"ANTHROPIC_API_KEY": "sk-ant-key-0123456789", "TICKETS_TOKEN": "short", "DATABASE_URL": "postgres://agenty:db-password-0123@localhost/agenty"}, "mcp_servers.tickets.env.TICKETS_TOKEN", "shorter than 8 characters"},
+		{"missing variable", nil, "ANTHROPIC_API_KEY", []string{"provider.anthropic.api_key"}, "ANTHROPIC_API_KEY is not set"},
+		{"empty variable", map[string]string{"ANTHROPIC_API_KEY": ""}, "", []string{"provider.anthropic.api_key"}, "ANTHROPIC_API_KEY is not set"},
+		{"secret too short to redact", map[string]string{"TICKETS_TOKEN": "short"}, "", []string{"mcp_servers.tickets.env.TICKETS_TOKEN"}, "shorter than 8 characters"},
+		{"missing token", nil, "BOB_TOKEN", []string{"users.bob.token"}, "BOB_TOKEN is not set"},
+		{"token too short to be unguessable", map[string]string{"ALICE_TOKEN": "alice-token-0123"}, "", []string{"users.alice.token"}, "shorter than 32 characters"},
+		{"two users with one token", map[string]string{"BOB_TOKEN": "alice-token-0123456789abcdefghijklmn"}, "", []string{"users.bob.token"}, "the same token as user alice"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := cfg.Resolve(func(k string) (string, bool) { v, ok := tt.env[k]; return v, ok })
+			env := fullEnv()
+			delete(env, tt.unset)
+			for k, v := range tt.set {
+				env[k] = v
+			}
+
+			_, err := cfg.Resolve(func(k string) (string, bool) { v, ok := env[k]; return v, ok })
 
 			require.ErrorContains(t, err, tt.wantErr)
-			assert.Equal(t, []string{tt.wantField}, fieldsOf(err))
+			assert.Equal(t, tt.wantFields, fieldsOf(err))
+			for _, v := range fullEnv() {
+				assert.NotContains(t, err.Error(), v, "an error never repeats a secret")
+			}
 		})
 	}
 }

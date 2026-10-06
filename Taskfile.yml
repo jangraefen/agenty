@@ -11,6 +11,10 @@ vars:
   DATABASE_URL: "{{.DATABASE_URL | default .LOCAL_DATABASE_URL}}"
   GOLANGCI_LINT_VERSION: v2.14.0
   SERVER: http://127.0.0.1:8080
+  # The notes example's demo user signs in with this token, on the server and
+  # in the client. The default is for local use only: the server listens on
+  # localhost. Set AGENTY_TOKEN to use another one.
+  AGENTY_TOKEN: '{{.AGENTY_TOKEN | default "agenty-local-demo-token-not-a-secret"}}'
 
 tasks:
   db:
@@ -76,6 +80,7 @@ tasks:
     dir: examples/notes
     env:
       DATABASE_URL: "{{.DATABASE_URL}}"
+      AGENTY_TOKEN: "{{.AGENTY_TOKEN}}"
     cmds:
       - ../../agenty serve
 
@@ -83,6 +88,9 @@ tasks:
     desc: Apply the notes harness and run it on the running server; pass the input after --
     deps: [build]
     dir: examples/notes
+    env:
+      AGENTY_TOKEN: "{{.AGENTY_TOKEN}}"
+      AGENTY_WORKSPACE: notes
     cmds:
       - ../../agenty apply --server {{.SERVER}} notes.yaml
       - ../../agenty run --server {{.SERVER}} notes {{.CLI_ARGS | default "tidy my notes" | shellQuote}}

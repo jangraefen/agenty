@@ -1,6 +1,9 @@
 // Package server is Agenty's HTTP API: it stores harnesses, runs them, and
 // streams each run's events, approval requests included, to its clients.
 // Runs execute in the server's own process; see package api for the routes.
+//
+// Every request signs in with a configured user's bearer token, and sees
+// only the workspaces that user is a member of.
 package server
 
 import (
@@ -9,10 +12,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"mime"
 	"net"
 	"net/http"
-	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -35,8 +39,9 @@ import (
 type Config struct {
 	Store    *store.Store
 	Operator *config.Config
-	// Resolved holds the operator config's values and the redactor every
-	// response, event, stored run and log line passes through.
+	// Resolved holds the operator config's values, the users' tokens among
+	// them, and the redactor every response, event, stored run and log line
+	// passes through.
 	Resolved *config.Resolved
 	Logger   *slog.Logger
 	// NewModel returns the model a harness runs on. Nil means the
@@ -56,6 +61,9 @@ type Server struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+
+	// tokens maps each user's token, as a SHA-256 hash, to the user.
+	tokens []userToken
 
 	mu sync.Mutex
 	// closed is set by Close; no run starts after it.
@@ -102,7 +110,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	}
 
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	s := &Server{cfg: cfg, ctx: runCtx, cancel: cancel, runs: map[string]*hub{}}
+	s := &Server{cfg: cfg, ctx: runCtx, cancel: cancel, runs: map[string]*hub{}, tokens: hashTokens(cfg.Resolved.UserTokens)}
 	s.engine = s.routes()
 	return s, nil
 }
@@ -125,36 +133,59 @@ func (s *Server) Close() {
 func (s *Server) routes() *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(gin.Recovery(), s.logRequests, s.localOnly)
-	v1 := r.Group("/v1")
-	v1.PUT("/harnesses/:name", s.putHarness)
-	v1.GET("/harnesses", s.listHarnesses)
-	v1.GET("/harnesses/:name", s.getHarness)
-	v1.POST("/runs", s.createRun)
-	v1.GET("/runs/:id", s.getRun)
-	v1.GET("/runs/:id/audit", s.getAudit)
-	v1.GET("/runs/:id/transcript", s.getTranscript)
-	v1.GET("/runs/:id/events", s.streamEvents)
-	v1.POST("/runs/:id/approvals/:approval", s.answerApproval)
+	// Global middleware also runs for unknown routes, so preflight requests,
+	// which no route serves, are answered too.
+	r.Use(gin.Recovery(), s.logRequests, s.localOnly, s.cors)
+	v1 := r.Group("/v1", s.authenticate)
+	v1.GET("/me", s.me)
+	ws := v1.Group("/workspaces/:workspace", s.member)
+	ws.PUT("/harnesses/:name", s.putHarness)
+	ws.GET("/harnesses", s.listHarnesses)
+	ws.GET("/harnesses/:name", s.getHarness)
+	ws.POST("/runs", s.createRun)
+	ws.GET("/runs/:id", s.getRun)
+	ws.GET("/runs/:id/audit", s.getAudit)
+	ws.GET("/runs/:id/transcript", s.getTranscript)
+	ws.GET("/runs/:id/events", s.streamEvents)
+	ws.POST("/runs/:id/approvals/:approval", s.answerApproval)
 	return r
 }
 
-// localOnly refuses requests that are not for a local host, or that a web
-// page of any origin sent. Until the API has sign-in, these checks and the
-// loopback address are its only access control: without them, a DNS-rebound
-// page could use the API as its own, and any page could post to it
-// cross-site. Clients such as the CLI send no Origin.
+// localOnly refuses requests that are not for a local host. Until the API
+// has TLS, it listens on a loopback address only, so that tokens never cross
+// a network unencrypted; a request for any other host is a DNS-rebound page
+// using the API as its own.
 func (s *Server) localOnly(c *gin.Context) {
 	if !isLocalHost(c.Request.Host) {
 		s.fail(c, http.StatusForbidden, fmt.Errorf("host %q is not local", c.Request.Host))
 		return
 	}
-	if origin := c.GetHeader("Origin"); origin != "" {
-		u, err := url.Parse(origin)
-		if err != nil || u.Host != c.Request.Host {
-			s.fail(c, http.StatusForbidden, fmt.Errorf("requests from origin %q are not accepted", origin))
-			return
-		}
+	c.Next()
+}
+
+// cors lets pages of the configured origins call the API and refuses
+// requests from pages of any other origin. Clients such as the CLI send no
+// Origin. A preflight request is answered here, before sign-in: browsers send
+// it without credentials.
+func (s *Server) cors(c *gin.Context) {
+	h := c.Writer.Header()
+	h.Add("Vary", "Origin")
+	origin := c.GetHeader("Origin")
+	if origin == "" {
+		c.Next()
+		return
+	}
+	if !slices.Contains(s.cfg.Operator.CORS.Origins, origin) {
+		s.fail(c, http.StatusForbidden, fmt.Errorf("requests from origin %q are not accepted", origin))
+		return
+	}
+	h.Set("Access-Control-Allow-Origin", origin)
+	if c.Request.Method == http.MethodOptions && c.GetHeader("Access-Control-Request-Method") != "" {
+		h.Set("Access-Control-Allow-Methods", "GET, POST, PUT")
+		h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		h.Set("Access-Control-Max-Age", "600")
+		c.AbortWithStatus(http.StatusNoContent)
+		return
 	}
 	c.Next()
 }
@@ -175,7 +206,7 @@ func isLocalHost(host string) bool {
 func (s *Server) logRequests(c *gin.Context) {
 	start := time.Now()
 	c.Next()
-	s.cfg.Logger.Info("request", "method", c.Request.Method, "path", c.Request.URL.Path, "status", c.Writer.Status(), "duration", time.Since(start))
+	s.cfg.Logger.Info("request", "method", c.Request.Method, "path", c.Request.URL.Path, "user", c.GetString(userKey), "status", c.Writer.Status(), "duration", time.Since(start))
 }
 
 // fail responds with an error, redacted. Errors the client did not cause are
@@ -223,6 +254,17 @@ func decode(c *gin.Context, v any) error {
 	return nil
 }
 
+func (s *Server) me(c *gin.Context) {
+	user := c.GetString(userKey)
+	workspaces := []string{}
+	for _, name := range slices.Sorted(maps.Keys(s.cfg.Operator.Workspaces)) {
+		if slices.Contains(s.cfg.Operator.Workspaces[name].Members, user) {
+			workspaces = append(workspaces, name)
+		}
+	}
+	c.JSON(http.StatusOK, api.Me{User: user, Workspaces: workspaces})
+}
+
 func (s *Server) putHarness(c *gin.Context) {
 	var h harness.Harness
 	if err := decode(c, &h); err != nil {
@@ -242,7 +284,7 @@ func (s *Server) putHarness(c *gin.Context) {
 		s.fail(c, http.StatusBadRequest, fmt.Errorf("invalid harness: %w", err))
 		return
 	}
-	v, err := s.cfg.Store.PutHarness(c.Request.Context(), h)
+	v, err := s.cfg.Store.PutHarness(c.Request.Context(), c.Param("workspace"), h)
 	if err != nil {
 		s.failStore(c, err)
 		return
@@ -251,7 +293,7 @@ func (s *Server) putHarness(c *gin.Context) {
 }
 
 func (s *Server) listHarnesses(c *gin.Context) {
-	versions, err := s.cfg.Store.Harnesses(c.Request.Context())
+	versions, err := s.cfg.Store.Harnesses(c.Request.Context(), c.Param("workspace"))
 	if err != nil {
 		s.failStore(c, err)
 		return
@@ -264,7 +306,7 @@ func (s *Server) listHarnesses(c *gin.Context) {
 }
 
 func (s *Server) getHarness(c *gin.Context) {
-	v, err := s.cfg.Store.Harness(c.Request.Context(), c.Param("name"))
+	v, err := s.cfg.Store.Harness(c.Request.Context(), c.Param("workspace"), c.Param("name"))
 	if err != nil {
 		s.failStore(c, err)
 		return
@@ -286,17 +328,18 @@ func (s *Server) createRun(c *gin.Context) {
 		s.fail(c, http.StatusBadRequest, errors.New("input is required"))
 		return
 	}
-	v, err := s.cfg.Store.Harness(c.Request.Context(), req.Harness)
+	ws := c.Param("workspace")
+	v, err := s.cfg.Store.Harness(c.Request.Context(), ws, req.Harness)
 	if err != nil {
 		s.failStore(c, err)
 		return
 	}
-	id, status, err := s.start(v, req.Input)
+	id, status, err := s.start(v, req.Input, c.GetString(userKey))
 	if err != nil {
 		s.fail(c, status, fmt.Errorf("cannot start run: %w", err))
 		return
 	}
-	run, err := s.cfg.Store.Run(c.Request.Context(), id)
+	run, err := s.cfg.Store.Run(c.Request.Context(), ws, id)
 	if err != nil {
 		s.failStore(c, err)
 		return
@@ -305,10 +348,11 @@ func (s *Server) createRun(c *gin.Context) {
 }
 
 // start builds an agent for the harness version, which starts the MCP servers
-// it needs, stores the run, and executes it in the background. On error it
+// it needs, stores the run as started by user, and executes it in the
+// background. On error it
 // also returns the status to respond with: 422 for a harness that cannot run,
 // 503 when the server is stopping, 500 otherwise.
-func (s *Server) start(v store.HarnessVersion, input string) (string, int, error) {
+func (s *Server) start(v store.HarnessVersion, input, user string) (string, int, error) {
 	h := v.Harness
 	m, err := s.cfg.NewModel(h.Model)
 	if err != nil {
@@ -318,7 +362,7 @@ func (s *Server) start(v store.HarnessVersion, input string) (string, int, error
 	for name, srv := range s.cfg.Operator.MCPServers {
 		servers[name] = s.cfg.Server(name, mcptool.Server{Command: srv.Command, Args: srv.Args, Env: s.cfg.Resolved.MCPServerEnv[name]})
 	}
-	hub := newHub(h.Name)
+	hub := newHub(v.Workspace, h.Name)
 	a, err := agent.New(s.ctx, agent.Config{
 		Harness:    &h,
 		Model:      m,
@@ -344,7 +388,7 @@ func (s *Server) start(v store.HarnessVersion, input string) (string, int, error
 	s.runs[run.ID()] = hub
 	s.wg.Add(1)
 	s.mu.Unlock()
-	if err := s.cfg.Store.CreateRun(s.ctx, run.ID(), v.ID, input); err != nil {
+	if err := s.cfg.Store.CreateRun(s.ctx, store.NewRun{ID: run.ID(), HarnessVersionID: v.ID, Input: input, StartedBy: user}); err != nil {
 		s.mu.Lock()
 		delete(s.runs, run.ID())
 		s.mu.Unlock()
@@ -380,7 +424,7 @@ func (s *Server) execute(a *agent.Agent, run *agent.Run, hub *hub, input string)
 		s.cfg.Logger.Error("cannot record the end of a run", "run_id", run.ID(), "error", err)
 	}
 	s.cfg.Logger.Info("run finished", "harness", hub.harness, "run_id", run.ID(), "status", status, "steps", res.Steps)
-	finished, err := s.cfg.Store.Run(ctx, run.ID())
+	finished, err := s.cfg.Store.Run(ctx, hub.workspace, run.ID())
 	if err != nil {
 		s.cfg.Logger.Error("cannot read a finished run", "run_id", run.ID(), "error", err)
 		finished = store.Run{ID: run.ID(), Status: status, Output: redact.String(res.Output), Steps: res.Steps, Error: errMsg}
@@ -389,7 +433,7 @@ func (s *Server) execute(a *agent.Agent, run *agent.Run, hub *hub, input string)
 }
 
 func (s *Server) getRun(c *gin.Context) {
-	run, err := s.cfg.Store.Run(c.Request.Context(), c.Param("id"))
+	run, err := s.cfg.Store.Run(c.Request.Context(), c.Param("workspace"), c.Param("id"))
 	if err != nil {
 		s.failStore(c, err)
 		return
@@ -401,6 +445,7 @@ func apiRun(r store.Run) api.Run {
 	return api.Run{
 		ID:               r.ID,
 		HarnessVersionID: r.HarnessVersionID,
+		StartedBy:        r.StartedBy,
 		Input:            r.Input,
 		Status:           string(r.Status),
 		Output:           r.Output,
@@ -413,7 +458,7 @@ func apiRun(r store.Run) api.Run {
 
 func (s *Server) getAudit(c *gin.Context) {
 	id := c.Param("id")
-	if _, err := s.cfg.Store.Run(c.Request.Context(), id); err != nil {
+	if _, err := s.cfg.Store.Run(c.Request.Context(), c.Param("workspace"), id); err != nil {
 		s.failStore(c, err)
 		return
 	}
@@ -431,7 +476,7 @@ func (s *Server) getAudit(c *gin.Context) {
 
 func (s *Server) getTranscript(c *gin.Context) {
 	id := c.Param("id")
-	if _, err := s.cfg.Store.Run(c.Request.Context(), id); err != nil {
+	if _, err := s.cfg.Store.Run(c.Request.Context(), c.Param("workspace"), id); err != nil {
 		s.failStore(c, err)
 		return
 	}
@@ -452,9 +497,7 @@ func (s *Server) getTranscript(c *gin.Context) {
 // records and its end from the store.
 func (s *Server) streamEvents(c *gin.Context) {
 	id := c.Param("id")
-	s.mu.Lock()
-	h := s.runs[id]
-	s.mu.Unlock()
+	h := s.hub(c.Param("workspace"), id)
 	if h == nil {
 		s.replayEvents(c, id)
 		return
@@ -486,7 +529,7 @@ func (s *Server) streamEvents(c *gin.Context) {
 
 func (s *Server) replayEvents(c *gin.Context, id string) {
 	ctx := c.Request.Context()
-	run, err := s.cfg.Store.Run(ctx, id)
+	run, err := s.cfg.Store.Run(ctx, c.Param("workspace"), id)
 	if err != nil {
 		s.failStore(c, err)
 		return
@@ -518,13 +561,7 @@ func (s *Server) answerApproval(c *gin.Context) {
 		s.failDecode(c, err)
 		return
 	}
-	if answer.Approver == "" {
-		s.fail(c, http.StatusBadRequest, errors.New("approver is required"))
-		return
-	}
-	s.mu.Lock()
-	h := s.runs[c.Param("id")]
-	s.mu.Unlock()
+	h := s.hub(c.Param("workspace"), c.Param("id"))
 	reason := answer.Reason
 	if reason == "" {
 		reason = "rejected through the API"
@@ -532,9 +569,20 @@ func (s *Server) answerApproval(c *gin.Context) {
 			reason = "approved through the API"
 		}
 	}
-	if h == nil || !h.answer(c.Param("approval"), toolgateway.Approval{Approved: answer.Approved, Approver: answer.Approver, Reason: reason}) {
+	if h == nil || !h.answer(c.Param("approval"), toolgateway.Approval{Approved: answer.Approved, Approver: c.GetString(userKey), Reason: reason}) {
 		s.fail(c, http.StatusNotFound, fmt.Errorf("run %s is not waiting for approval %s", c.Param("id"), c.Param("approval")))
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// hub returns the hub of the running run id in workspace, or nil if there is
+// none.
+func (s *Server) hub(workspace, id string) *hub {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if h := s.runs[id]; h != nil && h.workspace == workspace {
+		return h
+	}
+	return nil
 }

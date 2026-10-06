@@ -38,14 +38,14 @@ func TestTerminalApprover_Answers(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var out bytes.Buffer
-			a := newTerminalApprover(strings.NewReader(tt.input), &out, true, "alice")
+			a := newTerminalApprover(strings.NewReader(tt.input), &out, true)
 
 			req := approvalRequest
 			req.Reasons = []string{"writes need a human"}
 			got, err := a.Approve(context.Background(), "run-1", req)
 
 			require.NoError(t, err)
-			assert.Equal(t, api.Answer{Approved: tt.wantApproved, Approver: "alice", Reason: tt.wantReason}, got)
+			assert.Equal(t, api.Answer{Approved: tt.wantApproved, Reason: tt.wantReason}, got)
 			assert.Contains(t, out.String(), "run run-1")
 			assert.Contains(t, out.String(), "files_write_file")
 			assert.Contains(t, out.String(), `"path": "notes.md"`, "the arguments are shown, indented")
@@ -57,7 +57,7 @@ func TestTerminalApprover_Answers(t *testing.T) {
 
 func TestTerminalApprover_ReadsOneLinePerApproval(t *testing.T) {
 	var out bytes.Buffer
-	a := newTerminalApprover(strings.NewReader("y\nn\n"), &out, true, "alice")
+	a := newTerminalApprover(strings.NewReader("y\nn\n"), &out, true)
 
 	first, err := a.Approve(context.Background(), "run-1", approvalRequest)
 	require.NoError(t, err)
@@ -76,12 +76,12 @@ func TestTerminalApprover_ReadsOneLinePerApproval(t *testing.T) {
 func TestTerminalApprover_NotInteractiveRejectsWithoutReading(t *testing.T) {
 	var out bytes.Buffer
 	in := strings.NewReader("y\n")
-	a := newTerminalApprover(in, &out, false, "alice")
+	a := newTerminalApprover(in, &out, false)
 
 	got, err := a.Approve(context.Background(), "run-1", approvalRequest)
 
 	require.NoError(t, err)
-	assert.Equal(t, api.Answer{Approver: "alice", Reason: "stdin is not a terminal, so no one can approve"}, got)
+	assert.Equal(t, api.Answer{Reason: "stdin is not a terminal, so no one can approve"}, got)
 	assert.Equal(t, 2, in.Len(), "stdin is not read: piped input is not a person")
 	assert.Contains(t, out.String(), "files_write_file", "the operator still sees what was rejected")
 }
@@ -89,7 +89,7 @@ func TestTerminalApprover_NotInteractiveRejectsWithoutReading(t *testing.T) {
 func TestTerminalApprover_CancelledWhileWaiting(t *testing.T) {
 	r, w := io.Pipe()
 	t.Cleanup(func() { assert.NoError(t, w.Close()) })
-	a := newTerminalApprover(r, io.Discard, true, "alice")
+	a := newTerminalApprover(r, io.Discard, true)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -101,7 +101,7 @@ func TestTerminalApprover_CancelledWhileWaiting(t *testing.T) {
 func TestTerminalApprover_ReadError(t *testing.T) {
 	r, w := io.Pipe()
 	require.NoError(t, w.CloseWithError(assert.AnError))
-	a := newTerminalApprover(r, io.Discard, true, "alice")
+	a := newTerminalApprover(r, io.Discard, true)
 
 	_, err := a.Approve(context.Background(), "run-1", approvalRequest)
 
@@ -109,7 +109,7 @@ func TestTerminalApprover_ReadError(t *testing.T) {
 }
 
 func TestTerminalApprover_WriteError(t *testing.T) {
-	a := newTerminalApprover(strings.NewReader("y\n"), failingWriter{}, true, "alice")
+	a := newTerminalApprover(strings.NewReader("y\n"), failingWriter{}, true)
 
 	_, err := a.Approve(context.Background(), "run-1", approvalRequest)
 
@@ -121,7 +121,7 @@ func TestTerminalApprover_WriteError(t *testing.T) {
 // rewrite what the person sees.
 func TestTerminalApprover_EscapesControlCharacters(t *testing.T) {
 	var out bytes.Buffer
-	a := newTerminalApprover(strings.NewReader("n\n"), &out, true, "alice")
+	a := newTerminalApprover(strings.NewReader("n\n"), &out, true)
 	req := approvalRequest
 	req.Args = json.RawMessage("{\"path\":\"a\u009b2Jb\"}")
 
@@ -138,7 +138,7 @@ func TestTerminalApprover_EscapesControlCharacters(t *testing.T) {
 
 func TestTerminalApprover_InvalidArgsAreShownAsText(t *testing.T) {
 	var out bytes.Buffer
-	a := newTerminalApprover(strings.NewReader("n\n"), &out, true, "alice")
+	a := newTerminalApprover(strings.NewReader("n\n"), &out, true)
 	req := approvalRequest
 	req.Args = json.RawMessage(`{not json`)
 

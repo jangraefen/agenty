@@ -35,6 +35,20 @@ import (
 // token is the files server's credential; the redactor knows it.
 const token = "files-token-0123456789"
 
+// The users' bearer tokens. alice and bob share the home workspace; only bob
+// is in work, and carol is in none.
+const (
+	aliceToken = "alice-token-0123456789abcdefghijklmn"
+	bobToken   = "bob-token-0123456789abcdefghijklmnopq"
+	carolToken = "carol-token-0123456789abcdefghijklmn"
+)
+
+// home is the path of alice's workspace, where the tests work.
+const home = "/v1/workspaces/home"
+
+// origin is the web portal's origin, which may call the API from a browser.
+const origin = "http://localhost:5173"
+
 // fixture is a server on a fresh database, with a fake files MCP server and
 // scripted models handed out one per run.
 type fixture struct {
@@ -68,7 +82,7 @@ func newFixture(t *testing.T, opts options) *fixture {
 		write: &gatewaytest.Tool{Name: "files_write", Result: json.RawMessage(`{"ok":true}`)},
 	}
 	f.files = &gatewaytest.Server{Tools: []toolgateway.Tool{f.read, f.write}}
-	redactor, err := secret.NewRedactor([]string{token})
+	redactor, err := secret.NewRedactor([]string{token, aliceToken, bobToken, carolToken})
 	require.NoError(t, err)
 	newModel := opts.newModel
 	switch {
@@ -82,8 +96,13 @@ func newFixture(t *testing.T, opts options) *fixture {
 		Operator: &config.Config{
 			MCPServers: map[string]config.MCPServer{"files": {Command: "unused"}},
 			Policy:     opts.policy,
+			Workspaces: map[string]config.Workspace{
+				"home": {Members: []string{"alice", "bob"}},
+				"work": {Members: []string{"bob"}},
+			},
+			CORS: config.CORS{Origins: []string{origin}},
 		},
-		Resolved: &config.Resolved{Redactor: redactor},
+		Resolved: &config.Resolved{Redactor: redactor, UserTokens: userTokens},
 		Logger:   slog.New(redactor.Handler(slog.NewTextHandler(f.logs, nil))),
 		NewModel: newModel,
 		Server: func(name string, _ mcptool.Server) toolgateway.ToolServer {
@@ -95,6 +114,9 @@ func newFixture(t *testing.T, opts options) *fixture {
 	f.http = newHTTP(t, f.server)
 	return f
 }
+
+// userTokens are the users' tokens, as config.Resolve returns them.
+var userTokens = map[string]string{"alice": aliceToken, "bob": bobToken, "carol": carolToken}
 
 // newHTTP serves srv until the test ends, then closes it.
 func newHTTP(t *testing.T, srv *server.Server) *httptest.Server {
@@ -138,8 +160,15 @@ func notes() harness.Harness {
 	}
 }
 
-// do sends a JSON request and decodes the JSON response into out, if any.
+// do sends a JSON request as alice and decodes the JSON response into out, if
+// any.
 func (f *fixture) do(t *testing.T, method, path string, body, out any) int {
+	t.Helper()
+	return f.doAs(t, aliceToken, method, path, body, out)
+}
+
+// doAs is do with the bearer token of another user, or none if it is empty.
+func (f *fixture) doAs(t *testing.T, bearer, method, path string, body, out any) int {
 	t.Helper()
 	var r io.Reader
 	if s, ok := body.(string); ok {
@@ -154,6 +183,9 @@ func (f *fixture) do(t *testing.T, method, path string, body, out any) int {
 	if r != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, resp.Body.Close()) }()
@@ -166,14 +198,14 @@ func (f *fixture) do(t *testing.T, method, path string, body, out any) int {
 // putNotes stores the notes harness.
 func (f *fixture) putNotes(t *testing.T) {
 	t.Helper()
-	require.Equal(t, http.StatusOK, f.do(t, http.MethodPut, "/v1/harnesses/notes", notes(), nil))
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodPut, home+"/harnesses/notes", notes(), nil))
 }
 
 // startRun starts a run of the notes harness.
 func (f *fixture) startRun(t *testing.T, input string) api.Run {
 	t.Helper()
 	var run api.Run
-	require.Equal(t, http.StatusCreated, f.do(t, http.MethodPost, "/v1/runs", api.CreateRun{Harness: "notes", Input: input}, &run))
+	require.Equal(t, http.StatusCreated, f.do(t, http.MethodPost, home+"/runs", api.CreateRun{Harness: "notes", Input: input}, &run))
 	return run
 }
 
@@ -193,8 +225,9 @@ type stream struct {
 
 func (f *fixture) events(t *testing.T, runID string) *stream {
 	t.Helper()
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, f.http.URL+"/v1/runs/"+runID+"/events", nil)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, f.http.URL+home+"/runs/"+runID+"/events", nil)
 	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+aliceToken)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)

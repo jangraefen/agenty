@@ -1,5 +1,5 @@
 // Package config loads the operator configuration: the model provider, the
-// MCP servers, and central policy. Secrets never live in the file: a value is
+// database, the MCP servers, central policy, and who may use the API. Secrets never live in the file: a value is
 // either read from the environment, {env: NAME}, or written as plain text,
 // {value: TEXT}, and everything read from the environment is treated as a
 // secret.
@@ -11,8 +11,10 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 
 	"go.yaml.in/yaml/v3"
@@ -29,6 +31,12 @@ type Config struct {
 	// it.
 	Database   *Database            `yaml:"database"`
 	MCPServers map[string]MCPServer `yaml:"mcp_servers"`
+	// Users may use the API, by name. Each signs in with a bearer token.
+	Users map[string]User `yaml:"users"`
+	// Workspaces hold harnesses and runs, by name. Only a workspace's
+	// members see it, and they may do everything in it.
+	Workspaces map[string]Workspace `yaml:"workspaces"`
+	CORS       CORS                 `yaml:"cors"`
 	// Policy is central policy: Rego modules in package agenty.tool. Load
 	// reads them from the files the config names.
 	Policy []policy.Module `yaml:"-"`
@@ -72,6 +80,33 @@ type MCPServer struct {
 	Args    []string         `yaml:"args"`
 	Env     map[string]Value `yaml:"env"`
 }
+
+// User is a person who may use the API.
+type User struct {
+	// Token is the user's bearer token. It must come from the environment:
+	// a token is a credential.
+	Token Value `yaml:"token"`
+}
+
+// Workspace is a group of harnesses and runs.
+type Workspace struct {
+	// Members are the users who may use the workspace.
+	Members []string `yaml:"members"`
+}
+
+// CORS lists the web origins, such as the web portal's, whose pages may call
+// the API. Requests from any other page are refused.
+type CORS struct {
+	// Origins are written as browsers send them: scheme://host[:port].
+	Origins []string `yaml:"origins"`
+}
+
+// TokenMinLength is the shortest bearer token accepted: long enough that it
+// cannot be guessed.
+const TokenMinLength = 32
+
+// name is the form of user and workspace names, which appear in URLs.
+var namePattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
 // Value is a configuration value: read from an environment variable, which
 // makes it a secret, or given as plain text. Exactly one is set.
@@ -176,7 +211,39 @@ func (f *file) validate() error {
 			add(fmt.Sprintf("policy.files[%d]", i), "must not be empty")
 		}
 	}
+	for _, user := range slices.Sorted(maps.Keys(f.Users)) {
+		if !namePattern.MatchString(user) {
+			add("users."+user, "a user name must be lowercase letters and digits, separated by single dashes")
+		}
+		if t := f.Users[user].Token; t.Env == "" || t.Value != "" {
+			add("users."+user+".token", "must be {env: NAME}: a token is a credential, so it never lives in the config")
+		}
+	}
+	for _, ws := range slices.Sorted(maps.Keys(f.Workspaces)) {
+		if !namePattern.MatchString(ws) {
+			add("workspaces."+ws, "a workspace name must be lowercase letters and digits, separated by single dashes")
+		}
+		for i, member := range f.Workspaces[ws].Members {
+			field := fmt.Sprintf("workspaces.%s.members[%d]", ws, i)
+			switch {
+			case slices.Contains(f.Workspaces[ws].Members[:i], member):
+				add(field, fmt.Sprintf("%q is listed twice", member))
+			case !hasKey(f.Users, member):
+				add(field, fmt.Sprintf("%q is not a configured user", member))
+			}
+		}
+	}
+	for i, origin := range f.CORS.Origins {
+		if u, err := url.Parse(origin); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || origin != u.Scheme+"://"+u.Host {
+			add(fmt.Sprintf("cors.origins[%d]", i), "an origin must be scheme://host[:port], with an http or https scheme and nothing after the host")
+		}
+	}
 	return errors.Join(errs...)
+}
+
+func hasKey[V any](m map[string]V, key string) bool {
+	_, ok := m[key]
+	return ok
 }
 
 // Resolved holds the configuration's values, read from the environment where
@@ -187,6 +254,9 @@ type Resolved struct {
 	DatabaseURL string
 	// MCPServerEnv holds each server's environment, by server name.
 	MCPServerEnv map[string]map[string]string
+	// UserTokens holds each user's bearer token, by user name. Tokens are
+	// distinct.
+	UserTokens map[string]string
 	// Redactor redacts every value read from the environment. It is the one
 	// redactor of a run: logs, output and the tool gateway all use it.
 	Redactor *secret.Redactor
@@ -194,7 +264,7 @@ type Resolved struct {
 
 // Resolve reads the configured environment variables through lookup.
 func (c *Config) Resolve(lookup func(string) (string, bool)) (*Resolved, error) {
-	r := &Resolved{MCPServerEnv: map[string]map[string]string{}}
+	r := &Resolved{MCPServerEnv: map[string]map[string]string{}, UserTokens: map[string]string{}}
 	var secrets []string
 	var errs []error
 	resolve := func(field string, v Value) string {
@@ -223,6 +293,22 @@ func (c *Config) Resolve(lookup func(string) (string, bool)) (*Resolved, error) 
 			env[key] = resolve("mcp_servers."+name+".env."+key, c.MCPServers[name].Env[key])
 		}
 		r.MCPServerEnv[name] = env
+	}
+	owners := map[string]string{}
+	for _, user := range slices.Sorted(maps.Keys(c.Users)) {
+		field := "users." + user + ".token"
+		token := resolve(field, c.Users[user].Token)
+		switch {
+		case token == "":
+			// resolve reported it.
+		case len(token) < TokenMinLength:
+			errs = append(errs, &FieldError{Field: field, Msg: fmt.Sprintf("is shorter than %d characters, too short to be unguessable", TokenMinLength)})
+		case owners[token] != "":
+			errs = append(errs, &FieldError{Field: field, Msg: "is the same token as user " + owners[token] + "'s; each user needs their own"})
+		default:
+			owners[token] = user
+			r.UserTokens[user] = token
+		}
 	}
 	if err := errors.Join(errs...); err != nil {
 		return nil, fmt.Errorf("config: %w", err)

@@ -52,12 +52,19 @@ func (q *Queries) FinishRun(ctx context.Context, arg FinishRunParams) (int64, er
 }
 
 const getRun = `-- name: GetRun :one
-SELECT id, harness_version_id, input, status, output, steps, error, created_at, finished_at FROM runs
-WHERE id = $1
+SELECT runs.id, runs.harness_version_id, runs.input, runs.status, runs.output, runs.steps, runs.error, runs.created_at, runs.finished_at, runs.started_by FROM runs
+JOIN harness_versions ON harness_versions.id = runs.harness_version_id
+WHERE runs.id = $1 AND harness_versions.workspace = $2
 `
 
-func (q *Queries) GetRun(ctx context.Context, id string) (Run, error) {
-	row := q.db.QueryRow(ctx, getRun, id)
+type GetRunParams struct {
+	ID        string
+	Workspace string
+}
+
+// A run is found only in the workspace of the harness version it runs.
+func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
+	row := q.db.QueryRow(ctx, getRun, arg.ID, arg.Workspace)
 	var i Run
 	err := row.Scan(
 		&i.ID,
@@ -69,22 +76,29 @@ func (q *Queries) GetRun(ctx context.Context, id string) (Run, error) {
 		&i.Error,
 		&i.CreatedAt,
 		&i.FinishedAt,
+		&i.StartedBy,
 	)
 	return i, err
 }
 
 const insertRun = `-- name: InsertRun :exec
-INSERT INTO runs (id, harness_version_id, input)
-VALUES ($1, $2, $3)
+INSERT INTO runs (id, harness_version_id, input, started_by)
+VALUES ($1, $2, $3, $4)
 `
 
 type InsertRunParams struct {
 	ID               string
 	HarnessVersionID int64
 	Input            string
+	StartedBy        string
 }
 
 func (q *Queries) InsertRun(ctx context.Context, arg InsertRunParams) error {
-	_, err := q.db.Exec(ctx, insertRun, arg.ID, arg.HarnessVersionID, arg.Input)
+	_, err := q.db.Exec(ctx, insertRun,
+		arg.ID,
+		arg.HarnessVersionID,
+		arg.Input,
+		arg.StartedBy,
+	)
 	return err
 }

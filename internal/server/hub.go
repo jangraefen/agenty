@@ -23,7 +23,7 @@ type event struct {
 // hub holds the events of one running run, for any number of subscribers,
 // and the approvals the run is waiting for. It is also the run's approver.
 type hub struct {
-	harness string
+	workspace, harness string
 
 	mu       sync.Mutex
 	events   []event
@@ -33,8 +33,8 @@ type hub struct {
 	pending map[string]chan toolgateway.Approval
 }
 
-func newHub(harness string) *hub {
-	return &hub{harness: harness, changed: make(chan struct{}), pending: map[string]chan toolgateway.Approval{}}
+func newHub(workspace, harness string) *hub {
+	return &hub{workspace: workspace, harness: harness, changed: make(chan struct{}), pending: map[string]chan toolgateway.Approval{}}
 }
 
 // publish appends e. An EventFinished event is the last: the hub publishes

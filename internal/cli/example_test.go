@@ -27,6 +27,7 @@ func TestExample_Notes(t *testing.T) {
 	h, err := harness.Load(filepath.Join(dir, "notes.yaml"))
 	require.NoError(t, err)
 	require.Contains(t, cfg.MCPServers, "files")
+	assert.Equal(t, []string{"demo"}, cfg.Workspaces["notes"].Members, "task demo signs in as demo, in notes")
 
 	var tools []toolgateway.Tool
 	for _, name := range h.Tools {

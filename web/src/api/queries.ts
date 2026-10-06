@@ -86,3 +86,15 @@ export function approvalsQuery(api: Api, workspace: string) {
     refetchInterval: 10_000,
   });
 }
+
+export function harnessQuery(api: Api, workspace: string, name: string) {
+  return queryOptions({
+    queryKey: ["workspaces", workspace, "harness", name],
+    queryFn: () =>
+      unwrap(
+        api.GET("/v1/workspaces/{workspace}/harnesses/{name}", {
+          params: { path: { workspace, name } },
+        }),
+      ),
+  });
+}

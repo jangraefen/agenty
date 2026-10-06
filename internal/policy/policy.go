@@ -69,6 +69,18 @@ func New(ctx context.Context, layers ...Layer) (*Engine, error) {
 			rego.Query(query),
 			rego.StrictBuiltinErrors(true),
 		}
+		// OPA keeps a layer's modules by name: a second module of a name would
+		// silently replace the first, dropping its rules.
+		named := make(map[string]int, len(l.Modules))
+		for j, m := range l.Modules {
+			if m.Name == "" {
+				return nil, fmt.Errorf("policy: %s: module %d has no name", l.Name, j)
+			}
+			if k, ok := named[m.Name]; ok {
+				return nil, fmt.Errorf("policy: %s: modules %d and %d are both named %q", l.Name, k, j, m.Name)
+			}
+			named[m.Name] = j
+		}
 		for _, m := range l.Modules {
 			mod, err := ast.ParseModuleWithOpts(m.Name, m.Source, ast.ParserOptions{RegoVersion: ast.RegoV1})
 			if err != nil {

@@ -71,3 +71,34 @@ deny contains "writes are frozen" if not exempt[input.tool]`)
 		})
 	}
 }
+
+// TestInvariant_NoModuleIsDropped guards trust-model guarantee 4 from the
+// other side: every module of a layer counts. OPA keeps a layer's modules by
+// name, so a second module of the same name would silently replace the first
+// and drop its rules; such a layer is refused instead.
+func TestInvariant_NoModuleIsDropped(t *testing.T) {
+	module := func(name, rules string) policy.Module {
+		return policy.Module{Name: name, Source: "package agenty.tool\n\n" + rules}
+	}
+	denies := module("rules", `deny contains "no labels" if input.tool == "tickets_label"`)
+	harmless := module("rules", `require_approval contains "never" if false`)
+
+	t.Run("modules sharing a name are refused", func(t *testing.T) {
+		e, err := policy.New(context.Background(), policy.Layer{Name: "harness", Modules: []policy.Module{denies, harmless}})
+
+		require.ErrorContains(t, err, "both named")
+		assert.Nil(t, e)
+	})
+
+	t.Run("every module of a layer applies", func(t *testing.T) {
+		harmless.Name = "other"
+		e, err := policy.New(context.Background(), policy.Layer{Name: "harness", Modules: []policy.Module{denies, harmless}})
+		require.NoError(t, err)
+
+		v, err := e.Evaluate(context.Background(), input())
+
+		require.NoError(t, err)
+		assert.Equal(t, toolgateway.Deny, v.Decision)
+		assert.Equal(t, []string{"no labels"}, v.Reasons)
+	})
+}

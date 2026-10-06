@@ -13,12 +13,12 @@ import { Button } from "@/components/ui/button";
 import { formatDuration, formatTime } from "@/lib/format";
 
 // The filters in a search, ignoring anything else: the router passes on the
-// search parameters no route validates, too.
+// search parameters no route validates, too. The router parses search values
+// as JSON, so a harness named 123 typed into the URL arrives as a number.
 function runFilters(search: Record<string, unknown>): RunFilters {
+  const harness = typeof search.harness === "number" ? String(search.harness) : search.harness;
   return {
-    ...(typeof search.harness === "string" && search.harness !== ""
-      ? { harness: search.harness }
-      : {}),
+    ...(typeof harness === "string" && harness !== "" ? { harness } : {}),
     ...(isRunStatus(search.status) ? { status: search.status } : {}),
   };
 }
@@ -49,6 +49,7 @@ function Runs() {
   }
 
   const pages = runs.data?.pages ?? [];
+  const shown = pages.reduce((count, page) => count + page.runs.length, 0);
   const filtered = filters.harness !== undefined || filters.status !== undefined;
 
   return (
@@ -69,6 +70,7 @@ function Runs() {
           className={selectClass}
         >
           <option value="">All</option>
+          {harnesses.isError && <option disabled>Harnesses could not be loaded</option>}
           {[...harnessNames].sort().map((name) => (
             <option key={name} value={name}>
               {name}
@@ -103,13 +105,20 @@ function Runs() {
           The runs could not be loaded: {runs.error.message}
         </p>
       )}
-      {runs.isSuccess && pages.every((page) => page.runs.length === 0) && (
+      <p role="status" className="sr-only">
+        {runs.isFetchingNextPage
+          ? "Loading more runs…"
+          : runs.data === undefined
+            ? ""
+            : `${shown} ${shown === 1 ? "run" : "runs"} shown.`}
+      </p>
+      {runs.isSuccess && shown === 0 && (
         <p className="mt-6 text-muted-foreground">
           {filtered ? "No runs match these filters." : "No runs yet."}
         </p>
       )}
-      {runs.isSuccess && pages.some((page) => page.runs.length > 0) && (
-        <table className="mt-6 w-full text-left text-sm">
+      {shown > 0 && (
+        <table className="mt-6 w-full text-left text-sm" aria-busy={runs.isFetching}>
           <caption className="sr-only">Runs</caption>
           <thead className="border-b text-muted-foreground">
             <tr>
@@ -139,9 +148,14 @@ function Runs() {
                     <time dateTime={run.created_at}>{formatTime(run.created_at)}</time>
                   </td>
                   <td className="py-2 whitespace-nowrap">
-                    {run.finished_at === undefined
-                      ? "—"
-                      : formatDuration(run.created_at, run.finished_at)}
+                    {run.finished_at === undefined ? (
+                      <>
+                        <span aria-hidden="true">—</span>
+                        <span className="sr-only">still running</span>
+                      </>
+                    ) : (
+                      formatDuration(run.created_at, run.finished_at)
+                    )}
                   </td>
                 </tr>
               )),

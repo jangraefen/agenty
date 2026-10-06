@@ -38,6 +38,28 @@ export class Session {
     this.#notify();
   }
 
+  /**
+   * Follows the sign-ins and sign-outs of the app's other tabs, which share
+   * the storage; returns the function that stops following.
+   */
+  followOtherTabs(target: Window): () => void {
+    const follow = (event: StorageEvent) => {
+      // A null key means another tab cleared the storage.
+      if (event.key !== KEY && event.key !== null) {
+        return;
+      }
+      const token = readStored(this.#storage);
+      if (token !== this.#token) {
+        this.#token = token;
+        this.#notify();
+      }
+    };
+    target.addEventListener("storage", follow);
+    return () => {
+      target.removeEventListener("storage", follow);
+    };
+  }
+
   /** Calls listener after every sign-in and sign-out; returns the unsubscribe. */
   subscribe(listener: () => void): () => void {
     this.#listeners.add(listener);

@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { describe, expect, test } from "vitest";
 import { apiUrl } from "@/config";
@@ -76,6 +76,34 @@ describe("signing in", () => {
     expect(localStorage.getItem("agenty.token")).toBeNull();
   });
 
+  test("a token with characters a header cannot carry is refused before it is sent", async () => {
+    const { session, user } = renderApp("/sign-in", null);
+
+    await user.type(await screen.findByLabelText("Token"), "tökén");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "A token has only letters, digits and punctuation.",
+    );
+    expect(session.token).toBeNull();
+  });
+
+  test("signing out in another tab signs out this one", async () => {
+    server.use(meHandler({ user: "demo", workspaces: ["notes"] }));
+    const { history } = renderApp("/w/notes/runs", TOKEN);
+    await screen.findByRole("heading", { name: "Runs" });
+
+    act(() => {
+      localStorage.removeItem("agenty.token");
+      window.dispatchEvent(
+        new StorageEvent("storage", { key: "agenty.token", oldValue: TOKEN, newValue: null }),
+      );
+    });
+
+    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+    expect(history.location.pathname).toBe("/sign-in");
+  });
+
   test("a signed-in user visiting the sign-in page goes home", async () => {
     server.use(meHandler({ user: "demo", workspaces: ["notes"] }));
     const { history } = renderApp("/sign-in", TOKEN);
@@ -113,10 +141,13 @@ describe("workspaces", () => {
     const { history, user } = renderApp("/w/notes/runs", TOKEN);
 
     expect(await screen.findByText("demo")).toBeInTheDocument();
-    const picker = screen.getByLabelText("Workspace");
-    expect(picker).toHaveValue("notes");
+    const nav = screen.getByRole("navigation", { name: "Workspaces" });
+    expect(within(nav).getByRole("link", { name: "notes" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
 
-    await user.selectOptions(picker, "ops");
+    await user.click(within(nav).getByRole("link", { name: "ops" }));
 
     await waitFor(() => {
       expect(history.location.pathname).toBe("/w/ops/runs");

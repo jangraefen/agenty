@@ -3,8 +3,8 @@ import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, loadEnv, type Plugin } from "vite";
-import { defaultApiUrl } from "./src/api-url";
-import { contentSecurityPolicy } from "./src/csp";
+import { defaultApiUrl } from "./src/api-url.ts";
+import { contentSecurityPolicy } from "./src/csp.ts";
 
 // Puts the Content-Security-Policy into the built index.html, right after the
 // charset and before any script, as a policy covers only what follows it. The
@@ -32,7 +32,11 @@ function csp(apiUrl: string): Plugin {
 
 export default defineConfig(({ mode }) => ({
   plugins: [
-    tanstackRouter({ target: "react", autoCodeSplitting: true }),
+    tanstackRouter({
+      target: "react",
+      autoCodeSplitting: true,
+      routeFileIgnorePattern: "\\.test\\.tsx?$",
+    }),
     react(),
     tailwindcss(),
     csp(loadEnv(mode, import.meta.dirname, "VITE_").VITE_AGENTY_API_URL ?? defaultApiUrl),

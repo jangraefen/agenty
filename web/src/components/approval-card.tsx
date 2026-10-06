@@ -102,7 +102,7 @@ export function ApprovalCard({
             id={`${id}-reason`}
             value={reason}
             onChange={(event) => setReason(event.target.value)}
-            disabled={expired}
+            readOnly={expired}
           />
         </div>
         <Button aria-disabled={blocked} aria-describedby={`${id}-tool`} onClick={() => send(true)}>

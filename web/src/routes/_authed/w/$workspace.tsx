@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, notFound, Outlet, useNavigate } from "@tanstack/react-router";
+import { useEffect, useRef, useState } from "react";
 import { approvalsQuery } from "@/api/queries";
 import { loadMe } from "@/auth/load-me";
 import { Button } from "@/components/ui/button";
@@ -35,31 +36,7 @@ function WorkspaceLayout() {
           Agenty
         </Link>
         {/* Keyed by the workspace, so it closes after switching. */}
-        <details key={workspace} className="relative">
-          <summary className="flex h-8 cursor-pointer list-none items-center gap-1 rounded-md border px-2 text-sm">
-            <span className="sr-only">Workspace:</span> {workspace}
-            <span aria-hidden="true">▾</span>
-          </summary>
-          <nav
-            aria-label="Workspaces"
-            className="absolute z-10 mt-1 min-w-40 rounded-md border bg-background py-1 shadow-md"
-          >
-            <ul>
-              {me.workspaces.map((name) => (
-                <li key={name}>
-                  <Link
-                    to="/w/$workspace/runs"
-                    params={{ workspace: name }}
-                    aria-current={name === workspace ? "page" : undefined}
-                    className="block px-3 py-1.5 text-sm hover:bg-accent aria-[current=page]:font-semibold"
-                  >
-                    {name}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </nav>
-        </details>
+        <WorkspaceMenu key={workspace} workspace={workspace} workspaces={me.workspaces} />
         <PageLinks workspace={workspace} />
         <span className="ml-auto text-sm text-muted-foreground">{me.user}</span>
         <Button variant="outline" size="sm" onClick={signOut}>
@@ -70,6 +47,68 @@ function WorkspaceLayout() {
         <Outlet />
       </main>
     </div>
+  );
+}
+
+// WorkspaceMenu is a disclosure of links to the user's workspaces. Escape
+// closes it and returns to its button, as does a click outside it.
+function WorkspaceMenu({ workspace, workspaces }: { workspace: string; workspaces: string[] }) {
+  const menu = useRef<HTMLDetailsElement>(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    function closeOutside(event: PointerEvent) {
+      if (menu.current !== null && !menu.current.contains(event.target as Node)) {
+        menu.current.open = false;
+      }
+    }
+    document.addEventListener("pointerdown", closeOutside);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside);
+    };
+  }, [open]);
+
+  return (
+    <details
+      ref={menu}
+      className="relative"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && menu.current?.open === true) {
+          menu.current.open = false;
+          menu.current.querySelector("summary")?.focus();
+        }
+      }}
+    >
+      <summary className="flex h-8 cursor-pointer list-none items-center gap-1 rounded-md border px-2 text-sm [&::-webkit-details-marker]:hidden">
+        <span className="sr-only">Workspace:</span> {workspace}
+        <span aria-hidden="true">▾</span>
+      </summary>
+      <nav
+        aria-label="Workspaces"
+        className="absolute z-10 mt-1 min-w-40 rounded-md border bg-background py-1 shadow-md"
+      >
+        <ul>
+          {workspaces.map((name) => (
+            <li key={name}>
+              <Link
+                to="/w/$workspace/runs"
+                params={{ workspace: name }}
+                // The current workspace, on any of its pages; on its runs
+                // page, the router marks the link as the current page.
+                aria-current={name === workspace ? "true" : undefined}
+                className="block px-3 py-1.5 text-sm hover:bg-accent aria-[current]:font-semibold"
+              >
+                {name}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </nav>
+    </details>
   );
 }
 

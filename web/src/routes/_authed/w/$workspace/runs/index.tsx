@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useId } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   harnessesQuery,
   isRunStatus,
@@ -13,10 +13,9 @@ import { Button } from "@/components/ui/button";
 import { formatDuration, formatTime } from "@/lib/format";
 
 // The filters in a search, ignoring anything else: the router passes on the
-// search parameters no route validates, too. The router parses search values
-// as JSON, so a harness named 123 typed into the URL arrives as a number.
+// search parameters no route validates, too.
 function runFilters(search: Record<string, unknown>): RunFilters {
-  const harness = typeof search.harness === "number" ? String(search.harness) : search.harness;
+  const { harness } = search;
   return {
     ...(typeof harness === "string" && harness !== "" ? { harness } : {}),
     ...(isRunStatus(search.status) ? { status: search.status } : {}),
@@ -50,6 +49,18 @@ function Runs() {
 
   const pages = runs.data?.pages ?? [];
   const shown = pages.reduce((count, page) => count + page.runs.length, 0);
+
+  // After loading more, the focus moves to the first run loaded, as the
+  // button may be gone.
+  const table = useRef<HTMLTableElement>(null);
+  const [focusRow, setFocusRow] = useState<number | null>(null);
+  useEffect(() => {
+    if (focusRow === null || shown <= focusRow) {
+      return;
+    }
+    table.current?.querySelectorAll<HTMLElement>("tbody tr a")[focusRow]?.focus();
+    setFocusRow(null);
+  }, [focusRow, shown]);
   const filtered = filters.harness !== undefined || filters.status !== undefined;
 
   return (
@@ -118,7 +129,7 @@ function Runs() {
         </p>
       )}
       {shown > 0 && (
-        <table className="mt-6 w-full text-left text-sm" aria-busy={runs.isFetching}>
+        <table ref={table} className="mt-6 w-full text-left text-sm" aria-busy={runs.isFetching}>
           <caption className="sr-only">Runs</caption>
           <thead className="border-b text-muted-foreground">
             <tr>
@@ -174,7 +185,10 @@ function Runs() {
           variant="outline"
           className="mt-4"
           disabled={runs.isFetchingNextPage}
-          onClick={() => void runs.fetchNextPage()}
+          onClick={() => {
+            setFocusRow(shown);
+            void runs.fetchNextPage();
+          }}
         >
           Load more
         </Button>

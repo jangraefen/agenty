@@ -2,6 +2,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { createRouter, type RouterHistory } from "@tanstack/react-router";
 import type { Api } from "./api/client";
 import type { Session } from "./auth/session";
+import { parseSearch, stringifySearch } from "./lib/search";
 import { routeTree } from "./routeTree.gen";
 
 export interface RouterContext {
@@ -16,6 +17,8 @@ export function makeRouter(context: RouterContext, history?: RouterHistory) {
     context,
     ...(history === undefined ? {} : { history }),
     defaultPreload: "intent",
+    parseSearch,
+    stringifySearch,
   });
 }
 

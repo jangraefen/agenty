@@ -93,6 +93,9 @@ test("reports a run the server refuses to start", async () => {
   await user.click(screen.getByRole("button", { name: "Start run" }));
 
   expect(await screen.findByRole("alert")).toHaveTextContent("tool files_delete is not served");
+  const input = screen.getByLabelText("Input");
+  expect(input).toHaveAttribute("aria-invalid", "true");
+  expect(input).toHaveAccessibleDescription(/tool files_delete is not served/);
 });
 
 test("links to the harness's runs", async () => {

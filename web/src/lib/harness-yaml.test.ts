@@ -13,7 +13,8 @@ const harness: components["schemas"]["Harness"] = {
 };
 
 test("writes the harness file's fields, multi-line text as a block", () => {
-  expect(harnessYaml(harness)).toBe(
+  const { policy: _, ...withoutPolicy } = harness;
+  expect(harnessYaml(withoutPolicy)).toBe(
     [
       "name: notes",
       "instructions: |",
@@ -56,8 +57,16 @@ test("keeps the harness file's key order, whatever the API's", () => {
   );
 });
 
-test("leaves out the policy, which is stored resolved, not as written", () => {
-  expect(harnessYaml(harness)).not.toContain("policy");
+test("leaves out the policy, which is stored resolved, but warns of it", () => {
+  const yaml = harnessYaml(harness);
+
+  expect(parse(yaml).policy).toBeUndefined();
+  expect(
+    yaml.endsWith(
+      "# policy: left out. This harness has 1 policy module, shown on its page as Rego;\n" +
+        "# applying this YAML without it would drop its rules.\n",
+    ),
+  ).toBe(true);
 });
 
 test("quotes what YAML would read as something else", () => {

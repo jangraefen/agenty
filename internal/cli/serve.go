@@ -60,41 +60,41 @@ func serve(ctx context.Context, args []string, env Env) int {
 	}
 	logger := newLogger(env.Stderr, flags.logLevel, must.Value(secret.NewRedactor(nil)))
 	if err := checkLoopback(flags.addr); err != nil {
-		return failServe(logger, err)
+		return fail(logger, "serve failed", err)
 	}
 	cfg, err := config.Load(flags.config)
 	if err != nil {
-		return failServe(logger, err)
+		return fail(logger, "serve failed", err)
 	}
 	resolved, err := cfg.Resolve(env.LookupEnv)
 	if err != nil {
-		return failServe(logger, err)
+		return fail(logger, "serve failed", err)
 	}
 	logger = newLogger(env.Stderr, flags.logLevel, resolved.Redactor)
 	if resolved.DatabaseURL == "" {
-		return failServe(logger, errors.New("config: database.url is required to serve"))
+		return fail(logger, "serve failed", errors.New("config: database.url is required to serve"))
 	}
 
 	st, err := store.Open(ctx, resolved.DatabaseURL)
 	if err != nil {
-		return failServe(logger, err)
+		return fail(logger, "serve failed", err)
 	}
 	defer st.Close()
 	srv, err := server.New(ctx, server.Config{Store: st, Operator: cfg, Resolved: resolved, Logger: logger, Server: env.Server})
 	if err != nil {
-		return failServe(logger, err)
+		return fail(logger, "serve failed", err)
 	}
 	defer srv.Close()
 
 	var lc net.ListenConfig
 	ln, err := lc.Listen(ctx, "tcp", flags.addr)
 	if err != nil {
-		return failServe(logger, err)
+		return fail(logger, "serve failed", err)
 	}
 	// A name such as localhost is resolved when listening; check what it
 	// resolved to.
 	if err := checkLoopback(ln.Addr().String()); err != nil {
-		return failServe(logger, errors.Join(err, ln.Close()))
+		return fail(logger, "serve failed", errors.Join(err, ln.Close()))
 	}
 	httpServer := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	served := make(chan error, 1)
@@ -103,7 +103,7 @@ func serve(ctx context.Context, args []string, env Env) int {
 
 	select {
 	case err := <-served:
-		return failServe(logger, err)
+		return fail(logger, "serve failed", err)
 	case <-ctx.Done():
 	}
 	logger.Info("stopping")
@@ -113,7 +113,7 @@ func serve(ctx context.Context, args []string, env Env) int {
 	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
-		return failServe(logger, err)
+		return fail(logger, "serve failed", err)
 	}
 	return exitOK
 }
@@ -129,9 +129,4 @@ func checkLoopback(addr string) error {
 		return fmt.Errorf("--addr %s: the API has no sign-in yet, so it listens on a loopback address only, such as 127.0.0.1", addr)
 	}
 	return nil
-}
-
-func failServe(logger *slog.Logger, err error) int {
-	logger.Error("serve failed", "error", err)
-	return exitFailure
 }

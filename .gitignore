@@ -1,7 +1,4 @@
 .env
 
-# Audit logs of local runs.
-audit.jsonl
-
 # The binary built by "go build ./cmd/agenty".
 /agenty

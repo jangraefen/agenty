@@ -75,17 +75,9 @@ The first goal is to prove the core loop end to end, in a single Go binary:
 4. Enforce grants and an OPA policy (including `require_approval`, answered on the command line).
 5. Write an audit log of every decision and call.
 
-All five are built. `agenty run` ties them together: an operator config (`agenty.yaml`: model provider, MCP servers, central policy) is kept apart from the harness, so builders never touch credentials. Config values come from the environment (`{env: NAME}`, then treated as secrets and redacted everywhere) or are plain text (`{value: TEXT}`). Approvals are asked at the terminal and rejected when stdin is not one. The audit log is a JSON-lines file, one record per decision, approval and result. The gateway starts only the MCP servers whose tools the harness grants, and refuses to start when a granted tool is not served by any of them, so a misconfigured harness fails before it runs.
+All five are built. `agenty run` ties them together: an operator config (`agenty.yaml`: model provider, MCP servers, central policy) is kept apart from the harness, so builders never touch credentials. Config values come from the environment (`{env: NAME}`, then treated as secrets and redacted everywhere) or are plain text (`{value: TEXT}`). Approvals are asked at the terminal and rejected when stdin is not one. The audit log was a JSON-lines file, one record per decision, approval and result. The gateway starts only the MCP servers whose tools the harness grants, and refuses to start when a granted tool is not served by any of them, so a misconfigured harness fails before it runs.
 
-To try it (needs Node.js for the example's filesystem MCP server, and `ANTHROPIC_API_KEY` in the environment or a `.env` file):
-
-```sh
-go build -o agenty ./cmd/agenty
-cd examples/notes
-../../agenty run --harness notes.yaml "tidy my notes"
-```
-
-The example's central policy asks before every file change and denies dotfiles; its harness allows one rewrite per run. Each run appends to `audit.jsonl`.
+The API server below has since replaced this standalone command; the operator config, the harness format and the gateway carried over.
 
 **Not in the PoC**: web UI, database, multi-tenancy, identity providers, schedules, knowledge retrieval, sandboxed scripts. Each comes back when the PoC shows it is needed.
 
@@ -98,6 +90,18 @@ The PoC held. The next step splits the command line: a server holds the state an
 - **Harnesses**: managed through the API. The CLI uploads a harness file with its policy files resolved.
 - **Approvals**: the server streams each run's events over server-sent events. A call that needs approval waits in the server until a client posts the answer; one that nobody answers waits until the server stops, as there is no timeout yet. A run does not survive a server restart.
 - **CLI**: a client of the API instead of running agents itself.
+
+To try it (needs PostgreSQL, Node.js for the example's filesystem MCP server, and `ANTHROPIC_API_KEY` and `DATABASE_URL` in the environment or a `.env` file):
+
+```sh
+go build -o agenty ./cmd/agenty
+cd examples/notes
+../../agenty serve &
+../../agenty apply notes.yaml
+../../agenty run notes "tidy my notes"
+```
+
+The example's central policy asks before every file change and denies dotfiles; its harness allows one rewrite per run. `agenty run` asks at the terminal, and the audit log of a run is at `GET /v1/runs/{id}/audit`.
 
 ## Later: the web portal
 

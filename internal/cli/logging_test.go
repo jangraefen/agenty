@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jangraefen/agenty/internal/toolgateway"
+	"github.com/jangraefen/agenty/internal/secret"
 )
 
 const logSecret = "log-secret-0123456789"
@@ -18,7 +18,7 @@ const logSecret = "log-secret-0123456789"
 // TestLogger_RedactsSecrets guards trust-model guarantee 5 for logs: a secret
 // never reaches the log, wherever in a record it appears.
 func TestLogger_RedactsSecrets(t *testing.T) {
-	r, err := toolgateway.NewRedactor([]string{logSecret})
+	r, err := secret.NewRedactor([]string{logSecret})
 	require.NoError(t, err)
 	var out bytes.Buffer
 	logger := newLogger(&out, slog.LevelDebug, r)
@@ -37,7 +37,7 @@ func TestLogger_RedactsSecrets(t *testing.T) {
 }
 
 func TestNewLogger_Levels(t *testing.T) {
-	r, err := toolgateway.NewRedactor(nil)
+	r, err := secret.NewRedactor(nil)
 	require.NoError(t, err)
 	var out bytes.Buffer
 	logger := newLogger(&out, slog.LevelWarn, r)

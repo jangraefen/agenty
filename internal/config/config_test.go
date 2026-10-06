@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jangraefen/agenty/internal/config"
-	"github.com/jangraefen/agenty/internal/harness"
 )
 
 func TestLoad_Valid(t *testing.T) {
@@ -42,12 +41,12 @@ func TestLoad_Valid(t *testing.T) {
 	assert.Empty(t, minimal.Policy)
 }
 
-// fieldsOf returns the fields named by every harness.FieldError in err.
+// fieldsOf returns the fields named by every config.FieldError in err.
 func fieldsOf(err error) []string {
 	var fields []string
 	var walk func(error)
 	walk = func(e error) {
-		if fe, ok := e.(*harness.FieldError); ok { //nolint:errorlint // the walk needs the exact node; errors.As would match wrappers too
+		if fe, ok := e.(*config.FieldError); ok { //nolint:errorlint // the walk needs the exact node; errors.As would match wrappers too
 			fields = append(fields, fe.Field)
 			return
 		}

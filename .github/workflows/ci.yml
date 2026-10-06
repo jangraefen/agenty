@@ -38,11 +38,11 @@ jobs:
       - name: go test
         run: go test -race -coverprofile=coverage.out ./...
 
-      # IDEA.md: the gateway and policy are where security lives and get full
-      # coverage.
-      - name: toolgateway and policy coverage is 100%
+      # IDEA.md: the gateway, policy and secret redaction are where security
+      # lives and get full coverage.
+      - name: toolgateway, policy and secret coverage is 100%
         run: |
-          for pkg in toolgateway policy; do
+          for pkg in toolgateway policy secret; do
             go test -coverprofile="$pkg.out" "./internal/$pkg/"
             total=$(go tool cover -func="$pkg.out" | awk '/^total:/ {print $3}')
             echo "$pkg coverage: $total"

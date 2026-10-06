@@ -158,13 +158,3 @@ func TestCall_ApproverSeesRedactedArgsAndReasons(t *testing.T) {
 	assert.JSONEq(t, `{"key":"[redacted]"}`, string(approver.Calls[0].Request.Args), "a person sees the arguments, never the secret")
 	assert.Equal(t, []string{"writes [redacted] to the vault"}, approver.Calls[0].Reasons)
 }
-
-func TestRedactor_String(t *testing.T) {
-	r, err := toolgateway.NewRedactor([]string{apiKey})
-	require.NoError(t, err)
-
-	assert.Equal(t, "key=[redacted] ok", r.String("key="+apiKey+" ok"))
-
-	_, err = toolgateway.NewRedactor([]string{"short"})
-	require.ErrorContains(t, err, "secret 0 is shorter than 8 characters")
-}

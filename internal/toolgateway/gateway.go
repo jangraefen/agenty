@@ -21,6 +21,8 @@ import (
 	"slices"
 	"strings"
 	"sync"
+
+	"github.com/jangraefen/agenty/internal/secret"
 )
 
 var toolName = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
@@ -101,7 +103,7 @@ type Gateway struct {
 	policy       Policy
 	approver     Approver
 	audit        Audit
-	redact       *Redactor
+	redact       *secret.Redactor
 
 	mu       sync.Mutex
 	sessions []namedSession
@@ -133,9 +135,9 @@ func New(ctx context.Context, cfg Config) (*Gateway, error) {
 		}
 		granted[name] = true
 	}
-	redact, err := NewRedactor(cfg.Secrets)
+	redact, err := secret.NewRedactor(cfg.Secrets)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("toolgateway: %w", err)
 	}
 
 	sessions, served, err := startServers(ctx, cfg.Servers, granted)
@@ -237,7 +239,7 @@ func (r *Run) Call(ctx context.Context, call ToolCall) (json.RawMessage, error) 
 	if rec.Decision == RequireApproval {
 		// The approver is a person: show them the call, never a secret.
 		req := verdict.Request
-		req.Args = g.redact.json(req.Args)
+		req.Args = g.redact.JSON(req.Args)
 		reasons := make([]string, len(verdict.Reasons))
 		for i, reason := range verdict.Reasons {
 			reasons[i] = g.redact.String(reason)
@@ -262,7 +264,7 @@ func (r *Run) Call(ctx context.Context, call ToolCall) (json.RawMessage, error) 
 
 	r.countExecuted(call.Name)
 	result, toolErr := tool.Call(ctx, call.Args)
-	result, toolErr = g.redact.json(result), g.redact.error(toolErr)
+	result, toolErr = g.redact.JSON(result), g.redact.Error(toolErr)
 
 	rec.Event, rec.Result = EventResult, result
 	if toolErr != nil {
@@ -336,7 +338,7 @@ func (r *Run) countExecuted(name string) {
 
 // record writes rec to the audit log, with secrets redacted.
 func (g *Gateway) record(ctx context.Context, rec Record) error {
-	rec.Args, rec.Result = g.redact.json(rec.Args), g.redact.json(rec.Result)
+	rec.Args, rec.Result = g.redact.JSON(rec.Args), g.redact.JSON(rec.Result)
 	rec.Reason, rec.Err, rec.Approver = g.redact.String(rec.Reason), g.redact.String(rec.Err), g.redact.String(rec.Approver)
 	if err := g.audit.Record(ctx, rec); err != nil {
 		return fmt.Errorf("%w: %s %s: %w", ErrAudit, rec.Event, rec.Tool, err)

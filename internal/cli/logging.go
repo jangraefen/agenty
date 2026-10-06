@@ -7,12 +7,12 @@ import (
 
 	"github.com/charmbracelet/log"
 
-	"github.com/jangraefen/agenty/internal/toolgateway"
+	"github.com/jangraefen/agenty/internal/secret"
 )
 
 // newLogger returns a logger that writes to w at level and redacts r's
 // secrets from every record.
-func newLogger(w io.Writer, level slog.Level, r *toolgateway.Redactor) *slog.Logger {
+func newLogger(w io.Writer, level slog.Level, r *secret.Redactor) *slog.Logger {
 	// charmbracelet/log levels have the same values as slog's.
 	h := log.NewWithOptions(w, log.Options{Level: log.Level(level), ReportTimestamp: true})
 	return slog.New(&redactHandler{next: h, redact: r})
@@ -24,7 +24,7 @@ var _ slog.Handler = (*redactHandler)(nil)
 // passing records on.
 type redactHandler struct {
 	next   slog.Handler
-	redact *toolgateway.Redactor
+	redact *secret.Redactor
 }
 
 func (h *redactHandler) Enabled(ctx context.Context, level slog.Level) bool {

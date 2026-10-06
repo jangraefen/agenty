@@ -20,6 +20,7 @@ import (
 	"github.com/jangraefen/agenty/internal/mcptool"
 	"github.com/jangraefen/agenty/internal/model/anthropic"
 	"github.com/jangraefen/agenty/internal/must"
+	"github.com/jangraefen/agenty/internal/secret"
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
@@ -128,7 +129,7 @@ func run(ctx context.Context, args []string, env Env) int {
 	}
 	// No secret is known before the config is resolved, so this logger
 	// redacts nothing; it only reports failures to get that far.
-	logger := newLogger(env.Stderr, flags.logLevel, must.Value(toolgateway.NewRedactor(nil)))
+	logger := newLogger(env.Stderr, flags.logLevel, must.Value(secret.NewRedactor(nil)))
 
 	cfg, err := config.Load(flags.config)
 	if err != nil {
@@ -143,7 +144,7 @@ func run(ctx context.Context, args []string, env Env) int {
 		return fail(logger, err)
 	}
 	// Resolve rejects secrets too short to redact.
-	redact := must.Value(toolgateway.NewRedactor(resolved.Secrets))
+	redact := must.Value(secret.NewRedactor(resolved.Secrets))
 	logger = newLogger(env.Stderr, flags.logLevel, redact)
 
 	output, err := runHarness(ctx, logger, env, flags, cfg, resolved, h)

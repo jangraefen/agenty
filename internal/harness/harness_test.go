@@ -106,6 +106,7 @@ func TestLoad_InvalidDocument(t *testing.T) {
 		wantContains string
 	}{
 		{"unknown_field.yaml", "max_step"},
+		{"unknown_policy_field.yaml", "bogus"},
 		{"malformed.yaml", "malformed.yaml"},
 		{"does_not_exist.yaml", "does_not_exist.yaml"},
 	}

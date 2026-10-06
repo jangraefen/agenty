@@ -35,7 +35,7 @@ export default defineConfig({
         AGENTY_E2E_TOKEN: token,
         AGENTY_E2E_ANTHROPIC_API_KEY: "e2e-dummy-key-the-model-refuses",
       },
-      stdout: "pipe",
+      stdout: "ignore",
     },
     {
       command: "pnpm build && pnpm exec vite preview --host 127.0.0.1 --port 4173 --strictPort",

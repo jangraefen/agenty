@@ -15,7 +15,21 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      AGENTY_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -34,6 +48,12 @@ jobs:
         run: |
           go mod tidy
           git diff --exit-code go.mod go.sum
+
+      - name: sqlc code is generated from the current queries
+        run: |
+          go generate ./internal/store/
+          git status --porcelain internal/store/db
+          test -z "$(git status --porcelain internal/store/db)"
 
       - name: go test
         run: go test -race -coverprofile=coverage.out ./...

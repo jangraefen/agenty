@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -41,6 +42,7 @@ func TestLoad_Valid(t *testing.T) {
 		"ops":   {Members: []string{"bob"}},
 	}, got.Workspaces)
 	assert.Equal(t, config.CORS{Origins: []string{"http://localhost:5173"}}, got.CORS)
+	assert.Equal(t, 15*time.Minute, got.Approvals.Timeout)
 	require.Len(t, got.Policy, 1)
 	assert.Equal(t, "policies/central.rego", got.Policy[0].Name)
 	assert.Contains(t, got.Policy[0].Source, "writes need a human", "policy files are read relative to the config file")
@@ -102,6 +104,7 @@ func TestLoad_InvalidFields(t *testing.T) {
 		{"origin with a path", provider + "cors: {origins: [\"http://localhost:5173/\"]}", []string{"cors.origins[0]"}},
 		{"origin without a scheme", provider + "cors: {origins: [localhost:5173]}", []string{"cors.origins[0]"}},
 		{"wildcard origin", provider + "cors: {origins: [\"*\"]}", []string{"cors.origins[0]"}},
+		{"negative approval timeout", provider + "approvals: {timeout: -1m}", []string{"approvals.timeout"}},
 		{"origin with another scheme", provider + "cors: {origins: [\"ftp://localhost\"]}", []string{"cors.origins[0]"}},
 	}
 	for _, tt := range tests {

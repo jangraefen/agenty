@@ -71,6 +71,7 @@ type options struct {
 	// configuredModel uses the server's own provider instead of scripted
 	// models.
 	configuredModel bool
+	approvalTimeout time.Duration
 }
 
 func newFixture(t *testing.T, opts options) *fixture {
@@ -100,7 +101,8 @@ func newFixture(t *testing.T, opts options) *fixture {
 				"home": {Members: []string{"alice", "bob"}},
 				"work": {Members: []string{"bob"}},
 			},
-			CORS: config.CORS{Origins: []string{origin}},
+			CORS:      config.CORS{Origins: []string{origin}},
+			Approvals: config.Approvals{Timeout: opts.approvalTimeout},
 		},
 		Resolved: &config.Resolved{Redactor: redactor, UserTokens: userTokens},
 		Logger:   slog.New(redactor.Handler(slog.NewTextHandler(f.logs, nil))),

@@ -119,3 +119,46 @@ func TestCall_ToolCallLimitCountsEveryAttempt(t *testing.T) {
 	require.Len(t, audit.Records, 4)
 	assert.Equal(t, "tool call limit reached", audit.Records[3].Reason)
 }
+
+// approveAfterCancel cancels the run's context, then approves: an answer
+// that raced the run's cancellation.
+type approveAfterCancel struct {
+	cancel context.CancelCauseFunc
+}
+
+func (a approveAfterCancel) Approve(context.Context, toolgateway.Request, []string) (toolgateway.Approval, error) {
+	a.cancel(errors.New("cancelled by bob"))
+	return toolgateway.Approval{Approved: true, Approver: "alice", Reason: "ok"}, nil
+}
+
+// TestCall_CancellationWinsOverAnApproval: a call is never executed once its
+// run is cancelled, even if an approval arrives at the same moment.
+func TestCall_CancellationWinsOverAnApproval(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	label := &gatewaytest.Tool{Name: "tickets_label"}
+	audit := &gatewaytest.Audit{}
+	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+		Redactor:     gatewaytest.NoSecrets,
+		Harness:      "triage",
+		MaxToolCalls: 100,
+		Policy: &gatewaytest.Policy{Verdicts: map[string]toolgateway.Verdict{
+			"tickets_label": {Decision: toolgateway.RequireApproval, Reasons: []string{"writes need a human"}},
+		}},
+		Approver: approveAfterCancel{cancel: cancel},
+		Granted:  []string{"tickets_label"},
+		Servers:  gatewaytest.Servers(label),
+		Audit:    audit,
+	})
+	require.NoError(t, err)
+
+	_, err = gw.Start().Call(ctx, toolgateway.ToolCall{Name: "tickets_label", Args: json.RawMessage(`{}`)})
+
+	require.ErrorIs(t, err, toolgateway.ErrDenied)
+	assert.Zero(t, label.Calls, "nothing runs after the run was cancelled")
+	require.Len(t, audit.Records, 2)
+	assert.Equal(t, toolgateway.EventApproval, audit.Records[1].Event)
+	assert.Equal(t, toolgateway.Deny, audit.Records[1].Decision)
+	assert.Equal(t, "approval failed: cancelled by bob", audit.Records[1].Reason)
+	assert.Equal(t, "alice", audit.Records[1].Approver, "who answered is still recorded")
+}

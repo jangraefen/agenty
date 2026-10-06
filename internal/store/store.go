@@ -14,10 +14,12 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
@@ -189,12 +191,17 @@ const (
 	RunRunning   RunStatus = "running"
 	RunSucceeded RunStatus = "succeeded"
 	RunFailed    RunStatus = "failed"
+	// RunCancelled is a run a user cancelled.
+	RunCancelled RunStatus = "cancelled"
 )
 
 // Run is a stored run.
 type Run struct {
 	ID               string
 	HarnessVersionID int64
+	// Harness and HarnessVersion name the harness version the run runs.
+	Harness        string
+	HarnessVersion int
 	// StartedBy names the user who started the run.
 	StartedBy string
 	Input     string
@@ -248,9 +255,55 @@ func (s *Store) Run(ctx context.Context, workspace, id string) (Run, error) {
 	if err != nil {
 		return Run{}, notFound("run "+id, err)
 	}
+	return run(row.Run, row.Harness, row.HarnessVersion), nil
+}
+
+// RunFilter selects runs to list.
+type RunFilter struct {
+	// Harness and Status, when set, select the runs of that harness or with
+	// that status.
+	Harness string
+	Status  RunStatus
+	// Before, when set, lists the runs after the run with that ID, in the
+	// order Runs returns them: a page after one ending with that run.
+	Before string
+	// Limit is the most runs to return; it must be greater than 0.
+	Limit int
+}
+
+// Runs lists the runs of workspace that f selects, newest first.
+func (s *Store) Runs(ctx context.Context, workspace string, f RunFilter) ([]Run, error) {
+	if f.Limit <= 0 || f.Limit > math.MaxInt32 {
+		return nil, fmt.Errorf("store: runs: limit %d is out of range", f.Limit)
+	}
+	rows, err := s.queries.ListRuns(ctx, db.ListRunsParams{
+		Workspace: workspace,
+		Harness:   optional(f.Harness),
+		Status:    optional(string(f.Status)),
+		Before:    optional(f.Before),
+		MaxRows:   int32(f.Limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("store: runs: %w", err)
+	}
+	out := make([]Run, len(rows))
+	for i, row := range rows {
+		out[i] = run(row.Run, row.Harness, row.HarnessVersion)
+	}
+	return out, nil
+}
+
+// optional is s as a nullable query argument: empty is NULL.
+func optional(s string) pgtype.Text {
+	return pgtype.Text{String: s, Valid: s != ""}
+}
+
+func run(row db.Run, harness string, version int32) Run {
 	return Run{
 		ID:               row.ID,
 		HarnessVersionID: row.HarnessVersionID,
+		Harness:          harness,
+		HarnessVersion:   int(version),
 		StartedBy:        row.StartedBy,
 		Input:            row.Input,
 		Status:           RunStatus(row.Status),
@@ -259,7 +312,7 @@ func (s *Store) Run(ctx context.Context, workspace, id string) (Run, error) {
 		Error:            row.Error,
 		CreatedAt:        row.CreatedAt,
 		FinishedAt:       row.FinishedAt,
-	}, nil
+	}
 }
 
 // FailRunningRuns marks every run that is still running as failed with

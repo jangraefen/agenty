@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -568,7 +569,12 @@ func TestInvariant_ServerRequiresSignIn(t *testing.T) {
 		{http.MethodGet, home + "/runs/r1/transcript", ""},
 		{http.MethodGet, home + "/runs/r1/events", ""},
 		{http.MethodPost, home + "/runs/r1/approvals/a1", `{"approved":true}`},
+		{http.MethodGet, home + "/runs", ""},
+		{http.MethodPost, home + "/runs/r1/cancel", ""},
+		{http.MethodGet, home + "/approvals", ""},
 		{http.MethodGet, "/v1/workspaces/ghost/harnesses", ""},
+		{http.MethodGet, "/v1/no-such-route", ""},
+		{http.MethodGet, "/", ""},
 	}
 	credentials := []struct{ name, header string }{
 		{"no token", ""},
@@ -663,6 +669,9 @@ func TestInvariant_WorkspacesAreSeparate(t *testing.T) {
 			{carolToken, http.MethodGet, home + "/runs/" + run.ID + "/transcript", nil},
 			{carolToken, http.MethodGet, home + "/runs/" + run.ID + "/events", nil},
 			{carolToken, http.MethodPost, home + "/runs/" + run.ID + "/approvals/" + req.ID, api.Answer{Approved: true}},
+			{carolToken, http.MethodGet, home + "/runs", nil},
+			{carolToken, http.MethodPost, home + "/runs/" + run.ID + "/cancel", nil},
+			{carolToken, http.MethodGet, home + "/approvals", nil},
 			{aliceToken, http.MethodGet, work + "/harnesses", nil},
 			{aliceToken, http.MethodPut, work + "/harnesses/notes", notes()},
 			{aliceToken, http.MethodGet, "/v1/workspaces/ghost/harnesses", nil},
@@ -679,9 +688,19 @@ func TestInvariant_WorkspacesAreSeparate(t *testing.T) {
 		}
 		assert.Equal(t, http.StatusNotFound, f.doAs(t, bobToken, http.MethodPost, work+"/runs/"+run.ID+"/approvals/"+req.ID, api.Answer{Approved: true}, nil))
 		assert.Equal(t, http.StatusNotFound, f.doAs(t, bobToken, http.MethodPost, work+"/runs", api.CreateRun{Harness: "notes", Input: "x"}, nil))
+		assert.Equal(t, http.StatusNotFound, f.doAs(t, bobToken, http.MethodPost, work+"/runs/"+run.ID+"/cancel", nil, nil))
 		var all []api.HarnessVersion
 		require.Equal(t, http.StatusOK, f.doAs(t, bobToken, http.MethodGet, work+"/harnesses", nil, &all))
 		assert.Empty(t, all)
+		var runs api.RunList
+		require.Equal(t, http.StatusOK, f.doAs(t, bobToken, http.MethodGet, work+"/runs", nil, &runs))
+		assert.Empty(t, runs.Runs)
+		var approvals []api.ApprovalRequest
+		require.Equal(t, http.StatusOK, f.doAs(t, bobToken, http.MethodGet, work+"/approvals", nil, &approvals))
+		assert.Empty(t, approvals)
+		var mine []api.ApprovalRequest
+		require.Equal(t, http.StatusOK, f.doAs(t, bobToken, http.MethodGet, home+"/approvals", nil, &mine))
+		assert.Len(t, mine, 1, "the request is listed in its own workspace")
 	})
 
 	assert.Zero(t, f.write.Calls, "no outsider answered the approval")
@@ -703,4 +722,167 @@ func TestCreateRun_RefusedAfterClose(t *testing.T) {
 	n, err := f.store.FailRunningRuns(context.Background(), "check")
 	require.NoError(t, err)
 	assert.Zero(t, n, "no run was stored")
+}
+
+func TestUnknownRoute_NotFoundAfterSignIn(t *testing.T) {
+	f := newFixture(t, options{})
+	var resp api.Error
+
+	assert.Equal(t, http.StatusNotFound, f.do(t, http.MethodGet, "/v1/no-such-route", nil, &resp))
+	assert.Equal(t, "GET /v1/no-such-route: no such route", resp.Error)
+}
+
+// runToEnd starts a run that replies at once and waits until it finished.
+func (f *fixture) runToEnd(t *testing.T, bearer, input string) api.Run {
+	t.Helper()
+	f.script(modeltest.Reply("done"))
+	var run api.Run
+	require.Equal(t, http.StatusCreated, f.doAs(t, bearer, http.MethodPost, home+"/runs", api.CreateRun{Harness: "notes", Input: input}, &run))
+	f.events(t, run.ID).rest()
+	return run
+}
+
+func TestListRuns(t *testing.T) {
+	f := newFixture(t, options{})
+	f.putNotes(t)
+	r1 := f.runToEnd(t, aliceToken, "one")
+	r2 := f.runToEnd(t, bobToken, "two")
+	f.script(modeltest.Fail(errors.New("model down")))
+	r3 := f.startRun(t, "three")
+	f.events(t, r3.ID).rest()
+
+	var all api.RunList
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs", nil, &all))
+	ids := func(l api.RunList) []string {
+		out := []string{}
+		for _, r := range l.Runs {
+			out = append(out, r.ID)
+		}
+		return out
+	}
+	assert.Equal(t, []string{r3.ID, r2.ID, r1.ID}, ids(all), "newest first")
+	assert.Empty(t, all.Next, "a short page is the last")
+	assert.Equal(t, "notes", all.Runs[0].Harness)
+	assert.Equal(t, 1, all.Runs[0].HarnessVersion)
+	assert.Equal(t, "bob", all.Runs[1].StartedBy)
+	assert.Equal(t, api.RunFailed, all.Runs[0].Status)
+
+	var page1, page2 api.RunList
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs?limit=2", nil, &page1))
+	assert.Equal(t, []string{r3.ID, r2.ID}, ids(page1))
+	assert.Equal(t, r2.ID, page1.Next)
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs?limit=2&before="+page1.Next, nil, &page2))
+	assert.Equal(t, []string{r1.ID}, ids(page2))
+
+	var failed, ofOther api.RunList
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs?status=failed", nil, &failed))
+	assert.Equal(t, []string{r3.ID}, ids(failed))
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs?harness=other", nil, &ofOther))
+	assert.Equal(t, []string{}, ids(ofOther))
+
+	for _, q := range []string{"limit=0", "limit=201", "limit=x", "status=done"} {
+		var resp api.Error
+		assert.Equal(t, http.StatusBadRequest, f.do(t, http.MethodGet, home+"/runs?"+q, nil, &resp), q)
+		assert.NotEmpty(t, resp.Error, q)
+	}
+}
+
+func TestCancelRun(t *testing.T) {
+	f := newFixture(t, options{policy: []policy.Module{policy.RulesModule("central", `require_approval contains "writes need a human" if input.tool == "files_write"`)}})
+	f.putNotes(t)
+	f.script(modeltest.CallTools(call("c1", "files_write", `{}`)), modeltest.Reply("done"))
+	run := f.startRun(t, "tidy my notes")
+	events := f.events(t, run.ID)
+	events.next()
+	require.Equal(t, api.EventApproval, events.next().name)
+
+	require.Equal(t, http.StatusAccepted, f.doAs(t, bobToken, http.MethodPost, home+"/runs/"+run.ID+"/cancel", nil, nil), "any member may cancel")
+
+	rest := events.rest()
+	finished := decodeAs[api.Run](t, rest[len(rest)-1])
+	assert.Equal(t, api.RunCancelled, finished.Status)
+	assert.Equal(t, "cancelled by bob", finished.Error)
+	assert.Zero(t, f.write.Calls, "the call waiting for approval never runs")
+	var audit []api.AuditRecord
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+run.ID+"/audit", nil, &audit))
+	require.Len(t, audit, 2)
+	assert.Equal(t, toolgateway.Deny, audit[1].Decision)
+	assert.Equal(t, "approval failed: cancelled by bob", audit[1].Reason, "the audit log says who cancelled")
+	var stored api.Run
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+run.ID, nil, &stored))
+	assert.Equal(t, finished, stored)
+	var pending []api.ApprovalRequest
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/approvals", nil, &pending))
+	assert.Empty(t, pending, "a cancelled run waits for nothing")
+
+	var resp api.Error
+	assert.Equal(t, http.StatusConflict, f.do(t, http.MethodPost, home+"/runs/"+run.ID+"/cancel", nil, &resp))
+	assert.Contains(t, resp.Error, "already finished")
+	assert.Equal(t, http.StatusNotFound, f.do(t, http.MethodPost, home+"/runs/ghost/cancel", nil, &resp))
+}
+
+func TestCancelRun_RunningOnAnotherServer(t *testing.T) {
+	f := newFixture(t, options{})
+	v, err := f.store.PutHarness(context.Background(), "home", notes())
+	require.NoError(t, err)
+	require.NoError(t, f.store.CreateRun(context.Background(), store.NewRun{ID: "elsewhere", HarnessVersionID: v.ID, Input: "x", StartedBy: "alice"}))
+	var resp api.Error
+
+	assert.Equal(t, http.StatusConflict, f.do(t, http.MethodPost, home+"/runs/elsewhere/cancel", nil, &resp))
+	assert.Contains(t, resp.Error, "running on another server")
+}
+
+func TestApprovals_ListedUntilAnswered(t *testing.T) {
+	f := newFixture(t, options{
+		policy:          []policy.Module{policy.RulesModule("central", `require_approval contains "writes need a human" if input.tool == "files_write"`)},
+		approvalTimeout: 10 * time.Minute,
+	})
+	f.putNotes(t)
+	f.script(modeltest.CallTools(call("c1", "files_write", `{"path":"a.md"}`)), modeltest.Reply("done"))
+	run := f.startRun(t, "tidy my notes")
+	events := f.events(t, run.ID)
+	events.next()
+	req := decodeAs[api.ApprovalRequest](t, events.next())
+
+	var pending []api.ApprovalRequest
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/approvals", nil, &pending))
+
+	require.Len(t, pending, 1)
+	assert.Equal(t, req.ID, pending[0].ID)
+	assert.Equal(t, run.ID, pending[0].RunID)
+	assert.Equal(t, "files_write", pending[0].Tool)
+	assert.Equal(t, 10*time.Minute, pending[0].ExpiresAt.Sub(pending[0].CreatedAt))
+	assert.Equal(t, run.ID, req.RunID, "the event carries the same request")
+
+	require.Equal(t, http.StatusNoContent, f.do(t, http.MethodPost, home+"/runs/"+run.ID+"/approvals/"+req.ID, api.Answer{Approved: true}, nil))
+	events.rest()
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/approvals", nil, &pending))
+	assert.Empty(t, pending)
+}
+
+func TestApprovals_TimeOut(t *testing.T) {
+	f := newFixture(t, options{
+		policy:          []policy.Module{policy.RulesModule("central", `require_approval contains "writes need a human" if input.tool == "files_write"`)},
+		approvalTimeout: 50 * time.Millisecond,
+	})
+	f.putNotes(t)
+	f.script(modeltest.CallTools(call("c1", "files_write", `{}`)), modeltest.Reply("done"))
+	run := f.startRun(t, "tidy my notes")
+
+	events := f.events(t, run.ID).rest()
+
+	var approval toolgateway.Record
+	for _, e := range events {
+		if e.name == api.EventAudit {
+			if r := decodeAs[toolgateway.Record](t, e); r.Event == toolgateway.EventApproval {
+				approval = r
+			}
+		}
+	}
+	assert.Equal(t, toolgateway.Deny, approval.Decision)
+	assert.Equal(t, "approval rejected: no answer within 50ms", approval.Reason)
+	assert.Empty(t, approval.Approver)
+	assert.Zero(t, f.write.Calls)
+	finished := decodeAs[api.Run](t, events[len(events)-1])
+	assert.Equal(t, api.RunSucceeded, finished.Status, "a timed-out approval is a rejection, reported to the model")
 }

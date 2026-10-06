@@ -250,6 +250,10 @@ func (r *Run) Call(ctx context.Context, call ToolCall) (json.RawMessage, error) 
 		switch {
 		case err != nil:
 			rec.Decision, rec.Reason = Deny, "approval failed: "+err.Error()
+		case ctx.Err() != nil:
+			// The run was cancelled while it waited: cancellation wins over
+			// an approval that arrived at the same moment.
+			rec.Decision, rec.Reason = Deny, "approval failed: "+context.Cause(ctx).Error()
 		case !approval.Approved:
 			rec.Decision, rec.Reason = Deny, "approval rejected: "+approval.Reason
 		}

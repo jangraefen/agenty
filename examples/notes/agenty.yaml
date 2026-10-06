@@ -22,5 +22,8 @@ users:
 workspaces:
   notes:
     members: [demo]
+# A call that needs approval is rejected when no one answers within this.
+approvals:
+  timeout: 30m
 policy:
   files: [policies/central.rego]

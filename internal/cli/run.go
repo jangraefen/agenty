@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/jangraefen/agenty/internal/api"
 	"github.com/jangraefen/agenty/internal/must"
@@ -19,7 +20,8 @@ const runUsage = `usage: agenty run [flags] HARNESS INPUT
 
 Runs the latest version of HARNESS on INPUT on the server, asks at the
 terminal when a call needs approval, and prints the answer. Approvals are
-recorded as given by the signed-in user.
+recorded as given by the signed-in user. Interrupting the command cancels
+the run.
 `
 
 func run(ctx context.Context, args []string, env Env) int {
@@ -42,6 +44,16 @@ func run(ctx context.Context, args []string, env Env) int {
 	logger.Info("run started", "harness", rest[0], "run_id", started.ID)
 
 	finished, err := follow(ctx, logger, c, started.ID, newTerminalApprover(env.Stdin, env.Stderr, env.Interactive))
+	if err != nil && ctx.Err() != nil {
+		// Interrupted: the run is not left behind on the server.
+		cancelCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer stop()
+		if cerr := c.do(cancelCtx, http.MethodPost, c.path("runs", started.ID, "cancel"), nil, nil); cerr != nil {
+			err = errors.Join(err, fmt.Errorf("cancel: %w", cerr))
+		} else {
+			logger.Info("run cancelled", "run_id", started.ID)
+		}
+	}
 	if err != nil {
 		return fail(logger, "run failed", fmt.Errorf("run %s: %w", started.ID, err))
 	}

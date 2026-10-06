@@ -25,6 +25,7 @@ export function App({ session, history }: { session: Session; history?: RouterHi
       }),
     [session, queryClient, router],
   );
+  useEffect(() => session.followOtherTabs(window), [session]);
 
   return (
     <QueryClientProvider client={queryClient}>

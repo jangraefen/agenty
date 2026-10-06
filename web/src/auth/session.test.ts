@@ -50,6 +50,29 @@ describe("Session", () => {
     expect(listener).not.toHaveBeenCalled();
   });
 
+  test("follows sign-ins and sign-outs in other tabs", () => {
+    const session = new Session(localStorage);
+    const listener = vi.fn();
+    session.subscribe(listener);
+    const stop = session.followOtherTabs(window);
+
+    // Another tab signs in, then something unrelated, then it clears storage.
+    localStorage.setItem(KEY, "other");
+    window.dispatchEvent(new StorageEvent("storage", { key: KEY, newValue: "other" }));
+    expect(session.token).toBe("other");
+    window.dispatchEvent(new StorageEvent("storage", { key: "unrelated", newValue: "x" }));
+    expect(session.token).toBe("other");
+    localStorage.clear();
+    window.dispatchEvent(new StorageEvent("storage", { key: null }));
+    expect(session.token).toBeNull();
+    expect(listener).toHaveBeenCalledTimes(2);
+
+    stop();
+    localStorage.setItem(KEY, "later");
+    window.dispatchEvent(new StorageEvent("storage", { key: KEY, newValue: "later" }));
+    expect(session.token).toBeNull();
+  });
+
   test("works in memory when the browser refuses storage", () => {
     const refusing: Storage = {
       length: 0,

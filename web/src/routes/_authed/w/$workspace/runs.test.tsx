@@ -149,6 +149,71 @@ describe("the runs page", () => {
     expect(queries.map(String)).toEqual([""]);
   });
 
+  test("sends no search parameter but the filters to the API", async () => {
+    const queries: URLSearchParams[] = [];
+    server.use(runsHandler({ "": { runs: [run()] } }, queries));
+    renderApp("/w/notes/runs?before=run-9&limit=999&status=failed", TOKEN);
+
+    await screen.findByRole("table", { name: "Runs" });
+    expect(queries.map(String)).toEqual(["status=failed"]);
+  });
+
+  test("filters by a harness whose name is all digits", async () => {
+    const queries: URLSearchParams[] = [];
+    server.use(runsHandler({ "": { runs: [run()] } }, queries));
+    renderApp("/w/notes/runs?harness=123", TOKEN);
+
+    await screen.findByRole("table", { name: "Runs" });
+    expect(queries[0]?.get("harness")).toBe("123");
+    expect(screen.getByLabelText("Harness")).toHaveValue("123");
+  });
+
+  test("keeps the loaded runs when loading more fails", async () => {
+    server.use(
+      http.get(runsUrl, ({ request }) =>
+        new URL(request.url).searchParams.has("before")
+          ? HttpResponse.json({ error: "boom" }, { status: 500 })
+          : HttpResponse.json({ runs: [run({ input: "kept" })], next: "run-1" }),
+      ),
+    );
+    const { user } = renderApp("/w/notes/runs", TOKEN);
+
+    await user.click(await screen.findByRole("button", { name: "Load more" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("boom");
+    expect(screen.getByText("kept")).toBeInTheDocument();
+  });
+
+  test("says how many runs are shown, for screen readers", async () => {
+    server.use(runsHandler({ "": { runs: [run({ id: "a" }), run({ id: "b" })] } }));
+    renderApp("/w/notes/runs", TOKEN);
+
+    await screen.findByRole("table", { name: "Runs" });
+    expect(screen.getByRole("status")).toHaveTextContent("2 runs shown.");
+  });
+
+  test("names a running run's duration in words", async () => {
+    const { finished_at: _, ...running } = run({ status: "running" });
+    server.use(runsHandler({ "": { runs: [running] } }));
+    renderApp("/w/notes/runs", TOKEN);
+
+    expect(await screen.findByText("still running")).toBeInTheDocument();
+  });
+
+  test("says when the harnesses for the filter cannot be loaded", async () => {
+    server.use(
+      runsHandler({ "": { runs: [run()] } }),
+      http.get(`${apiUrl}/v1/workspaces/notes/harnesses`, () =>
+        HttpResponse.json({ error: "nope" }, { status: 500 }),
+      ),
+    );
+    renderApp("/w/notes/runs", TOKEN);
+
+    expect(
+      await screen.findByRole("option", { name: "Harnesses could not be loaded" }),
+    ).toBeDisabled();
+  });
+
   test("reports an error from the API", async () => {
     server.use(http.get(runsUrl, () => HttpResponse.json({ error: "boom" }, { status: 500 })));
     renderApp("/w/notes/runs", TOKEN);

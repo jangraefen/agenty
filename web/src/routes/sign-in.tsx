@@ -26,8 +26,12 @@ function SignIn() {
   const signIn = useMutation({
     // The token is checked before it is kept, so a mistyped one is never
     // stored, and only ever travels in the Authorization header.
-    mutationFn: (candidate: string) =>
-      unwrap(api.GET("/v1/me", { headers: { Authorization: `Bearer ${candidate}` } })),
+    mutationFn: (candidate: string) => {
+      if (!headerSafe.test(candidate)) {
+        throw new InvalidToken();
+      }
+      return unwrap(api.GET("/v1/me", { headers: { Authorization: `Bearer ${candidate}` } }));
+    },
     onSuccess: async (me, candidate) => {
       queryClient.setQueryData(meQuery(api).queryKey, me);
       session.signIn(candidate);
@@ -39,6 +43,8 @@ function SignIn() {
     event.preventDefault();
     signIn.mutate(token.trim());
   }
+
+  const error = signIn.isError ? signInError(signIn.error) : null;
 
   return (
     <main className="mx-auto mt-24 max-w-sm p-6">
@@ -58,9 +64,9 @@ function SignIn() {
           aria-invalid={signIn.isError}
           aria-describedby={signIn.isError ? `${id}-error` : undefined}
         />
-        {signIn.isError && (
+        {error !== null && (
           <p id={`${id}-error`} role="alert" className="text-sm text-destructive">
-            {signInError(signIn.error)}
+            {error}
           </p>
         )}
         <Button type="submit" disabled={signIn.isPending}>
@@ -71,7 +77,15 @@ function SignIn() {
   );
 }
 
+// What an HTTP header can carry: visible ASCII characters, no spaces.
+const headerSafe = /^[\x21-\x7e]+$/;
+
+class InvalidToken extends Error {}
+
 function signInError(error: Error): string {
+  if (error instanceof InvalidToken) {
+    return "A token has only letters, digits and punctuation.";
+  }
   if (error instanceof ApiError) {
     if (error.status === 401) {
       return "This token is not valid.";

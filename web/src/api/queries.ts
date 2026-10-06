@@ -76,10 +76,13 @@ export function transcriptQuery(api: Api, workspace: string, id: string) {
   });
 }
 
+// A workspace's waiting approval requests, oldest first. There is no stream
+// of them for a whole workspace, so the pages that show them poll.
 export function approvalsQuery(api: Api, workspace: string) {
   return queryOptions({
     queryKey: ["workspaces", workspace, "approvals"],
     queryFn: () =>
       unwrap(api.GET("/v1/workspaces/{workspace}/approvals", { params: { path: { workspace } } })),
+    refetchInterval: 10_000,
   });
 }

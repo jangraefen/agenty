@@ -256,23 +256,54 @@ describe("the run page", () => {
     expect(within(waiting).queryByText("files_delete")).not.toBeInTheDocument();
   });
 
+  test("answers a waiting approval on the run's page", async () => {
+    const live = liveEventStream();
+    let answer: unknown = null;
+    let pending = [
+      approvalRequest({ id: "a", expires_at: new Date(Date.now() + 60_000).toISOString() }),
+    ];
+    server.use(
+      runHandler(runningRun),
+      http.get(`${base}/runs/run-1/events`, () => live.response()),
+      http.get(`${base}/approvals`, () => HttpResponse.json(pending)),
+      http.post(`${base}/runs/run-1/approvals/a`, async ({ request }) => {
+        answer = await request.json();
+        pending = [];
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    const { user } = renderApp(path, TOKEN);
+
+    const waiting = await screen.findByRole("region", { name: "Waiting for approval" });
+    await user.click(await within(waiting).findByRole("button", { name: "Approve" }));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("region", { name: "Waiting for approval" }),
+      ).not.toBeInTheDocument();
+    });
+    expect(answer).toEqual({ approved: true });
+  });
+
   test("refreshes the waiting approvals when the run asks for one", async () => {
     const live = liveEventStream();
-    let calls = 0;
+    let asked = false;
+    let fetched = false;
     server.use(
       runHandler(runningRun),
       http.get(`${base}/runs/run-1/events`, () => live.response()),
       http.get(`${base}/approvals`, () => {
-        calls += 1;
-        return HttpResponse.json(calls === 1 ? [] : [approvalRequest()]);
+        fetched = true;
+        return HttpResponse.json(asked ? [approvalRequest()] : []);
       }),
     );
     renderApp(path, TOKEN);
     await screen.findByText("running");
     await waitFor(() => {
-      expect(calls).toBe(1);
+      expect(fetched).toBe(true);
     });
 
+    asked = true;
     live.send("approval", approvalRequest());
 
     expect(await screen.findByRole("region", { name: "Waiting for approval" })).toBeInTheDocument();

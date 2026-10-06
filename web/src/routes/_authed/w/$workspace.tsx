@@ -1,4 +1,6 @@
+import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, notFound, Outlet, useNavigate } from "@tanstack/react-router";
+import { approvalsQuery } from "@/api/queries";
 import { loadMe } from "@/auth/load-me";
 import { Button } from "@/components/ui/button";
 
@@ -58,6 +60,7 @@ function WorkspaceLayout() {
             </ul>
           </nav>
         </details>
+        <PageLinks workspace={workspace} />
         <span className="ml-auto text-sm text-muted-foreground">{me.user}</span>
         <Button variant="outline" size="sm" onClick={signOut}>
           Sign out
@@ -67,6 +70,40 @@ function WorkspaceLayout() {
         <Outlet />
       </main>
     </div>
+  );
+}
+
+function PageLinks({ workspace }: { workspace: string }) {
+  const { api } = Route.useRouteContext();
+  const approvals = useQuery(approvalsQuery(api, workspace));
+  const waiting = approvals.data?.length ?? 0;
+  const linkClass =
+    "rounded-md px-2 py-1 text-sm hover:bg-accent aria-[current=page]:font-semibold";
+  return (
+    <nav aria-label="Pages">
+      <ul className="flex gap-1">
+        <li>
+          <Link to="/w/$workspace/runs" params={{ workspace }} className={linkClass}>
+            Runs
+          </Link>
+        </li>
+        <li>
+          <Link
+            to="/w/$workspace/approvals"
+            params={{ workspace }}
+            aria-label={waiting > 0 ? `Approvals (${waiting} waiting)` : "Approvals"}
+            className={linkClass}
+          >
+            Approvals
+            {waiting > 0 && (
+              <span className="ml-1.5 rounded-full bg-amber-200 px-1.5 text-xs font-medium text-amber-950">
+                {waiting}
+              </span>
+            )}
+          </Link>
+        </li>
+      </ul>
+    </nav>
   );
 }
 

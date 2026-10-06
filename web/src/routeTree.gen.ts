@@ -14,6 +14,7 @@ import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
 import { Route as AuthedWWorkspaceRouteImport } from './routes/_authed/w/$workspace'
 import { Route as AuthedWWorkspaceIndexRouteImport } from './routes/_authed/w/$workspace/index'
+import { Route as AuthedWWorkspaceApprovalsRouteImport } from './routes/_authed/w/$workspace/approvals'
 import { Route as AuthedWWorkspaceRunsIndexRouteImport } from './routes/_authed/w/$workspace/runs/index'
 import { Route as AuthedWWorkspaceRunsRunIdRouteImport } from './routes/_authed/w/$workspace/runs/$runId'
 
@@ -41,6 +42,12 @@ const AuthedWWorkspaceIndexRoute = AuthedWWorkspaceIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AuthedWWorkspaceRoute,
 } as any)
+const AuthedWWorkspaceApprovalsRoute =
+  AuthedWWorkspaceApprovalsRouteImport.update({
+    id: '/approvals',
+    path: '/approvals',
+    getParentRoute: () => AuthedWWorkspaceRoute,
+  } as any)
 const AuthedWWorkspaceRunsIndexRoute =
   AuthedWWorkspaceRunsIndexRouteImport.update({
     id: '/runs/',
@@ -58,6 +65,7 @@ export interface FileRoutesByFullPath {
   '/': typeof AuthedIndexRoute
   '/sign-in': typeof SignInRoute
   '/w/$workspace': typeof AuthedWWorkspaceRouteWithChildren
+  '/w/$workspace/approvals': typeof AuthedWWorkspaceApprovalsRoute
   '/w/$workspace/': typeof AuthedWWorkspaceIndexRoute
   '/w/$workspace/runs/$runId': typeof AuthedWWorkspaceRunsRunIdRoute
   '/w/$workspace/runs/': typeof AuthedWWorkspaceRunsIndexRoute
@@ -65,6 +73,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/sign-in': typeof SignInRoute
   '/': typeof AuthedIndexRoute
+  '/w/$workspace/approvals': typeof AuthedWWorkspaceApprovalsRoute
   '/w/$workspace': typeof AuthedWWorkspaceIndexRoute
   '/w/$workspace/runs/$runId': typeof AuthedWWorkspaceRunsRunIdRoute
   '/w/$workspace/runs': typeof AuthedWWorkspaceRunsIndexRoute
@@ -75,6 +84,7 @@ export interface FileRoutesById {
   '/sign-in': typeof SignInRoute
   '/_authed/': typeof AuthedIndexRoute
   '/_authed/w/$workspace': typeof AuthedWWorkspaceRouteWithChildren
+  '/_authed/w/$workspace/approvals': typeof AuthedWWorkspaceApprovalsRoute
   '/_authed/w/$workspace/': typeof AuthedWWorkspaceIndexRoute
   '/_authed/w/$workspace/runs/$runId': typeof AuthedWWorkspaceRunsRunIdRoute
   '/_authed/w/$workspace/runs/': typeof AuthedWWorkspaceRunsIndexRoute
@@ -85,6 +95,7 @@ export interface FileRouteTypes {
     | '/'
     | '/sign-in'
     | '/w/$workspace'
+    | '/w/$workspace/approvals'
     | '/w/$workspace/'
     | '/w/$workspace/runs/$runId'
     | '/w/$workspace/runs/'
@@ -92,6 +103,7 @@ export interface FileRouteTypes {
   to:
     | '/sign-in'
     | '/'
+    | '/w/$workspace/approvals'
     | '/w/$workspace'
     | '/w/$workspace/runs/$runId'
     | '/w/$workspace/runs'
@@ -101,6 +113,7 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/_authed/'
     | '/_authed/w/$workspace'
+    | '/_authed/w/$workspace/approvals'
     | '/_authed/w/$workspace/'
     | '/_authed/w/$workspace/runs/$runId'
     | '/_authed/w/$workspace/runs/'
@@ -148,6 +161,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedWWorkspaceIndexRouteImport
       parentRoute: typeof AuthedWWorkspaceRoute
     }
+    '/_authed/w/$workspace/approvals': {
+      id: '/_authed/w/$workspace/approvals'
+      path: '/approvals'
+      fullPath: '/w/$workspace/approvals'
+      preLoaderRoute: typeof AuthedWWorkspaceApprovalsRouteImport
+      parentRoute: typeof AuthedWWorkspaceRoute
+    }
     '/_authed/w/$workspace/runs/': {
       id: '/_authed/w/$workspace/runs/'
       path: '/runs'
@@ -166,12 +186,14 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthedWWorkspaceRouteChildren {
+  AuthedWWorkspaceApprovalsRoute: typeof AuthedWWorkspaceApprovalsRoute
   AuthedWWorkspaceIndexRoute: typeof AuthedWWorkspaceIndexRoute
   AuthedWWorkspaceRunsRunIdRoute: typeof AuthedWWorkspaceRunsRunIdRoute
   AuthedWWorkspaceRunsIndexRoute: typeof AuthedWWorkspaceRunsIndexRoute
 }
 
 const AuthedWWorkspaceRouteChildren: AuthedWWorkspaceRouteChildren = {
+  AuthedWWorkspaceApprovalsRoute: AuthedWWorkspaceApprovalsRoute,
   AuthedWWorkspaceIndexRoute: AuthedWWorkspaceIndexRoute,
   AuthedWWorkspaceRunsRunIdRoute: AuthedWWorkspaceRunsRunIdRoute,
   AuthedWWorkspaceRunsIndexRoute: AuthedWWorkspaceRunsIndexRoute,

@@ -4,6 +4,7 @@ import { useId } from "react";
 import { ApiError, unwrap } from "@/api/client";
 import { approvalsQuery, runQuery, transcriptQuery } from "@/api/queries";
 import type { components } from "@/api/schema";
+import { ApprovalCard } from "@/components/approval-card";
 import { Json } from "@/components/json";
 import { RunStatusBadge } from "@/components/run-status";
 import { Button } from "@/components/ui/button";
@@ -169,6 +170,7 @@ function Text({ title, text }: { title: string; text: string }) {
 }
 
 function WaitingApprovals({ waiting }: { waiting: Schemas["ApprovalRequest"][] }) {
+  const { workspace } = Route.useParams();
   const heading = useId();
   return (
     <section
@@ -180,19 +182,7 @@ function WaitingApprovals({ waiting }: { waiting: Schemas["ApprovalRequest"][] }
       </h2>
       <ul className="mt-2 grid gap-3">
         {waiting.map((request) => (
-          <li key={request.id} className="grid gap-1 text-sm">
-            <code className="font-semibold">{request.tool}</code>
-            <ul className="list-disc pl-5">
-              {request.reasons.map((reason) => (
-                <li key={reason}>{reason}</li>
-              ))}
-            </ul>
-            <Json value={request.args} />
-            <span className="text-muted-foreground">
-              Rejected unless answered by{" "}
-              <time dateTime={request.expires_at}>{formatTime(request.expires_at)}</time>
-            </span>
-          </li>
+          <ApprovalCard key={request.id} request={request} workspace={workspace} showRun={false} />
         ))}
       </ul>
     </section>

@@ -23,9 +23,12 @@ var ErrMaxSteps = errors.New("max steps reached")
 type Config struct {
 	Harness *harness.Harness
 	Model   model.Model
-	// Tools are the executors available to runs. Only those the harness
-	// grants are reachable, and only through the run's gateway.
+	// Tools are the in-process executors available to runs. Only those the
+	// harness grants are reachable, and only through the run's gateway.
 	Tools []toolgateway.Tool
+	// Servers are tool servers, such as MCP servers, by name. The gateway
+	// starts those that serve a granted tool; Close stops them.
+	Servers map[string]toolgateway.ToolServer
 	// Policy is central policy. It applies to every run, and the harness
 	// policy, if any, can only tighten it.
 	Policy []policy.Module
@@ -56,7 +59,8 @@ type Result struct {
 }
 
 // New validates cfg, compiles central and harness policy as separate layers,
-// builds the tool gateway from the harness grants, and returns an Agent. The
+// builds the tool gateway from the harness grants, which starts the tool
+// servers they need, and returns an Agent. Close the Agent to stop them. The
 // harness is copied and the gateway copies the grants, so later changes to the
 // harness do not affect the agent. A harness that names a policy must come
 // with its source.
@@ -90,10 +94,11 @@ func New(ctx context.Context, cfg Config) (*Agent, error) {
 	if err != nil {
 		return nil, fmt.Errorf("agent: %w", err)
 	}
-	gw, err := toolgateway.New(toolgateway.Config{
+	gw, err := toolgateway.New(ctx, toolgateway.Config{
 		Harness:      cfg.Harness.Name,
 		Granted:      cfg.Harness.Tools,
 		Tools:        cfg.Tools,
+		Servers:      cfg.Servers,
 		MaxToolCalls: cfg.Harness.Limits.MaxToolCalls,
 		Policy:       engine,
 		Approver:     cfg.Approver,
@@ -104,6 +109,19 @@ func New(ctx context.Context, cfg Config) (*Agent, error) {
 		return nil, fmt.Errorf("agent: %w", err)
 	}
 	return &Agent{harness: *cfg.Harness, model: cfg.Model, gateway: gw}, nil
+}
+
+// Tools describes the tools runs may call: granted and found, sorted by name.
+func (a *Agent) Tools() []toolgateway.Definition {
+	return a.gateway.Definitions()
+}
+
+// Close stops the tool servers the agent started.
+func (a *Agent) Close() error {
+	if err := a.gateway.Close(); err != nil {
+		return fmt.Errorf("agent: %w", err)
+	}
+	return nil
 }
 
 // Run executes the agent loop for input. Each step is one model call. Tool

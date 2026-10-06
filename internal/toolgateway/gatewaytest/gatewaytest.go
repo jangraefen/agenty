@@ -118,3 +118,55 @@ func (a *Approver) Approve(_ context.Context, req toolgateway.Request, reasons [
 	a.Calls = append(a.Calls, ApprovalCall{Request: req, Reasons: reasons})
 	return a.Approval, a.Err
 }
+
+var _ toolgateway.ToolServer = (*Server)(nil)
+
+// Server is a fake tool server. Its session serves Tools, and it records how
+// often it was started and closed.
+type Server struct {
+	Tools    []toolgateway.Tool
+	StartErr error
+	ToolsErr error
+	CloseErr error
+	// OnStart, if set, runs at the start of every start; an error it returns
+	// fails the start.
+	OnStart func(ctx context.Context) error
+	// OnClose, if set, runs at the start of every close.
+	OnClose func()
+
+	// StartedAs holds the name of every start.
+	StartedAs []string
+	Closed    int
+}
+
+// Start records the start and returns a session, or StartErr.
+func (s *Server) Start(ctx context.Context, name string) (toolgateway.ToolSession, error) {
+	s.StartedAs = append(s.StartedAs, name)
+	if s.OnStart != nil {
+		if err := s.OnStart(ctx); err != nil {
+			return nil, err
+		}
+	}
+	if s.StartErr != nil {
+		return nil, s.StartErr
+	}
+	return &session{server: s}, nil
+}
+
+var _ toolgateway.ToolSession = (*session)(nil)
+
+type session struct {
+	server *Server
+}
+
+func (s *session) Tools(context.Context) ([]toolgateway.Tool, error) {
+	return s.server.Tools, s.server.ToolsErr
+}
+
+func (s *session) Close() error {
+	if s.server.OnClose != nil {
+		s.server.OnClose()
+	}
+	s.server.Closed++
+	return s.server.CloseErr
+}

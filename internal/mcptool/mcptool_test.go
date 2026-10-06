@@ -56,7 +56,7 @@ func toolsByName(t *testing.T, s *mcptool.Session) map[string]toolgateway.Tool {
 // only through the gateway, in tests too.
 func callTool(ctx context.Context, t *testing.T, tool toolgateway.Tool, args json.RawMessage) (json.RawMessage, error) {
 	t.Helper()
-	gw, err := toolgateway.New(toolgateway.Config{
+	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
 		Granted:      []string{tool.Definition().Name},
 		Tools:        []toolgateway.Tool{tool},
 		MaxToolCalls: 100,
@@ -86,7 +86,7 @@ func TestTools_PrefixesNamesAndKeepsDefinitions(t *testing.T) {
 	def := tools["test_echo"].Definition()
 	assert.Equal(t, "Echoes its arguments.", def.Description)
 	assert.JSONEq(t, `{"type":"object"}`, string(def.InputSchema))
-	_, err := toolgateway.New(toolgateway.Config{Tools: slices.Collect(maps.Values(tools)), MaxToolCalls: 1, Policy: &gatewaytest.Policy{}, Audit: &gatewaytest.Audit{}})
+	_, err := toolgateway.New(context.Background(), toolgateway.Config{Tools: slices.Collect(maps.Values(tools)), MaxToolCalls: 1, Policy: &gatewaytest.Policy{}, Audit: &gatewaytest.Audit{}})
 	require.NoError(t, err, "the gateway accepts every MCP tool")
 }
 
@@ -154,21 +154,22 @@ func TestCall_CancelledContextStopsTheCall(t *testing.T) {
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
-func TestConnect_RejectsInvalidServers(t *testing.T) {
+func TestStart_RejectsInvalidServers(t *testing.T) {
 	tests := []struct {
 		name    string
+		as      string
 		server  mcptool.Server
 		wantErr string
 	}{
-		{"no name", mcptool.Server{Command: "x"}, "name"},
-		{"name with a dot", mcptool.Server{Name: "tickets.v2", Command: "x"}, `"tickets.v2"`},
-		{"uppercase name", mcptool.Server{Name: "Tickets", Command: "x"}, `"Tickets"`},
-		{"no command", mcptool.Server{Name: "tickets"}, "command"},
-		{"command that does not exist", mcptool.Server{Name: "tickets", Command: "/no/such/mcp-server"}, "tickets"},
+		{"no name", "", mcptool.Server{Command: "x"}, "name"},
+		{"name with a dot", "tickets.v2", mcptool.Server{Command: "x"}, `"tickets.v2"`},
+		{"uppercase name", "Tickets", mcptool.Server{Command: "x"}, `"Tickets"`},
+		{"no command", "tickets", mcptool.Server{}, "command"},
+		{"command that does not exist", "tickets", mcptool.Server{Command: "/no/such/mcp-server"}, "tickets"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s, err := mcptool.Connect(t.Context(), tt.server)
+			s, err := tt.server.Start(t.Context(), tt.as)
 			require.ErrorContains(t, err, tt.wantErr)
 			assert.Nil(t, s)
 		})

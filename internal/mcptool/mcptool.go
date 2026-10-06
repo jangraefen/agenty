@@ -36,11 +36,12 @@ func clientVersion() string {
 // server name.
 var serverName = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
+var _ toolgateway.ToolServer = Server{}
+
 // Server is an MCP server Agenty starts as a subprocess and talks to over
-// stdin and stdout.
+// stdin and stdout. The tool gateway starts it, under the name that prefixes
+// its tools, as in "<name>_<tool>".
 type Server struct {
-	// Name prefixes the server's tools, as in "<name>_<tool>".
-	Name    string
 	Command string
 	Args    []string
 	// Env is the environment of the server process. Only PATH is inherited
@@ -56,15 +57,20 @@ type Session struct {
 	session *mcp.ClientSession
 }
 
-// Connect starts the server and connects to it.
-func Connect(ctx context.Context, srv Server) (*Session, error) {
-	if err := validateName(srv.Name); err != nil {
+// Start starts the server as name and connects to it. Only the tool gateway
+// starts servers.
+func (s Server) Start(ctx context.Context, name string) (toolgateway.ToolSession, error) {
+	if err := validateName(name); err != nil {
 		return nil, err
 	}
-	if srv.Command == "" {
-		return nil, fmt.Errorf("mcptool: server %s: command is required", srv.Name)
+	if s.Command == "" {
+		return nil, fmt.Errorf("mcptool: server %s: command is required", name)
 	}
-	return connect(ctx, srv.Name, &mcp.CommandTransport{Command: command(srv)})
+	session, err := connect(ctx, name, &mcp.CommandTransport{Command: command(s)})
+	if err != nil {
+		return nil, err
+	}
+	return session, nil
 }
 
 // command builds the server process. It inherits only PATH, because servers

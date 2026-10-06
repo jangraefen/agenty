@@ -1,0 +1,24 @@
+# Harness: what a builder owns. The agent decides the steps; the grants and
+# policy decide what it may do.
+name: notes
+instructions: |
+  You keep the notes in the sandbox directory tidy. Read the notes, then
+  rewrite them as a short, sorted markdown list. Paths are relative to the
+  sandbox; list it first if you are unsure what is there.
+model:
+  provider: anthropic
+  name: claude-sonnet-5-5
+tools:
+  - files_list_allowed_directories
+  - files_list_directory
+  - files_read_text_file
+  - files_write_file
+limits:
+  max_steps: 10
+  max_tool_calls: 20
+policy:
+  rules: |
+    deny contains "one rewrite per run is enough" if {
+      input.tool == "files_write_file"
+      input.calls.by_tool["files_write_file"] >= 1
+    }

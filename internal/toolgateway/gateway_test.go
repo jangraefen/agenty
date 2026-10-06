@@ -31,7 +31,7 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gw, err := toolgateway.New(tt.cfg)
+			gw, err := toolgateway.New(context.Background(), tt.cfg)
 			require.Error(t, err)
 			assert.Nil(t, gw)
 			assert.ErrorContains(t, err, tt.wantErr)
@@ -41,7 +41,7 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 
 func TestCall_PassesArgsAndReturnsResult(t *testing.T) {
 	read := &gatewaytest.Tool{Name: "tickets_read", Result: json.RawMessage(`{"title":"Printer on fire"}`)}
-	gw, err := toolgateway.New(toolgateway.Config{
+	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
 		MaxToolCalls: 100,
 		Policy:       &gatewaytest.Policy{},
 		Granted:      []string{"tickets_read"},
@@ -63,7 +63,7 @@ func TestCall_GrantsAreFixedAtConstruction(t *testing.T) {
 	read := &gatewaytest.Tool{Name: "tickets_read"}
 	del := &gatewaytest.Tool{Name: "tickets_delete"}
 	granted := []string{"tickets_read"}
-	gw, err := toolgateway.New(toolgateway.Config{
+	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
 		MaxToolCalls: 100,
 		Policy:       &gatewaytest.Policy{},
 		Granted:      granted,
@@ -82,7 +82,7 @@ func TestCall_GrantsAreFixedAtConstruction(t *testing.T) {
 
 func TestCall_EachCallGetsItsOwnCallID(t *testing.T) {
 	audit := &gatewaytest.Audit{}
-	gw, err := toolgateway.New(toolgateway.Config{
+	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
 		MaxToolCalls: 100,
 		Policy:       &gatewaytest.Policy{},
 		Granted:      []string{"tickets_read"},
@@ -102,7 +102,7 @@ func TestCall_EachCallGetsItsOwnCallID(t *testing.T) {
 }
 
 func TestDefinitions_OnlyGrantedAndResolvedToolsSortedByName(t *testing.T) {
-	gw, err := toolgateway.New(toolgateway.Config{
+	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
 		MaxToolCalls: 100,
 		Policy:       &gatewaytest.Policy{},
 		Granted:      []string{"tickets_read", "tickets_label", "tickets_ghost"},
@@ -126,7 +126,7 @@ func TestDefinitions_OnlyGrantedAndResolvedToolsSortedByName(t *testing.T) {
 
 func TestStart_EachRunHasItsOwnID(t *testing.T) {
 	audit := &gatewaytest.Audit{}
-	gw, err := toolgateway.New(toolgateway.Config{
+	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
 		MaxToolCalls: 100,
 		Policy:       &gatewaytest.Policy{},
 		Granted:      []string{"tickets_read"},
@@ -158,7 +158,7 @@ func TestStart_EachRunHasItsOwnID(t *testing.T) {
 func TestStart_EachRunHasItsOwnLimitAndCounts(t *testing.T) {
 	policy := &gatewaytest.Policy{}
 	read := &gatewaytest.Tool{Name: "tickets_read"}
-	gw, err := toolgateway.New(toolgateway.Config{
+	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
 		MaxToolCalls: 1,
 		Policy:       policy,
 		Granted:      []string{"tickets_read"},
@@ -196,7 +196,7 @@ func TestNew_ValidatesTools(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := toolgateway.New(toolgateway.Config{Tools: tt.tools, MaxToolCalls: 1, Policy: &gatewaytest.Policy{}, Audit: &gatewaytest.Audit{}})
+			_, err := toolgateway.New(context.Background(), toolgateway.Config{Tools: tt.tools, MaxToolCalls: 1, Policy: &gatewaytest.Policy{}, Audit: &gatewaytest.Audit{}})
 			if tt.wantErr == "" {
 				assert.NoError(t, err)
 				return
@@ -232,4 +232,20 @@ func TestValidateToolName(t *testing.T) {
 			assert.ErrorContains(t, err, "must be 1 to 64 letters, digits, underscores or hyphens")
 		})
 	}
+}
+
+func TestRecord_JSONIsTheAuditFormat(t *testing.T) {
+	rec := toolgateway.Record{
+		RunID: "r1", CallID: "c1", Event: toolgateway.EventResult, Tool: "tickets_read",
+		Args: json.RawMessage(`{"id":7}`), Decision: toolgateway.Allow, Reason: "ok", Approver: "alice",
+		Result: json.RawMessage(`{"title":"x"}`), Err: "boom",
+	}
+
+	b, err := json.Marshal(rec)
+
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"run_id":"r1","call_id":"c1","event":"result","tool":"tickets_read","args":{"id":7},"decision":"allow","reason":"ok","approver":"alice","result":{"title":"x"},"error":"boom"}`, string(b))
+	minimal, err := json.Marshal(toolgateway.Record{RunID: "r1", CallID: "c1", Event: toolgateway.EventDecision, Tool: "t", Decision: toolgateway.Deny})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"run_id":"r1","call_id":"c1","event":"decision","tool":"t","decision":"deny"}`, string(minimal), "empty optional fields are left out")
 }

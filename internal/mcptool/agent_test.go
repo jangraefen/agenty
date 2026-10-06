@@ -4,23 +4,27 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jangraefen/agenty/internal/agent"
 	"github.com/jangraefen/agenty/internal/harness"
+	"github.com/jangraefen/agenty/internal/mcptool"
 	"github.com/jangraefen/agenty/internal/model"
 	"github.com/jangraefen/agenty/internal/toolgateway"
 	"github.com/jangraefen/agenty/internal/toolgateway/gatewaytest"
 )
 
 // TestAgent_RunsMCPToolsThroughTheGateway runs the agent loop against the
-// test MCP server: granted tools reach the server, ungranted tools on the
+// test MCP server, which the gateway starts and stops: granted tools reach the server, ungranted tools on the
 // same server never do, and both are audited.
 func TestAgent_RunsMCPToolsThroughTheGateway(t *testing.T) {
-	s, _, log := connectInMemory(t)
-	tools, err := s.Tools(t.Context())
+	log := &callLog{}
+	clientT, serverT := mcp.NewInMemoryTransports()
+	ss, err := newTestServer(log).Connect(t.Context(), serverT, nil)
 	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, ss.Close()) })
 	audit := &gatewaytest.Audit{}
 	m := model.NewScripted(
 		model.CallTools(
@@ -38,11 +42,12 @@ func TestAgent_RunsMCPToolsThroughTheGateway(t *testing.T) {
 			Tools:        []string{"test_echo", "test_fail"},
 			Limits:       harness.Limits{MaxSteps: 3, MaxToolCalls: 10},
 		},
-		Model: m,
-		Tools: tools,
-		Audit: audit,
+		Model:   m,
+		Servers: map[string]toolgateway.ToolServer{"test": mcptool.TransportServer{Transport: clientT}},
+		Audit:   audit,
 	})
 	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, a.Close()) })
 
 	res, err := a.Run(t.Context(), "ticket 7")
 	require.NoError(t, err)

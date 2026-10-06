@@ -1,0 +1,14 @@
+provider:
+  anthropic:
+    api_key: {env: ANTHROPIC_API_KEY}
+    max_tokens: 4096
+    base_url: http://localhost:8080
+mcp_servers:
+  tickets:
+    command: tickets-mcp
+    args: [--stdio]
+    env:
+      TICKETS_TOKEN: {env: TICKETS_TOKEN}
+      LOG_LEVEL: {value: info}
+policy:
+  files: [policies/central.rego]

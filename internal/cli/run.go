@@ -171,13 +171,15 @@ func runHarness(ctx context.Context, logger *slog.Logger, env Env, flags runFlag
 	if h.Model.Provider != "anthropic" {
 		return "", fmt.Errorf("model provider %q is not supported; use anthropic", h.Model.Provider)
 	}
-	// The config and the harness have validated every field anthropic.New checks.
-	m := must.Value(anthropic.New(anthropic.Config{
+	m, err := anthropic.New(anthropic.Config{
 		APIKey:    resolved.AnthropicAPIKey,
 		Model:     h.Model.Name,
 		MaxTokens: cfg.Provider.Anthropic.MaxTokens,
 		BaseURL:   cfg.Provider.Anthropic.BaseURL,
-	}))
+	})
+	if err != nil {
+		return "", err
+	}
 
 	servers := make(map[string]toolgateway.ToolServer, len(cfg.MCPServers))
 	for name, srv := range cfg.MCPServers {

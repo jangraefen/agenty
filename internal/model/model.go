@@ -1,5 +1,5 @@
 // Package model defines the provider-neutral model interface the agent loop
-// talks to, and a scripted implementation for deterministic tests.
+// talks to. Package modeltest has a scripted implementation for tests.
 package model
 
 import (

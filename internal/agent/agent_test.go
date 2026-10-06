@@ -11,6 +11,7 @@ import (
 
 	"github.com/jangraefen/agenty/internal/agent"
 	"github.com/jangraefen/agenty/internal/model"
+	"github.com/jangraefen/agenty/internal/model/modeltest"
 	"github.com/jangraefen/agenty/internal/policy"
 	"github.com/jangraefen/agenty/internal/toolgateway"
 	"github.com/jangraefen/agenty/internal/toolgateway/gatewaytest"
@@ -23,7 +24,7 @@ func TestRun_Outcomes(t *testing.T) {
 		maxSteps    int
 		readErr     error
 		failAuditOn toolgateway.Event
-		script      []model.Step
+		script      []modeltest.Step
 		wantOutput  string
 		wantSteps   int
 		wantErr     error
@@ -33,14 +34,14 @@ func TestRun_Outcomes(t *testing.T) {
 		{
 			name:       "answers without tools",
 			maxSteps:   3,
-			script:     []model.Step{model.Reply("hello")},
+			script:     []modeltest.Step{modeltest.Reply("hello")},
 			wantOutput: "hello",
 			wantSteps:  1,
 		},
 		{
 			name:        "calls a tool, then answers",
 			maxSteps:    3,
-			script:      []model.Step{model.CallTools(call("c1", "tickets_read")), model.Reply("done")},
+			script:      []modeltest.Step{modeltest.CallTools(call("c1", "tickets_read")), modeltest.Reply("done")},
 			wantOutput:  "done",
 			wantSteps:   2,
 			wantAudited: []string{"tickets_read"},
@@ -49,9 +50,9 @@ func TestRun_Outcomes(t *testing.T) {
 		{
 			name:     "several calls in one step run in order",
 			maxSteps: 3,
-			script: []model.Step{
-				model.CallTools(call("c1", "tickets_read"), call("c2", "tickets_label")),
-				model.Reply("done"),
+			script: []modeltest.Step{
+				modeltest.CallTools(call("c1", "tickets_read"), call("c2", "tickets_label")),
+				modeltest.Reply("done"),
 			},
 			wantOutput:  "done",
 			wantSteps:   2,
@@ -62,7 +63,7 @@ func TestRun_Outcomes(t *testing.T) {
 			name:        "tool error goes back to the model and the run continues",
 			maxSteps:    3,
 			readErr:     errors.New("ticket system unavailable"),
-			script:      []model.Step{model.CallTools(call("c1", "tickets_read")), model.Reply("recovered")},
+			script:      []modeltest.Step{modeltest.CallTools(call("c1", "tickets_read")), modeltest.Reply("recovered")},
 			wantOutput:  "recovered",
 			wantSteps:   2,
 			wantAudited: []string{"tickets_read"},
@@ -71,7 +72,7 @@ func TestRun_Outcomes(t *testing.T) {
 		{
 			name:        "final answer on the last allowed step",
 			maxSteps:    2,
-			script:      []model.Step{model.CallTools(call("c1", "tickets_read")), model.Reply("just in time")},
+			script:      []modeltest.Step{modeltest.CallTools(call("c1", "tickets_read")), modeltest.Reply("just in time")},
 			wantOutput:  "just in time",
 			wantSteps:   2,
 			wantAudited: []string{"tickets_read"},
@@ -80,10 +81,10 @@ func TestRun_Outcomes(t *testing.T) {
 		{
 			name:     "max steps reached: calls of the last step are not executed",
 			maxSteps: 2,
-			script: []model.Step{
-				model.CallTools(call("c1", "tickets_read")),
-				model.CallTools(call("c2", "tickets_label")),
-				model.Reply("too late"),
+			script: []modeltest.Step{
+				modeltest.CallTools(call("c1", "tickets_read")),
+				modeltest.CallTools(call("c2", "tickets_label")),
+				modeltest.Reply("too late"),
 			},
 			wantSteps:   2,
 			wantErr:     agent.ErrMaxSteps,
@@ -93,14 +94,14 @@ func TestRun_Outcomes(t *testing.T) {
 		{
 			name:     "model error ends the run",
 			maxSteps: 3,
-			script:   []model.Step{model.Fail(boom)},
+			script:   []modeltest.Step{modeltest.Fail(boom)},
 			wantErr:  boom,
 		},
 		{
 			name:        "unrecorded decision ends the run",
 			maxSteps:    3,
 			failAuditOn: toolgateway.EventDecision,
-			script:      []model.Step{model.CallTools(call("c1", "tickets_read")), model.Reply("unreachable")},
+			script:      []modeltest.Step{modeltest.CallTools(call("c1", "tickets_read")), modeltest.Reply("unreachable")},
 			wantSteps:   1,
 			wantErr:     toolgateway.ErrAudit,
 		},
@@ -108,7 +109,7 @@ func TestRun_Outcomes(t *testing.T) {
 			name:        "unrecorded result ends the run",
 			maxSteps:    3,
 			failAuditOn: toolgateway.EventResult,
-			script:      []model.Step{model.CallTools(call("c1", "tickets_read")), model.Reply("unreachable")},
+			script:      []modeltest.Step{modeltest.CallTools(call("c1", "tickets_read")), modeltest.Reply("unreachable")},
 			wantSteps:   1,
 			wantErr:     toolgateway.ErrAudit,
 			wantAudited: []string{"tickets_read"},
@@ -120,7 +121,7 @@ func TestRun_Outcomes(t *testing.T) {
 			f := newFixture(tt.maxSteps)
 			f.read.Err = tt.readErr
 			f.audit.FailOn = tt.failAuditOn
-			m := model.NewScripted(tt.script...)
+			m := modeltest.NewScripted(tt.script...)
 
 			res, err := f.run(t, m)
 
@@ -143,7 +144,7 @@ func TestRun_Outcomes(t *testing.T) {
 
 func TestRun_FirstRequestCarriesInstructionsInputAndGrantedTools(t *testing.T) {
 	f := newFixture(3)
-	m := model.NewScripted(model.Reply("hello"))
+	m := modeltest.NewScripted(modeltest.Reply("hello"))
 
 	_, err := f.run(t, m)
 	require.NoError(t, err)
@@ -166,7 +167,7 @@ func TestRun_FeedsToolResultsBackAndKeepsTheTranscript(t *testing.T) {
 	f := newFixture(3)
 	f.label.Err = errors.New("label service down")
 	toolCalls := []model.ToolCall{call("c1", "tickets_read"), call("c2", "tickets_delete"), call("c3", "tickets_label")}
-	m := model.NewScripted(model.CallTools(toolCalls...), model.Reply("done"))
+	m := modeltest.NewScripted(modeltest.CallTools(toolCalls...), modeltest.Reply("done"))
 
 	res, err := f.run(t, m)
 	require.NoError(t, err)
@@ -196,9 +197,9 @@ func TestRun_CancelledContextStopsFurtherSideEffects(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	f.read.OnCall = func(context.Context) { cancel() }
-	m := model.NewScripted(
-		model.CallTools(call("c1", "tickets_read"), call("c2", "tickets_label")),
-		model.Reply("unreachable"),
+	m := modeltest.NewScripted(
+		modeltest.CallTools(call("c1", "tickets_read"), call("c2", "tickets_label")),
+		modeltest.Reply("unreachable"),
 	)
 
 	a, err := agent.New(context.Background(), f.config(m))
@@ -214,7 +215,7 @@ func TestRun_CancelledContextStopsFurtherSideEffects(t *testing.T) {
 
 func TestNew_RejectsInvalidConfig(t *testing.T) {
 	f := newFixture(3)
-	m := model.NewScripted(model.Reply("unused"))
+	m := modeltest.NewScripted(modeltest.Reply("unused"))
 	invalid := *f.harness
 	invalid.Limits.MaxSteps = 0
 	broken := *f.harness
@@ -254,7 +255,7 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 
 func TestRun_RejectsEmptyInput(t *testing.T) {
 	f := newFixture(3)
-	m := model.NewScripted(model.Reply("unused"))
+	m := modeltest.NewScripted(modeltest.Reply("unused"))
 	a, err := agent.New(context.Background(), f.config(m))
 	require.NoError(t, err)
 
@@ -268,9 +269,9 @@ func TestRun_RejectsEmptyInput(t *testing.T) {
 
 func TestRun_EachRunHasItsOwnRunIDAndTranscript(t *testing.T) {
 	f := newFixture(3)
-	m := model.NewScripted(
-		model.CallTools(call("c1", "tickets_read")), model.Reply("first done"),
-		model.CallTools(call("c2", "tickets_read")), model.Reply("second done"),
+	m := modeltest.NewScripted(
+		modeltest.CallTools(call("c1", "tickets_read")), modeltest.Reply("first done"),
+		modeltest.CallTools(call("c2", "tickets_read")), modeltest.Reply("second done"),
 	)
 	a, err := agent.New(context.Background(), f.config(m))
 	require.NoError(t, err)
@@ -301,7 +302,7 @@ func TestRun_EachRunHasItsOwnRunIDAndTranscript(t *testing.T) {
 
 func TestNew_HarnessChangesAfterNewDoNotWidenGrants(t *testing.T) {
 	f := newFixture(3)
-	m := model.NewScripted(model.CallTools(call("c1", "tickets_delete")), model.Reply("done"))
+	m := modeltest.NewScripted(modeltest.CallTools(call("c1", "tickets_delete")), modeltest.Reply("done"))
 	a, err := agent.New(context.Background(), f.config(m))
 	require.NoError(t, err)
 
@@ -319,9 +320,9 @@ func TestAgent_RunsServerToolsAndStopsServers(t *testing.T) {
 	f := newFixture(3)
 	f.harness.Tools = []string{"files_read"}
 	files := &gatewaytest.Server{Tools: []toolgateway.Tool{&gatewaytest.Tool{Name: "files_read", Result: json.RawMessage(`{"content":"x"}`)}}}
-	cfg := f.config(model.NewScripted(
-		model.CallTools(model.ToolCall{ID: "c1", Name: "files_read"}),
-		model.Reply("done"),
+	cfg := f.config(modeltest.NewScripted(
+		modeltest.CallTools(model.ToolCall{ID: "c1", Name: "files_read"}),
+		modeltest.Reply("done"),
 	))
 	cfg.Servers = map[string]toolgateway.ToolServer{"files": files}
 	a, err := agent.New(context.Background(), cfg)
@@ -341,7 +342,7 @@ func TestAgent_RunsServerToolsAndStopsServers(t *testing.T) {
 func TestNew_ServerStartFailure(t *testing.T) {
 	f := newFixture(3)
 	f.harness.Tools = []string{"files_read"}
-	cfg := f.config(model.NewScripted())
+	cfg := f.config(modeltest.NewScripted())
 	cfg.Servers = map[string]toolgateway.ToolServer{"files": &gatewaytest.Server{StartErr: assert.AnError}}
 
 	_, err := agent.New(context.Background(), cfg)
@@ -352,7 +353,7 @@ func TestNew_ServerStartFailure(t *testing.T) {
 func TestClose_ReportsServersThatDoNotStop(t *testing.T) {
 	f := newFixture(3)
 	f.harness.Tools = []string{"files_read"}
-	cfg := f.config(model.NewScripted())
+	cfg := f.config(modeltest.NewScripted())
 	cfg.Servers = map[string]toolgateway.ToolServer{"files": &gatewaytest.Server{
 		Tools:    []toolgateway.Tool{&gatewaytest.Tool{Name: "files_read"}},
 		CloseErr: assert.AnError,

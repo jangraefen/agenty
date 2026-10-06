@@ -10,9 +10,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jangraefen/agenty/internal/agent"
-	"github.com/jangraefen/agenty/internal/model"
 	"github.com/jangraefen/agenty/internal/model/anthropic"
 	"github.com/jangraefen/agenty/internal/model/anthropic/anthropictest"
+	"github.com/jangraefen/agenty/internal/model/modeltest"
 	"github.com/jangraefen/agenty/internal/toolgateway/gatewaytest"
 )
 
@@ -74,7 +74,7 @@ func TestInvariant_CredentialsNeverReachModel(t *testing.T) {
 
 func TestNew_RejectsSecretsTooShortToRedact(t *testing.T) {
 	f := newFixture(3)
-	cfg := f.config(model.NewScripted())
+	cfg := f.config(modeltest.NewScripted())
 	cfg.Secrets = []string{"short"}
 
 	a, err := agent.New(context.Background(), cfg)

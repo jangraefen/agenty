@@ -168,9 +168,6 @@ func TestStart_RejectsInvalidServers(t *testing.T) {
 		server  mcptool.Server
 		wantErr string
 	}{
-		{"no name", "", mcptool.Server{Command: "x"}, "name"},
-		{"name with a dot", "tickets.v2", mcptool.Server{Command: "x"}, `"tickets.v2"`},
-		{"uppercase name", "Tickets", mcptool.Server{Command: "x"}, `"Tickets"`},
 		{"no command", "tickets", mcptool.Server{}, "command"},
 		{"command that does not exist", "tickets", mcptool.Server{Command: "/no/such/mcp-server"}, "tickets"},
 	}
@@ -191,15 +188,6 @@ func TestTools_ClosedSessionIsAnError(t *testing.T) {
 
 	require.ErrorContains(t, err, "test: list tools")
 	assert.Nil(t, tools)
-}
-
-func TestConnectTransport_RejectsInvalidNames(t *testing.T) {
-	clientT, _ := mcp.NewInMemoryTransports()
-
-	s, err := mcptool.ConnectTransport(t.Context(), "Not Valid", clientT)
-
-	require.ErrorContains(t, err, `"Not Valid"`)
-	assert.Nil(t, s)
 }
 
 func TestTools_RejectsNamesModelsCannotUse(t *testing.T) {

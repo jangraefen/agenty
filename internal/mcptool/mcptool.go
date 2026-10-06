@@ -12,7 +12,6 @@ import (
 	"maps"
 	"os"
 	"os/exec"
-	"regexp"
 	"runtime/debug"
 	"slices"
 	"strings"
@@ -31,10 +30,6 @@ func clientVersion() string {
 	}
 	return "(devel)"
 }
-
-// serverName has no underscore, so the first "_" of a tool name always ends the
-// server name.
-var serverName = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
 var _ toolgateway.ToolServer = Server{}
 
@@ -58,11 +53,8 @@ type Session struct {
 }
 
 // Start starts the server as name and connects to it. Only the tool gateway
-// starts servers.
+// starts servers, and it checks the name first.
 func (s Server) Start(ctx context.Context, name string) (toolgateway.ToolSession, error) {
-	if err := validateName(name); err != nil {
-		return nil, err
-	}
 	if s.Command == "" {
 		return nil, fmt.Errorf("mcptool: server %s: command is required", name)
 	}
@@ -90,22 +82,12 @@ func command(srv Server) *exec.Cmd {
 }
 
 func connect(ctx context.Context, name string, t mcp.Transport) (*Session, error) {
-	if err := validateName(name); err != nil {
-		return nil, err
-	}
 	client := mcp.NewClient(&mcp.Implementation{Name: "agenty", Version: clientVersion()}, nil)
 	session, err := client.Connect(ctx, t, nil)
 	if err != nil {
 		return nil, fmt.Errorf("mcptool: connect to %s: %w", name, err)
 	}
 	return &Session{name: name, session: session}, nil
-}
-
-func validateName(name string) error {
-	if !serverName.MatchString(name) {
-		return fmt.Errorf("mcptool: server name %q must be lowercase letters, digits and single hyphens", name)
-	}
-	return nil
 }
 
 // Tools lists the server's tools once. Tools the server adds later are not

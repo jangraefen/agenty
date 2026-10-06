@@ -13,6 +13,7 @@ import (
 	"github.com/jangraefen/agenty/internal/config"
 	"github.com/jangraefen/agenty/internal/harness"
 	"github.com/jangraefen/agenty/internal/model"
+	"github.com/jangraefen/agenty/internal/model/modeltest"
 	"github.com/jangraefen/agenty/internal/toolgateway"
 	"github.com/jangraefen/agenty/internal/toolgateway/gatewaytest"
 )
@@ -37,14 +38,14 @@ func TestExample_Notes(t *testing.T) {
 	}
 	a, err := agent.New(context.Background(), agent.Config{
 		Harness: h,
-		Model: model.NewScripted(
-			model.CallTools(
+		Model: modeltest.NewScripted(
+			modeltest.CallTools(
 				call("1", "files_read_text_file", `{"path":"notes.md"}`),
 				call("2", "files_read_text_file", `{"path":"./sub/.env.example"}`),
 				call("3", "files_write_file", `{"path":"notes.md","content":"- x"}`),
 				call("4", "files_write_file", `{"path":"notes.md","content":"- y"}`),
 			),
-			model.Reply("done"),
+			modeltest.Reply("done"),
 		),
 		Servers:  gatewaytest.Servers(tools...),
 		Policy:   cfg.Policy,

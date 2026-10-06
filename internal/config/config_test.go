@@ -95,6 +95,7 @@ func TestLoad_InvalidFields(t *testing.T) {
 		{"database url with neither", "provider: {anthropic: {api_key: {env: K}, max_tokens: 1}}\ndatabase: {url: {}}", []string{"database.url"}},
 		{"empty policy file name", "provider: {anthropic: {api_key: {env: K}, max_tokens: 1}}\npolicy: {files: [\"\"]}", []string{"policy.files[0]"}},
 		{"missing policy file", "provider: {anthropic: {api_key: {env: K}, max_tokens: 1}}\npolicy: {files: [nope.rego]}", []string{"policy.files[0]"}},
+		{"policy file listed twice", provider + "policy: {files: [a.rego, b.rego, a.rego]}", []string{"policy.files[2]"}},
 		{"user token written into the file", provider + "users: {alice: {token: {value: alice-token-0123456789012345678901}}}", []string{"users.alice.token"}},
 		{"user without a token", provider + "users: {alice: {}}", []string{"users.alice.token"}},
 		{"user name that is not a slug", provider + "users: {Alice: {token: {env: T}}}", []string{"users.Alice"}},

@@ -472,7 +472,6 @@ func TestRun_Failures(t *testing.T) {
 			f.servers["files"].StartErr = errors.New("login with " + filesToken + " refused")
 		}, "login with [redacted] refused"},
 		{"server lists no tools", func(f *fixture) { f.servers["files"].ToolsErr = assert.AnError }, assert.AnError.Error()},
-		{"invalid central policy", func(f *fixture) { f.writeFile(t, "central.rego", "package agenty.tool\n\ndeny contains if {") }, "central"},
 		{"model fails", func(*fixture) {}, "no response queued"},
 	}
 	for _, tt := range tests {

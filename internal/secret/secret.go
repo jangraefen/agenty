@@ -1,6 +1,6 @@
 // Package secret redacts credentials. Values read from the environment are
 // secrets: the tool gateway redacts them from everything it hands on, and the
-// command line from everything it prints.
+// command line from everything it prints and logs, through Redactor.Handler.
 package secret
 
 import (

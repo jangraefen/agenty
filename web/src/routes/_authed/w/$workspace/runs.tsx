@@ -1,9 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-export const Route = createFileRoute("/")({
-  component: Home,
+export const Route = createFileRoute("/_authed/w/$workspace/runs")({
+  component: Runs,
 });
 
-function Home() {
+function Runs() {
   return <h1 className="text-xl font-semibold">Runs</h1>;
 }

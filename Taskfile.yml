@@ -64,6 +64,7 @@ tasks:
       - task: generate
       - test -z "$(git status --porcelain internal/store/db internal/api internal/server)"
       - git diff --exit-code web/src/api
+      - test -z "$(git ls-files --others --exclude-standard web/src/api)"
       - task: lint
       - go mod tidy
       - git diff --exit-code go.mod go.sum

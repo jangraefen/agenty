@@ -44,6 +44,14 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 		{"no store", server.Config{Operator: &config.Config{}, Resolved: &config.Resolved{Redactor: r}, Logger: logger}, "store is required"},
 		{"no config", server.Config{Store: s, Logger: logger}, "config is required"},
 		{"no logger", server.Config{Store: s, Operator: &config.Config{}, Resolved: &config.Resolved{Redactor: r}}, "logger is required"},
+		// Central policy that cannot compile fails the server at its start,
+		// not each run.
+		{"central policy that does not compile", server.Config{
+			Store:    s,
+			Operator: &config.Config{Policy: []policy.Module{{Name: "central.rego", Source: "package agenty.tool\n\ndeny contains"}}},
+			Resolved: &config.Resolved{Redactor: r},
+			Logger:   logger,
+		}, "central.rego"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

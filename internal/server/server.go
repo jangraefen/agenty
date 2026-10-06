@@ -29,6 +29,7 @@ import (
 	"github.com/jangraefen/agenty/internal/mcptool"
 	"github.com/jangraefen/agenty/internal/model"
 	"github.com/jangraefen/agenty/internal/model/anthropic"
+	"github.com/jangraefen/agenty/internal/policy"
 	"github.com/jangraefen/agenty/internal/store"
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
@@ -98,6 +99,11 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	}
 	if cfg.Server == nil {
 		cfg.Server = func(_ string, srv mcptool.Server) toolgateway.ToolServer { return srv }
+	}
+	// Every run compiles central policy; compiling it now finds a mistake
+	// before the first run does.
+	if _, err := policy.New(ctx, policy.Layer{Name: "central", Modules: cfg.Operator.Policy}); err != nil {
+		return nil, fmt.Errorf("server: %w", err)
 	}
 	n, err := cfg.Store.FailRunningRuns(ctx, "the server stopped before the run finished")
 	if err != nil {

@@ -124,6 +124,12 @@ func TestServe_Failures(t *testing.T) {
 			f.writeFile(t, "agenty.yaml", strings.Replace(configYAML, "%s", f.api.URL, 1)+databaseYAML)
 			f.vars["DATABASE_URL"] = "postgres://nobody:secret-password-1@127.0.0.1:1/none?connect_timeout=1"
 		}, 1, "store"},
+		{"invalid central policy", nil, func(f *fixture) {
+			_, url := storetest.NewWithURL(t)
+			f.writeFile(t, "agenty.yaml", strings.Replace(configYAML, "%s", f.api.URL, 1)+databaseYAML)
+			f.writeFile(t, "central.rego", "package agenty.tool\n\ndeny contains if {")
+			f.vars["DATABASE_URL"] = url
+		}, 1, "central"},
 		{"arguments", []string{"extra"}, nil, 2, "no arguments expected"},
 		{"unknown flag", []string{"--bogus"}, nil, 2, "bogus"},
 		{"help", []string{"-h"}, nil, 0, "Serves the HTTP API on localhost"},

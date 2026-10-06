@@ -220,8 +220,14 @@ func (f *file) validate() error {
 		}
 	}
 	for i, name := range f.Policy.Files {
-		if name == "" {
-			add(fmt.Sprintf("policy.files[%d]", i), "must not be empty")
+		field := fmt.Sprintf("policy.files[%d]", i)
+		switch {
+		case name == "":
+			add(field, "must not be empty")
+		case slices.Contains(f.Policy.Files[:i], name):
+			// Policy modules are named by their files, and two of one name
+			// cannot be compiled together.
+			add(field, fmt.Sprintf("%q is listed twice", name))
 		}
 	}
 	for _, user := range slices.Sorted(maps.Keys(f.Users)) {

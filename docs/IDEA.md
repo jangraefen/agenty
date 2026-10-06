@@ -117,7 +117,7 @@ The API server held. The next stage puts a browser in front of it: the web front
 - **Event stream**: browsers' `EventSource` cannot send a token, so the frontend reads a run's event stream with `fetch` and parses it itself.
 - **Browsers**: the frontend's origin must be listed in the operator config's `cors.origins`; the notes example lists the development server's, `http://127.0.0.1:5173`.
 
-The frontend calls the agenty server at the URL `VITE_AGENTY_API_URL` names when it is built, `http://127.0.0.1:8080` by default. `task web:dev` serves the frontend for development; `task check` checks it along with the backend, and `task --list` shows its other `web:` tasks.
+The frontend calls the agenty server at the URL `VITE_AGENTY_API_URL` names when it is built, `http://127.0.0.1:8080` by default. `task web:dev` serves the frontend for development, and `task web:e2e` runs its smoke test, which needs Google Chrome: it signs in, starts a run and follows it to its end against a real `agenty serve` with an operator config of its own, `web/e2e/agenty.yaml`, whose dummy model key makes the provider refuse every run; `task check` checks it along with the backend, and `task --list` shows its other `web:` tasks.
 
 ## Later: the web portal
 

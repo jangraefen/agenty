@@ -143,6 +143,15 @@ tasks:
     cmds:
       - pnpm build
 
+  web:e2e:
+    desc: Run the web frontend's smoke test against a real agenty server on the local database (needs Google Chrome)
+    deps: [build, db, web:install]
+    dir: web
+    env:
+      AGENTY_E2E_DATABASE_URL: "{{.DATABASE_URL}}"
+    cmds:
+      - pnpm e2e
+
   web:check:
     desc: "What CI checks of the web frontend: lint, types, tests, the build and its generated route tree"
     cmds:

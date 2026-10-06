@@ -18,3 +18,9 @@ export function formatDuration(from: string, to: string): string {
   }
   return `${seconds}s`;
 }
+
+/** The time left until a deadline at now, such as "1m 30s left", or "expired". */
+export function formatRemaining(until: string, now: number): string {
+  const left = Date.parse(until) - now;
+  return left <= 0 ? "expired" : `${formatDuration(new Date(now).toISOString(), until)} left`;
+}

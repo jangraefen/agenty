@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -187,10 +189,15 @@ func (f *fixture) serverURL() string {
 
 // main runs the CLI with args as they are.
 func (f *fixture) main(args ...string) int {
-	return cli.Main(context.Background(), args, cli.Env{
-		Stdin:       strings.NewReader(f.stdin),
+	return f.mainContext(context.Background(), strings.NewReader(f.stdin), &f.stderr, args...)
+}
+
+// mainContext runs the CLI with args until ctx ends.
+func (f *fixture) mainContext(ctx context.Context, stdin io.Reader, stderr io.Writer, args ...string) int {
+	return cli.Main(ctx, args, cli.Env{
+		Stdin:       stdin,
 		Stdout:      &f.stdout,
-		Stderr:      &f.stderr,
+		Stderr:      stderr,
 		Interactive: f.tty,
 		LookupEnv:   f.lookupEnv,
 	})
@@ -539,6 +546,38 @@ func TestRun_StartedByTheSignedInUser(t *testing.T) {
 	run, err := f.store.Run(context.Background(), "home", m[1])
 	require.NoError(t, err)
 	assert.Equal(t, "alice", run.StartedBy)
+}
+
+func TestRun_InterruptCancelsTheRun(t *testing.T) {
+	f := newFixture(t, toolUse(t, "toolu_1", "files_write", map[string]any{"path": "notes.md"}), done(t))
+	f.apply()
+	stdin, answers := io.Pipe() // no one ever answers
+	t.Cleanup(func() { assert.NoError(t, answers.Close()) })
+	stderr := &lockedBuffer{}
+	ctx, interrupt := context.WithCancel(context.Background())
+	defer interrupt()
+	exit := make(chan int, 1)
+
+	go func() { exit <- f.mainContext(ctx, stdin, stderr, "run", "--server", f.serverURL(), "notes", "tidy") }()
+	require.Eventually(t, func() bool { return strings.Contains(stderr.String(), "Approve?") }, 10*time.Second, 20*time.Millisecond)
+	interrupt()
+
+	select {
+	case code := <-exit:
+		assert.Equal(t, 1, code)
+	case <-time.After(10 * time.Second):
+		t.Fatal("run did not stop")
+	}
+	m := runID.FindStringSubmatch(stderr.String())
+	require.NotNil(t, m)
+	require.Eventually(t, func() bool {
+		r, err := f.store.Run(context.Background(), "home", m[1])
+		return err == nil && r.Status == store.RunCancelled
+	}, 10*time.Second, 20*time.Millisecond, "the server cancels the run")
+	r, err := f.store.Run(context.Background(), "home", m[1])
+	require.NoError(t, err)
+	assert.Equal(t, "cancelled by alice", r.Error)
+	assert.Zero(t, f.write.Calls)
 }
 
 func TestRun_UnknownHarnessOrServer(t *testing.T) {

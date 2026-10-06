@@ -213,6 +213,8 @@ func TestRuns_Lifecycle(t *testing.T) {
 	assert.Equal(t, v.ID, running.HarnessVersionID)
 	assert.Equal(t, "tidy", running.Input)
 	assert.Equal(t, "alice", running.StartedBy)
+	assert.Equal(t, "notes", running.Harness)
+	assert.Equal(t, 1, running.HarnessVersion)
 	assert.Nil(t, running.FinishedAt)
 
 	require.NoError(t, s.FinishRun(ctx, "r1", store.RunSucceeded, "done", 3, ""))
@@ -238,6 +240,77 @@ func TestRuns_Errors(t *testing.T) {
 	require.ErrorIs(t, s.FinishRun(ctx, "ghost", store.RunFailed, "", 0, ""), store.ErrNotFound)
 	_, err := s.Run(ctx, ws, "ghost")
 	require.ErrorIs(t, err, store.ErrNotFound)
+}
+
+func TestRuns_Cancelled(t *testing.T) {
+	ctx := context.Background()
+	s := storetest.New(t)
+	newRun(t, s, "r1")
+
+	require.NoError(t, s.FinishRun(ctx, "r1", store.RunCancelled, "", 1, "cancelled by alice"))
+
+	r, err := s.Run(ctx, ws, "r1")
+	require.NoError(t, err)
+	assert.Equal(t, store.RunCancelled, r.Status)
+	assert.Equal(t, "cancelled by alice", r.Error)
+}
+
+func TestRuns_List(t *testing.T) {
+	ctx := context.Background()
+	s := storetest.New(t)
+	v := newRun(t, s, "r1")
+	other := notes()
+	other.Name = "agenda"
+	ov, err := s.PutHarness(ctx, ws, other)
+	require.NoError(t, err)
+	for _, r := range []store.NewRun{
+		{ID: "r2", HarnessVersionID: ov.ID, Input: "x", StartedBy: "bob"},
+		{ID: "r3", HarnessVersionID: v.ID, Input: "x", StartedBy: "alice"},
+		{ID: "r4", HarnessVersionID: ov.ID, Input: "x", StartedBy: "alice"},
+	} {
+		require.NoError(t, s.CreateRun(ctx, r))
+	}
+	require.NoError(t, s.FinishRun(ctx, "r3", store.RunSucceeded, "ok", 1, ""))
+	theirs, err := s.PutHarness(ctx, "work", notes())
+	require.NoError(t, err)
+	require.NoError(t, s.CreateRun(ctx, store.NewRun{ID: "w1", HarnessVersionID: theirs.ID, Input: "x", StartedBy: "bob"}))
+
+	ids := func(f store.RunFilter) []string {
+		t.Helper()
+		runs, err := s.Runs(ctx, ws, f)
+		require.NoError(t, err)
+		out := make([]string, len(runs))
+		for i, r := range runs {
+			out[i] = r.ID
+		}
+		return out
+	}
+
+	tests := []struct {
+		name   string
+		filter store.RunFilter
+		want   []string
+	}{
+		{"all, newest first", store.RunFilter{Limit: 10}, []string{"r4", "r3", "r2", "r1"}},
+		{"a page", store.RunFilter{Limit: 2}, []string{"r4", "r3"}},
+		{"the next page", store.RunFilter{Limit: 2, Before: "r3"}, []string{"r2", "r1"}},
+		{"after the last", store.RunFilter{Limit: 2, Before: "r1"}, []string{}},
+		{"of one harness", store.RunFilter{Limit: 10, Harness: "agenda"}, []string{"r4", "r2"}},
+		{"with one status", store.RunFilter{Limit: 10, Status: store.RunSucceeded}, []string{"r3"}},
+		{"both", store.RunFilter{Limit: 10, Harness: "notes", Status: store.RunRunning}, []string{"r1"}},
+		{"before a run of another workspace", store.RunFilter{Limit: 10, Before: "w1"}, []string{}},
+		{"before a run that does not exist", store.RunFilter{Limit: 10, Before: "ghost"}, []string{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, ids(tt.filter))
+		})
+	}
+	runs, err := s.Runs(ctx, ws, store.RunFilter{Limit: 1})
+	require.NoError(t, err)
+	assert.Equal(t, "agenda", runs[0].Harness, "a listed run names its harness")
+	_, err = s.Runs(ctx, ws, store.RunFilter{})
+	require.ErrorContains(t, err, "limit")
 }
 
 func TestFailRunningRuns(t *testing.T) {

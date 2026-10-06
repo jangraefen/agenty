@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"time"
 
 	"go.yaml.in/yaml/v3"
 
@@ -36,7 +37,9 @@ type Config struct {
 	// Workspaces hold harnesses and runs, by name. Only a workspace's
 	// members see it, and they may do everything in it.
 	Workspaces map[string]Workspace `yaml:"workspaces"`
-	CORS       CORS                 `yaml:"cors"`
+	// CORS lists the web origins whose pages may call the API.
+	CORS      CORS      `yaml:"cors"`
+	Approvals Approvals `yaml:"approvals"`
 	// Policy is central policy: Rego modules in package agenty.tool. Load
 	// reads them from the files the config names.
 	Policy []policy.Module `yaml:"-"`
@@ -101,11 +104,21 @@ type CORS struct {
 	Origins []string `yaml:"origins"`
 }
 
+// Approvals configures approval requests.
+type Approvals struct {
+	// Timeout is how long a call waits for an answer before it is rejected.
+	// Zero means DefaultApprovalTimeout.
+	Timeout time.Duration `yaml:"timeout"`
+}
+
+// DefaultApprovalTimeout is the approval timeout when none is configured.
+const DefaultApprovalTimeout = time.Hour
+
 // TokenMinLength is the shortest bearer token accepted: long enough that it
 // cannot be guessed.
 const TokenMinLength = 32
 
-// name is the form of user and workspace names, which appear in URLs.
+// namePattern is the form of user and workspace names, which appear in URLs.
 var namePattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
 // Value is a configuration value: read from an environment variable, which
@@ -232,6 +245,9 @@ func (f *file) validate() error {
 				add(field, fmt.Sprintf("%q is not a configured user", member))
 			}
 		}
+	}
+	if f.Approvals.Timeout < 0 {
+		add("approvals.timeout", "must not be negative")
 	}
 	for i, origin := range f.CORS.Origins {
 		if u, err := url.Parse(origin); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || origin != u.Scheme+"://"+u.Host {

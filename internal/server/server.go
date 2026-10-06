@@ -7,6 +7,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -135,15 +137,23 @@ func (s *Server) routes() *gin.Engine {
 	r := gin.New()
 	// Global middleware also runs for unknown routes, so preflight requests,
 	// which no route serves, are answered too.
-	r.Use(gin.Recovery(), s.logRequests, s.localOnly, s.cors)
-	v1 := r.Group("/v1", s.authenticate)
+	// Sign-in is global middleware too, after the preflight answer, so that
+	// unknown routes ask for a token like every other.
+	r.Use(gin.Recovery(), s.logRequests, s.localOnly, s.cors, s.authenticate)
+	r.NoRoute(func(c *gin.Context) {
+		s.fail(c, http.StatusNotFound, fmt.Errorf("%s %s: no such route", c.Request.Method, c.Request.URL.Path))
+	})
+	v1 := r.Group("/v1")
 	v1.GET("/me", s.me)
 	ws := v1.Group("/workspaces/:workspace", s.member)
 	ws.PUT("/harnesses/:name", s.putHarness)
 	ws.GET("/harnesses", s.listHarnesses)
 	ws.GET("/harnesses/:name", s.getHarness)
 	ws.POST("/runs", s.createRun)
+	ws.GET("/runs", s.listRuns)
 	ws.GET("/runs/:id", s.getRun)
+	ws.POST("/runs/:id/cancel", s.cancelRun)
+	ws.GET("/approvals", s.listApprovals)
 	ws.GET("/runs/:id/audit", s.getAudit)
 	ws.GET("/runs/:id/transcript", s.getTranscript)
 	ws.GET("/runs/:id/events", s.streamEvents)
@@ -349,9 +359,8 @@ func (s *Server) createRun(c *gin.Context) {
 
 // start builds an agent for the harness version, which starts the MCP servers
 // it needs, stores the run as started by user, and executes it in the
-// background. On error it
-// also returns the status to respond with: 422 for a harness that cannot run,
-// 503 when the server is stopping, 500 otherwise.
+// background. On error it also returns the status to respond with: 422 for a
+// harness that cannot run, 503 when the server is stopping, 500 otherwise.
 func (s *Server) start(v store.HarnessVersion, input, user string) (string, int, error) {
 	h := v.Harness
 	m, err := s.cfg.NewModel(h.Model)
@@ -362,7 +371,11 @@ func (s *Server) start(v store.HarnessVersion, input, user string) (string, int,
 	for name, srv := range s.cfg.Operator.MCPServers {
 		servers[name] = s.cfg.Server(name, mcptool.Server{Command: srv.Command, Args: srv.Args, Env: s.cfg.Resolved.MCPServerEnv[name]})
 	}
-	hub := newHub(v.Workspace, h.Name)
+	timeout := s.cfg.Operator.Approvals.Timeout
+	if timeout == 0 {
+		timeout = config.DefaultApprovalTimeout
+	}
+	hub := newHub(v.Workspace, h.Name, timeout)
 	a, err := agent.New(s.ctx, agent.Config{
 		Harness:    &h,
 		Model:      m,
@@ -377,12 +390,16 @@ func (s *Server) start(v store.HarnessVersion, input, user string) (string, int,
 		return "", http.StatusUnprocessableEntity, err
 	}
 	run := a.Start()
+	hub.runID = run.ID()
+	runCtx, cancel := context.WithCancelCause(s.ctx)
+	hub.cancel = cancel
 	// Register the run's hub before storing it, so a stored running run of
 	// this server always has an event stream. Registering under the lock
 	// Close takes means no run starts once Close has begun waiting.
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
+		cancel(nil)
 		return "", http.StatusServiceUnavailable, errors.Join(errClosed, a.Close())
 	}
 	s.runs[run.ID()] = hub
@@ -393,33 +410,45 @@ func (s *Server) start(v store.HarnessVersion, input, user string) (string, int,
 		delete(s.runs, run.ID())
 		s.mu.Unlock()
 		s.wg.Done()
+		cancel(nil)
 		return "", http.StatusInternalServerError, errors.Join(err, a.Close())
 	}
 	go func() {
 		defer s.wg.Done()
-		s.execute(a, run, hub, input)
+		defer cancel(nil)
+		s.execute(runCtx, a, run, hub, input)
 	}()
 	return run.ID(), 0, nil
 }
 
-// execute runs the agent, stops its MCP servers, records how the run ended,
-// and publishes that as the run's last event.
-func (s *Server) execute(a *agent.Agent, run *agent.Run, hub *hub, input string) {
+// cancelledBy is the cause of a run's cancellation by a user: the user.
+type cancelledBy string
+
+func (u cancelledBy) Error() string { return "cancelled by " + string(u) }
+
+// execute runs the agent on ctx, stops its MCP servers, records how the run
+// ended, and publishes that as the run's last event. A run that fails after
+// a user cancelled it ended as cancelled.
+func (s *Server) execute(ctx context.Context, a *agent.Agent, run *agent.Run, hub *hub, input string) {
 	defer func() {
 		s.mu.Lock()
 		delete(s.runs, run.ID())
 		s.mu.Unlock()
 	}()
 	redact := s.cfg.Resolved.Redactor
-	res, err := run.Execute(s.ctx, input)
+	res, err := run.Execute(ctx, input)
 	err = errors.Join(err, a.Close())
 	status, errMsg := store.RunSucceeded, ""
-	if err != nil {
+	var by cancelledBy
+	switch {
+	case err != nil && errors.As(context.Cause(ctx), &by):
+		status, errMsg = store.RunCancelled, by.Error()
+	case err != nil:
 		status, errMsg = store.RunFailed, redact.String(err.Error())
 	}
 	// The run's context may be cancelled; how the run ended is recorded
 	// regardless.
-	ctx := context.WithoutCancel(s.ctx)
+	ctx = context.WithoutCancel(ctx)
 	if err := s.cfg.Store.FinishRun(ctx, run.ID(), status, redact.String(res.Output), res.Steps, errMsg); err != nil {
 		s.cfg.Logger.Error("cannot record the end of a run", "run_id", run.ID(), "error", err)
 	}
@@ -430,6 +459,85 @@ func (s *Server) execute(a *agent.Agent, run *agent.Run, hub *hub, input string)
 		finished = store.Run{ID: run.ID(), Status: status, Output: redact.String(res.Output), Steps: res.Steps, Error: errMsg}
 	}
 	hub.publish(event{api.EventFinished, apiRun(finished)})
+}
+
+func (s *Server) listRuns(c *gin.Context) {
+	f := store.RunFilter{
+		Harness: c.Query("harness"),
+		Status:  store.RunStatus(c.Query("status")),
+		Before:  c.Query("before"),
+		Limit:   api.DefaultRunsLimit,
+	}
+	switch f.Status {
+	case "", store.RunRunning, store.RunSucceeded, store.RunFailed, store.RunCancelled:
+	default:
+		s.fail(c, http.StatusBadRequest, fmt.Errorf("status %q: must be running, succeeded, failed or cancelled", f.Status))
+		return
+	}
+	if l := c.Query("limit"); l != "" {
+		n, err := strconv.Atoi(l)
+		if err != nil || n < 1 || n > api.MaxRunsLimit {
+			s.fail(c, http.StatusBadRequest, fmt.Errorf("limit %q: must be a number from 1 to %d", l, api.MaxRunsLimit))
+			return
+		}
+		f.Limit = n
+	}
+	runs, err := s.cfg.Store.Runs(c.Request.Context(), c.Param("workspace"), f)
+	if err != nil {
+		s.failStore(c, err)
+		return
+	}
+	out := api.RunList{Runs: make([]api.Run, len(runs))}
+	for i, r := range runs {
+		out.Runs[i] = apiRun(r)
+	}
+	if len(runs) == f.Limit {
+		out.Next = runs[len(runs)-1].ID
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// cancelRun cancels a running run of this server. The run ends as soon as
+// what it is doing stops, and is recorded as cancelled by the user; the
+// response comes before that, so the run's events tell when it ended.
+func (s *Server) cancelRun(c *gin.Context) {
+	ws, id := c.Param("workspace"), c.Param("id")
+	if h := s.hub(ws, id); h != nil {
+		h.cancel(cancelledBy(c.GetString(userKey)))
+		c.Status(http.StatusAccepted)
+		return
+	}
+	run, err := s.cfg.Store.Run(c.Request.Context(), ws, id)
+	switch {
+	case err != nil:
+		s.failStore(c, err)
+	case run.Status == store.RunRunning:
+		s.fail(c, http.StatusConflict, fmt.Errorf("run %s is running on another server", id))
+	default:
+		s.fail(c, http.StatusConflict, fmt.Errorf("run %s has already finished", id))
+	}
+}
+
+// listApprovals returns the approval requests the workspace's runs are
+// waiting for, oldest first.
+func (s *Server) listApprovals(c *gin.Context) {
+	ws := c.Param("workspace")
+	s.mu.Lock()
+	var hubs []*hub
+	for _, h := range s.runs {
+		if h.workspace == ws {
+			hubs = append(hubs, h)
+		}
+	}
+	s.mu.Unlock()
+	out := []api.ApprovalRequest{}
+	for _, h := range hubs {
+		out = append(out, h.waiting()...)
+	}
+	slices.SortFunc(out, func(a, b api.ApprovalRequest) int {
+		return cmp.Or(a.CreatedAt.Compare(b.CreatedAt), strings.Compare(a.ID, b.ID))
+	})
+	c.JSON(http.StatusOK, out)
 }
 
 func (s *Server) getRun(c *gin.Context) {
@@ -445,6 +553,8 @@ func apiRun(r store.Run) api.Run {
 	return api.Run{
 		ID:               r.ID,
 		HarnessVersionID: r.HarnessVersionID,
+		Harness:          r.Harness,
+		HarnessVersion:   r.HarnessVersion,
 		StartedBy:        r.StartedBy,
 		Input:            r.Input,
 		Status:           string(r.Status),

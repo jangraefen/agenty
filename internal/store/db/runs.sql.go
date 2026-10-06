@@ -7,6 +7,8 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const failRunningRuns = `-- name: FailRunningRuns :execrows
@@ -52,7 +54,8 @@ func (q *Queries) FinishRun(ctx context.Context, arg FinishRunParams) (int64, er
 }
 
 const getRun = `-- name: GetRun :one
-SELECT runs.id, runs.harness_version_id, runs.input, runs.status, runs.output, runs.steps, runs.error, runs.created_at, runs.finished_at, runs.started_by FROM runs
+SELECT runs.id, runs.harness_version_id, runs.input, runs.status, runs.output, runs.steps, runs.error, runs.created_at, runs.finished_at, runs.started_by, harness_versions.name AS harness, harness_versions.version AS harness_version
+FROM runs
 JOIN harness_versions ON harness_versions.id = runs.harness_version_id
 WHERE runs.id = $1 AND harness_versions.workspace = $2
 `
@@ -62,21 +65,29 @@ type GetRunParams struct {
 	Workspace string
 }
 
+type GetRunRow struct {
+	Run            Run
+	Harness        string
+	HarnessVersion int32
+}
+
 // A run is found only in the workspace of the harness version it runs.
-func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
+func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (GetRunRow, error) {
 	row := q.db.QueryRow(ctx, getRun, arg.ID, arg.Workspace)
-	var i Run
+	var i GetRunRow
 	err := row.Scan(
-		&i.ID,
-		&i.HarnessVersionID,
-		&i.Input,
-		&i.Status,
-		&i.Output,
-		&i.Steps,
-		&i.Error,
-		&i.CreatedAt,
-		&i.FinishedAt,
-		&i.StartedBy,
+		&i.Run.ID,
+		&i.Run.HarnessVersionID,
+		&i.Run.Input,
+		&i.Run.Status,
+		&i.Run.Output,
+		&i.Run.Steps,
+		&i.Run.Error,
+		&i.Run.CreatedAt,
+		&i.Run.FinishedAt,
+		&i.Run.StartedBy,
+		&i.Harness,
+		&i.HarnessVersion,
 	)
 	return i, err
 }
@@ -101,4 +112,76 @@ func (q *Queries) InsertRun(ctx context.Context, arg InsertRunParams) error {
 		arg.StartedBy,
 	)
 	return err
+}
+
+const listRuns = `-- name: ListRuns :many
+SELECT runs.id, runs.harness_version_id, runs.input, runs.status, runs.output, runs.steps, runs.error, runs.created_at, runs.finished_at, runs.started_by, harness_versions.name AS harness, harness_versions.version AS harness_version
+FROM runs
+JOIN harness_versions ON harness_versions.id = runs.harness_version_id
+WHERE harness_versions.workspace = $1
+  AND ($2::text IS NULL OR harness_versions.name = $2)
+  AND ($3::text IS NULL OR runs.status = $3)
+  AND ($4::text IS NULL
+       OR (runs.created_at, runs.id) < (
+           SELECT b.created_at, b.id FROM runs b
+           JOIN harness_versions bv ON bv.id = b.harness_version_id
+           WHERE b.id = $4 AND bv.workspace = $1))
+ORDER BY runs.created_at DESC, runs.id DESC
+LIMIT $5
+`
+
+type ListRunsParams struct {
+	Workspace string
+	Harness   pgtype.Text
+	Status    pgtype.Text
+	Before    pgtype.Text
+	MaxRows   int32
+}
+
+type ListRunsRow struct {
+	Run            Run
+	Harness        string
+	HarnessVersion int32
+}
+
+// The runs of a workspace, newest first, optionally of one harness or with
+// one status, starting after the run named by before. A before that is not
+// a run of the workspace matches nothing.
+func (q *Queries) ListRuns(ctx context.Context, arg ListRunsParams) ([]ListRunsRow, error) {
+	rows, err := q.db.Query(ctx, listRuns,
+		arg.Workspace,
+		arg.Harness,
+		arg.Status,
+		arg.Before,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRunsRow
+	for rows.Next() {
+		var i ListRunsRow
+		if err := rows.Scan(
+			&i.Run.ID,
+			&i.Run.HarnessVersionID,
+			&i.Run.Input,
+			&i.Run.Status,
+			&i.Run.Output,
+			&i.Run.Steps,
+			&i.Run.Error,
+			&i.Run.CreatedAt,
+			&i.Run.FinishedAt,
+			&i.Run.StartedBy,
+			&i.Harness,
+			&i.HarnessVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

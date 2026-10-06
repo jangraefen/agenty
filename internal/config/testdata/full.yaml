@@ -24,5 +24,7 @@ workspaces:
     members: [alice, bob]
   ops:
     members: [bob]
+approvals:
+  timeout: 15m
 cors:
   origins: ["http://localhost:5173"]

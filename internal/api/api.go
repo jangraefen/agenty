@@ -10,11 +10,14 @@
 //	GET  {ws}/harnesses                             latest version of every harness
 //	GET  {ws}/harnesses/{name}                      latest version of one harness
 //	POST {ws}/runs                                  start a run
+//	GET  {ws}/runs                                  the runs, newest first; see DefaultRunsLimit
 //	GET  {ws}/runs/{id}                             a run
+//	POST {ws}/runs/{id}/cancel                      cancel a running run
 //	GET  {ws}/runs/{id}/audit                       a run's audit records
 //	GET  {ws}/runs/{id}/transcript                  a run's conversation with the model
 //	GET  {ws}/runs/{id}/events                      a run's events, as server-sent events
 //	POST {ws}/runs/{id}/approvals/{approval}        answer an approval request
+//	GET  {ws}/approvals                             the approval requests waiting for an answer
 //
 // Errors are returned as an Error with a 4xx or 5xx status: 401 without a
 // valid token, 404 for anything not found, workspaces included.
@@ -60,12 +63,33 @@ const (
 	RunRunning   = "running"
 	RunSucceeded = "succeeded"
 	RunFailed    = "failed"
+	// RunCancelled is a run a user cancelled.
+	RunCancelled = "cancelled"
 )
+
+// GET {ws}/runs takes optional query parameters: harness and status select
+// the runs of one harness or with one status; limit, at most MaxRunsLimit,
+// is the page size; before continues a list after the run with that ID, as
+// RunList.Next gives it.
+const (
+	DefaultRunsLimit = 50
+	MaxRunsLimit     = 200
+)
+
+// RunList is a page of runs, newest first. Next, if set, is the before
+// parameter of the next page.
+type RunList struct {
+	Runs []Run  `json:"runs"`
+	Next string `json:"next,omitempty"`
+}
 
 // Run is a run of a harness version.
 type Run struct {
 	ID               string `json:"id"`
 	HarnessVersionID int64  `json:"harness_version_id"`
+	// Harness and HarnessVersion name the harness version the run runs.
+	Harness        string `json:"harness"`
+	HarnessVersion int    `json:"harness_version"`
 	// StartedBy names the user who started the run.
 	StartedBy  string     `json:"started_by"`
 	Input      string     `json:"input"`
@@ -107,10 +131,14 @@ const (
 type ApprovalRequest struct {
 	// ID identifies the request when answering it.
 	ID      string          `json:"id"`
+	RunID   string          `json:"run_id"`
 	Harness string          `json:"harness"`
 	Tool    string          `json:"tool"`
 	Args    json.RawMessage `json:"args"`
 	Reasons []string        `json:"reasons"`
+	// ExpiresAt is when the request is rejected if no one answers it.
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 // Answer is the body of an answer to an approval request. The signed-in user

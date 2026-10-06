@@ -19,6 +19,10 @@ import (
 
 const defaultBaseURL = "https://api.anthropic.com"
 
+// providerName names this provider's parts of messages; see
+// model.ProviderPart.
+const providerName = "anthropic"
+
 var (
 	// ErrTruncated is returned when a reply was cut off, by the response token
 	// limit or the context window, so it cannot be used as an answer.
@@ -149,8 +153,12 @@ func messageParam(i int, msg model.Message) (sdk.MessageParam, error) {
 	case model.RoleAssistant:
 		// A reply this provider generated is replayed exactly as the API
 		// sent it: thinking blocks must come back unchanged and in place.
-		if p, ok := msg.Provider.(sdk.MessageParam); ok {
-			return p, nil
+		if p := msg.Provider; p != nil && p.Name == providerName {
+			var reply sdk.Message
+			if err := json.Unmarshal(p.Data, &reply); err != nil {
+				return sdk.MessageParam{}, fmt.Errorf("message %d: provider part: %w", i, err)
+			}
+			return reply.ToParam(), nil
 		}
 		if msg.Text != "" {
 			blocks = append(blocks, sdk.NewTextBlock(msg.Text))
@@ -202,6 +210,10 @@ func reply(resp *sdk.Message) (model.Message, error) {
 		}
 	}
 	msg.Text = strings.Join(texts, "\n")
-	msg.Provider = resp.ToParam()
+	// The reply exactly as the API sent it, to replay later. A reply the SDK
+	// did not decode from JSON has none and is rebuilt from text and calls.
+	if raw := resp.RawJSON(); raw != "" {
+		msg.Provider = &model.ProviderPart{Name: providerName, Data: json.RawMessage(raw)}
+	}
 	return msg, nil
 }

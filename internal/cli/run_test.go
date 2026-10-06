@@ -249,6 +249,12 @@ func TestRun_EndToEnd(t *testing.T) {
 		"result files_write allow",
 	}, events(records))
 	assert.Equal(t, "alice", records[3].Approver)
+	transcript, err := f.store.Transcript(context.Background(), records[0].RunID)
+	require.NoError(t, err)
+	require.Len(t, transcript, 6)
+	require.NotNil(t, transcript[1].Provider, "the model's reply is stored in the provider's own form too")
+	assert.Equal(t, "anthropic", transcript[1].Provider.Name)
+	assert.Contains(t, string(transcript[1].Provider.Data), `"toolu_1"`)
 	assert.Equal(t, "approved at the terminal", records[3].Reason)
 	assert.Contains(t, f.stderr.String(), "tool=files_write decision=require_approval", "debug logs show each tool call")
 	assert.Contains(t, f.stderr.String(), "run finished")

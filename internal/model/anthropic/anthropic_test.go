@@ -3,6 +3,7 @@ package anthropic_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -324,42 +325,105 @@ func TestGenerate_IgnoresTheEnvironment(t *testing.T) {
 
 // TestGenerate_ReplaysTheReplyUnchanged: models that think by default return
 // thinking blocks, which must come back unchanged and in their place on the
-// next request. The assistant turn is replayed exactly as the API sent it.
+// next request. The assistant turn is replayed exactly as the API sent it,
+// also after the reply went through JSON, as it does when a transcript is
+// stored and read back.
 func TestGenerate_ReplaysTheReplyUnchanged(t *testing.T) {
-	api := anthropictest.New(t,
-		anthropictest.Reply(t, "tool_use",
-			map[string]any{"type": "thinking", "thinking": "", "signature": "sig-1"},
-			anthropictest.TextBlock("Let me look."),
-			map[string]any{"type": "redacted_thinking", "data": "opaque-2"},
-			anthropictest.ToolUseBlock("toolu_1", "tickets_read", map[string]any{"id": 7}),
-		),
-		anthropictest.Reply(t, "end_turn", anthropictest.TextBlock("Printer on fire.")),
-	)
-	m := newModel(t, api)
-	req := model.Request{Messages: []model.Message{{Role: model.RoleUser, Text: "ticket 7"}}}
+	for _, stored := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stored=%t", stored), func(t *testing.T) {
+			api := anthropictest.New(t,
+				anthropictest.Reply(t, "tool_use",
+					map[string]any{"type": "thinking", "thinking": "", "signature": "sig-1"},
+					anthropictest.TextBlock("Let me look."),
+					map[string]any{"type": "redacted_thinking", "data": "opaque-2"},
+					anthropictest.ToolUseBlock("toolu_1", "tickets_read", map[string]any{"id": 7}),
+				),
+				anthropictest.Reply(t, "end_turn", anthropictest.TextBlock("Printer on fire.")),
+			)
+			m := newModel(t, api)
+			req := model.Request{Messages: []model.Message{{Role: model.RoleUser, Text: "ticket 7"}}}
 
-	first, err := m.Generate(context.Background(), req)
-	require.NoError(t, err)
-	assert.Equal(t, "Let me look.", first.Text, "thinking is not part of the answer")
-	require.Len(t, first.ToolCalls, 1)
+			first, err := m.Generate(context.Background(), req)
+			require.NoError(t, err)
+			assert.Equal(t, "Let me look.", first.Text, "thinking is not part of the answer")
+			require.Len(t, first.ToolCalls, 1)
+			require.NotNil(t, first.Provider)
+			assert.Equal(t, "anthropic", first.Provider.Name)
+			assert.Contains(t, string(first.Provider.Data), "sig-1", "the provider part keeps the thinking blocks")
+			if stored {
+				b, err := json.Marshal(first)
+				require.NoError(t, err)
+				first = model.Message{}
+				require.NoError(t, json.Unmarshal(b, &first))
+			}
 
-	req.Messages = append(req.Messages, first, model.Message{Role: model.RoleUser, ToolResults: []model.ToolResult{{CallID: "toolu_1", Content: `{"title":"Printer on fire"}`}}})
-	_, err = m.Generate(context.Background(), req)
-	require.NoError(t, err)
+			req.Messages = append(req.Messages, first, model.Message{Role: model.RoleUser, ToolResults: []model.ToolResult{{CallID: "toolu_1", Content: `{"title":"Printer on fire"}`}}})
+			_, err = m.Generate(context.Background(), req)
+			require.NoError(t, err)
 
-	var body struct {
-		Messages []struct {
-			Role    string          `json:"role"`
-			Content json.RawMessage `json:"content"`
-		} `json:"messages"`
+			var body struct {
+				Messages []struct {
+					Role    string          `json:"role"`
+					Content json.RawMessage `json:"content"`
+				} `json:"messages"`
+			}
+			require.NoError(t, json.Unmarshal(api.Requests()[1].Body, &body))
+			require.Len(t, body.Messages, 3)
+			assert.Equal(t, "assistant", body.Messages[1].Role)
+			assert.JSONEq(t, `[
+				{"type":"thinking","thinking":"","signature":"sig-1"},
+				{"type":"text","text":"Let me look."},
+				{"type":"redacted_thinking","data":"opaque-2"},
+				{"type":"tool_use","id":"toolu_1","name":"tickets_read","input":{"id":7}}
+			]`, string(body.Messages[1].Content))
+		})
 	}
-	require.NoError(t, json.Unmarshal(api.Requests()[1].Body, &body))
-	require.Len(t, body.Messages, 3)
-	assert.Equal(t, "assistant", body.Messages[1].Role)
-	assert.JSONEq(t, `[
-		{"type":"thinking","thinking":"","signature":"sig-1"},
-		{"type":"text","text":"Let me look."},
-		{"type":"redacted_thinking","data":"opaque-2"},
-		{"type":"tool_use","id":"toolu_1","name":"tickets_read","input":{"id":7}}
-	]`, string(body.Messages[1].Content))
+}
+
+func TestGenerate_ProviderParts(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider *model.ProviderPart
+		wantErr  string
+		// wantContent is the replayed assistant turn when there is no error.
+		wantContent string
+	}{
+		{
+			name:        "another provider's part is ignored",
+			provider:    &model.ProviderPart{Name: "other", Data: json.RawMessage(`{"whatever":1}`)},
+			wantContent: `[{"type":"text","text":"Rebuilt."}]`,
+		},
+		{
+			name:     "a broken part of this provider is an error",
+			provider: &model.ProviderPart{Name: "anthropic", Data: json.RawMessage(`{`)},
+			wantErr:  "provider part",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := anthropictest.New(t, anthropictest.Reply(t, "end_turn", anthropictest.TextBlock("ok")))
+			m := newModel(t, api)
+			req := model.Request{Messages: []model.Message{
+				{Role: model.RoleUser, Text: "hi"},
+				{Role: model.RoleAssistant, Text: "Rebuilt.", Provider: tt.provider},
+				{Role: model.RoleUser, Text: "again"},
+			}}
+
+			_, err := m.Generate(context.Background(), req)
+
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				assert.Empty(t, api.Requests())
+				return
+			}
+			require.NoError(t, err)
+			var body struct {
+				Messages []struct {
+					Content json.RawMessage `json:"content"`
+				} `json:"messages"`
+			}
+			require.NoError(t, json.Unmarshal(api.Requests()[0].Body, &body))
+			assert.JSONEq(t, tt.wantContent, string(body.Messages[1].Content))
+		})
+	}
 }

@@ -33,27 +33,27 @@ const (
 // Message is one turn of the conversation. Assistant messages may carry tool
 // calls; the user message that follows carries their results.
 type Message struct {
-	Role        Role
-	Text        string
-	ToolCalls   []ToolCall
-	ToolResults []ToolResult
+	Role        Role         `json:"role"`
+	Text        string       `json:"text,omitempty"`
+	ToolCalls   []ToolCall   `json:"tool_calls,omitempty"`
+	ToolResults []ToolResult `json:"tool_results,omitempty"`
 	// Provider is the message in the form of the provider that generated it,
 	// if it keeps one. The provider replays it unchanged on later requests,
 	// which some APIs require, for example for thinking blocks. Other code
-	// treats it as opaque.
-	Provider any
+	// treats it as opaque, and it is not part of the message's JSON form.
+	Provider any `json:"-"`
 }
 
 // ToolCall is the model asking for a tool to be called.
 type ToolCall struct {
-	ID   string
-	Name string
-	Args json.RawMessage
+	ID   string          `json:"id"`
+	Name string          `json:"name"`
+	Args json.RawMessage `json:"args,omitempty"`
 }
 
 // ToolResult answers the tool call with the same ID.
 type ToolResult struct {
-	CallID  string
-	Content string
-	IsError bool
+	CallID  string `json:"call_id"`
+	Content string `json:"content"`
+	IsError bool   `json:"is_error,omitempty"`
 }

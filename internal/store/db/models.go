@@ -42,3 +42,13 @@ type Run struct {
 	CreatedAt        time.Time
 	FinishedAt       *time.Time
 }
+
+type RunMessage struct {
+	RunID       string
+	Position    int32
+	Role        string
+	Text        string
+	ToolCalls   []byte
+	ToolResults []byte
+	CreatedAt   time.Time
+}

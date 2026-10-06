@@ -40,14 +40,26 @@ type Config struct {
 	// tokens, that the gateway redacts from everything it hands on. It is
 	// required.
 	Redactor *secret.Redactor
+	// Transcript, if set, records every message of a run's conversation as
+	// it joins it. Without one, the transcript is only in Result.
+	Transcript Transcript
+}
+
+// Transcript records the conversation of runs: the input, every model reply
+// and every set of tool results, with its index in the conversation. An
+// error ends the run before anything further happens, so a transcript never
+// misses a message the run went on from.
+type Transcript interface {
+	Append(ctx context.Context, runID string, index int, msg model.Message) error
 }
 
 // Agent runs one harness. It holds the harness, the model and the tool gateway,
 // but no run state, so it can run many times, also at once.
 type Agent struct {
-	harness harness.Harness
-	model   model.Model
-	gateway *toolgateway.Gateway
+	harness    harness.Harness
+	model      model.Model
+	gateway    *toolgateway.Gateway
+	transcript Transcript
 }
 
 // Result is the outcome of a run. On error it holds what happened up to the
@@ -97,7 +109,7 @@ func New(ctx context.Context, cfg Config) (*Agent, error) {
 	if err != nil {
 		return nil, fmt.Errorf("agent: %w", err)
 	}
-	return &Agent{harness: *cfg.Harness, model: cfg.Model, gateway: gw}, nil
+	return &Agent{harness: *cfg.Harness, model: cfg.Model, gateway: gw, transcript: cfg.Transcript}, nil
 }
 
 // Tools describes the tools runs may call: the granted ones, sorted by name.
@@ -150,9 +162,20 @@ func (r *Run) Execute(ctx context.Context, input string) (Result, error) {
 		return Result{}, errors.New("agent: run already executed")
 	}
 	a, run := r.agent, r.gateway
-	res := Result{
-		RunID:    run.ID(),
-		Messages: []model.Message{{Role: model.RoleUser, Text: input}},
+	res := Result{RunID: run.ID()}
+	// add appends msg to the conversation and records it.
+	add := func(msg model.Message) error {
+		res.Messages = append(res.Messages, msg)
+		if a.transcript == nil {
+			return nil
+		}
+		if err := a.transcript.Append(ctx, run.ID(), len(res.Messages)-1, msg); err != nil {
+			return fmt.Errorf("agent: transcript: %w", err)
+		}
+		return nil
+	}
+	if err := add(model.Message{Role: model.RoleUser, Text: input}); err != nil {
+		return res, err
 	}
 	tools := a.gateway.Definitions()
 	maxSteps := a.harness.Limits.MaxSteps
@@ -168,7 +191,9 @@ func (r *Run) Execute(ctx context.Context, input string) (Result, error) {
 		}
 		msg.Role = model.RoleAssistant
 		res.Steps = step
-		res.Messages = append(res.Messages, msg)
+		if err := add(msg); err != nil {
+			return res, err
+		}
 
 		if len(msg.ToolCalls) == 0 {
 			res.Output = msg.Text
@@ -181,7 +206,9 @@ func (r *Run) Execute(ctx context.Context, input string) (Result, error) {
 		if err != nil {
 			return res, fmt.Errorf("agent: step %d: %w", step, err)
 		}
-		res.Messages = append(res.Messages, model.Message{Role: model.RoleUser, ToolResults: results})
+		if err := add(model.Message{Role: model.RoleUser, ToolResults: results}); err != nil {
+			return res, err
+		}
 	}
 	return res, fmt.Errorf("agent: %w (%d)", ErrMaxSteps, maxSteps)
 }

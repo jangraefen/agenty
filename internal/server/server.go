@@ -133,6 +133,7 @@ func (s *Server) routes() *gin.Engine {
 	v1.POST("/runs", s.createRun)
 	v1.GET("/runs/:id", s.getRun)
 	v1.GET("/runs/:id/audit", s.getAudit)
+	v1.GET("/runs/:id/transcript", s.getTranscript)
 	v1.GET("/runs/:id/events", s.streamEvents)
 	v1.POST("/runs/:id/approvals/:approval", s.answerApproval)
 	return r
@@ -319,13 +320,14 @@ func (s *Server) start(v store.HarnessVersion, input string) (string, int, error
 	}
 	hub := newHub(h.Name)
 	a, err := agent.New(s.ctx, agent.Config{
-		Harness:  &h,
-		Model:    m,
-		Servers:  servers,
-		Policy:   s.cfg.Operator.Policy,
-		Approver: hub,
-		Audit:    runAudit{store: s.cfg.Store, hub: hub},
-		Redactor: s.cfg.Resolved.Redactor,
+		Harness:    &h,
+		Model:      m,
+		Servers:    servers,
+		Policy:     s.cfg.Operator.Policy,
+		Approver:   hub,
+		Audit:      runAudit{store: s.cfg.Store, hub: hub},
+		Redactor:   s.cfg.Resolved.Redactor,
+		Transcript: runTranscript{store: s.cfg.Store, redact: s.cfg.Resolved.Redactor},
 	})
 	if err != nil {
 		return "", http.StatusUnprocessableEntity, err
@@ -423,6 +425,24 @@ func (s *Server) getAudit(c *gin.Context) {
 	out := make([]api.AuditRecord, len(records))
 	for i, r := range records {
 		out[i] = api.AuditRecord{Record: r.Record, RecordedAt: r.RecordedAt}
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+func (s *Server) getTranscript(c *gin.Context) {
+	id := c.Param("id")
+	if _, err := s.cfg.Store.Run(c.Request.Context(), id); err != nil {
+		s.failStore(c, err)
+		return
+	}
+	messages, err := s.cfg.Store.Transcript(c.Request.Context(), id)
+	if err != nil {
+		s.failStore(c, err)
+		return
+	}
+	out := make([]api.TranscriptMessage, len(messages))
+	for i, m := range messages {
+		out[i] = api.TranscriptMessage{Position: m.Position, Message: m.Message, CreatedAt: m.CreatedAt}
 	}
 	c.JSON(http.StatusOK, out)
 }

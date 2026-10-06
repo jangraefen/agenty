@@ -33,8 +33,9 @@ function SignIn() {
       return unwrap(api.GET("/v1/me", { headers: { Authorization: `Bearer ${candidate}` } }));
     },
     onSuccess: async (me, candidate) => {
-      queryClient.setQueryData(meQuery(api).queryKey, me);
+      // After signing in, which clears the cache for the new user.
       session.signIn(candidate);
+      queryClient.setQueryData(meQuery(api).queryKey, me);
       await navigate({ to: "/" });
     },
   });

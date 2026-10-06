@@ -50,17 +50,27 @@ function Runs() {
   const pages = runs.data?.pages ?? [];
   const shown = pages.reduce((count, page) => count + page.runs.length, 0);
 
-  // After loading more, the focus moves to the first run loaded, as the
-  // button may be gone.
+  // After loading more, the focus moves to the first run of the page loaded,
+  // as the button may be gone. A page that is empty or fails leaves it.
   const table = useRef<HTMLTableElement>(null);
-  const [focusRow, setFocusRow] = useState<number | null>(null);
+  const [focusRun, setFocusRun] = useState<string | null>(null);
   useEffect(() => {
-    if (focusRow === null || shown <= focusRow) {
+    if (focusRun === null) {
       return;
     }
-    table.current?.querySelectorAll<HTMLElement>("tbody tr a")[focusRow]?.focus();
-    setFocusRow(null);
-  }, [focusRow, shown]);
+    table.current?.querySelector<HTMLElement>(`tr[data-run="${CSS.escape(focusRun)}"] a`)?.focus();
+    setFocusRun(null);
+  }, [focusRun]);
+
+  async function loadMore() {
+    if (runs.isFetchingNextPage) {
+      return;
+    }
+    const result = await runs.fetchNextPage();
+    if (result.isSuccess) {
+      setFocusRun(result.data.pages.at(-1)?.runs[0]?.id ?? null);
+    }
+  }
   const filtered = filters.harness !== undefined || filters.status !== undefined;
 
   return (
@@ -144,7 +154,7 @@ function Runs() {
           <tbody>
             {pages.flatMap((page) =>
               page.runs.map((run) => (
-                <tr key={run.id} className="border-b last:border-0">
+                <tr key={run.id} data-run={run.id} className="border-b last:border-0">
                   <td className="py-2 pr-4 whitespace-nowrap">
                     <Link
                       to="/w/$workspace/runs/$runId"
@@ -184,11 +194,9 @@ function Runs() {
         <Button
           variant="outline"
           className="mt-4"
-          disabled={runs.isFetchingNextPage}
-          onClick={() => {
-            setFocusRow(shown);
-            void runs.fetchNextPage();
-          }}
+          // Not disabled, which would drop the focus.
+          aria-disabled={runs.isFetchingNextPage}
+          onClick={() => void loadMore()}
         >
           Load more
         </Button>

@@ -28,19 +28,19 @@ const (
 )
 
 // Record is one audit entry. All records of one call share its CallID, and
-// all records of one run share its RunID.
+// all records of one run share its RunID. Its JSON form is the audit log format.
 type Record struct {
-	RunID    string
-	CallID   string
-	Event    Event
-	Tool     string
-	Args     json.RawMessage
-	Decision Decision
-	Reason   string
+	RunID    string          `json:"run_id"`
+	CallID   string          `json:"call_id"`
+	Event    Event           `json:"event"`
+	Tool     string          `json:"tool"`
+	Args     json.RawMessage `json:"args,omitempty"`
+	Decision Decision        `json:"decision"`
+	Reason   string          `json:"reason,omitempty"`
 	// Approver names who approved or rejected the call, if anyone did.
-	Approver string
-	Result   json.RawMessage
-	Err      string
+	Approver string          `json:"approver,omitempty"`
+	Result   json.RawMessage `json:"result,omitempty"`
+	Err      string          `json:"error,omitempty"`
 }
 
 // Audit stores audit records. If recording a decision or approval fails, the

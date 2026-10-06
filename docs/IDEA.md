@@ -69,6 +69,18 @@ The first goal is to prove the core loop end to end, in a single Go binary:
 4. Enforce grants and an OPA policy (including `require_approval`, answered on the command line).
 5. Write an audit log of every decision and call.
 
+All five are built. `agenty run` ties them together: an operator config (`agenty.yaml`: model provider, MCP servers, central policy) is kept apart from the harness, so builders never touch credentials. Config values come from the environment (`{env: NAME}`, then treated as secrets and redacted everywhere) or are plain text (`{value: TEXT}`). Approvals are asked at the terminal and rejected when stdin is not one. The audit log is a JSON-lines file, one record per decision, approval and result. Only the MCP servers whose tools the harness grants are started.
+
+To try it (needs Node.js for the example's filesystem MCP server, and `ANTHROPIC_API_KEY` in the environment or a `.env` file):
+
+```sh
+go build -o agenty ./cmd/agenty
+cd examples/notes
+../../agenty run --harness notes.yaml "tidy my notes"
+```
+
+The example's central policy asks before every file change and denies dotfiles; its harness allows one rewrite per run. Each run appends to `audit.jsonl`.
+
 **Not in the PoC**: web UI, database, multi-tenancy, identity providers, schedules, knowledge retrieval, sandboxed scripts. Each comes back when the PoC shows it is needed.
 
 ## Later, if the PoC holds

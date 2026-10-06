@@ -1,0 +1,14 @@
+# Operator config: what the platform team owns. Run agenty from this
+# directory, so the server's ./sandbox resolves here.
+provider:
+  anthropic:
+    # Read from the environment (or a .env file); never written here.
+    api_key: {env: ANTHROPIC_API_KEY}
+    max_tokens: 4096
+mcp_servers:
+  # The reference filesystem MCP server, limited to ./sandbox. Needs Node.js.
+  files:
+    command: npx
+    args: [-y, "@modelcontextprotocol/server-filesystem@2026.8.31", ./sandbox]
+policy:
+  files: [policies/central.rego]

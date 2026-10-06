@@ -233,3 +233,19 @@ func TestValidateToolName(t *testing.T) {
 		})
 	}
 }
+
+func TestRecord_JSONIsTheAuditFormat(t *testing.T) {
+	rec := toolgateway.Record{
+		RunID: "r1", CallID: "c1", Event: toolgateway.EventResult, Tool: "tickets_read",
+		Args: json.RawMessage(`{"id":7}`), Decision: toolgateway.Allow, Reason: "ok", Approver: "alice",
+		Result: json.RawMessage(`{"title":"x"}`), Err: "boom",
+	}
+
+	b, err := json.Marshal(rec)
+
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"run_id":"r1","call_id":"c1","event":"result","tool":"tickets_read","args":{"id":7},"decision":"allow","reason":"ok","approver":"alice","result":{"title":"x"},"error":"boom"}`, string(b))
+	minimal, err := json.Marshal(toolgateway.Record{RunID: "r1", CallID: "c1", Event: toolgateway.EventDecision, Tool: "t", Decision: toolgateway.Deny})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"run_id":"r1","call_id":"c1","event":"decision","tool":"t","decision":"deny"}`, string(minimal), "empty optional fields are left out")
+}

@@ -95,7 +95,7 @@ type Gateway struct {
 	policy       Policy
 	approver     Approver
 	audit        Audit
-	redact       *redactor
+	redact       *Redactor
 }
 
 // New returns a Gateway for cfg. The grants are copied, so later changes to
@@ -127,7 +127,7 @@ func New(cfg Config) (*Gateway, error) {
 	if err := validateTools(cfg.Tools); err != nil {
 		return nil, err
 	}
-	redact, err := newRedactor(cfg.Secrets)
+	redact, err := NewRedactor(cfg.Secrets)
 	if err != nil {
 		return nil, err
 	}
@@ -213,14 +213,21 @@ func (r *Run) Call(ctx context.Context, call ToolCall) (json.RawMessage, error) 
 
 	auditErr := g.record(ctx, rec)
 	if rec.Decision == Deny {
-		return nil, errors.Join(denied(call.Name, g.redact.string(rec.Reason)), auditErr)
+		return nil, errors.Join(denied(call.Name, g.redact.String(rec.Reason)), auditErr)
 	}
 	if auditErr != nil {
 		return nil, auditErr
 	}
 
 	if rec.Decision == RequireApproval {
-		approval, err := g.approver.Approve(ctx, verdict.Request, verdict.Reasons)
+		// The approver is a person: show them the call, never a secret.
+		req := verdict.Request
+		req.Args = g.redact.json(req.Args)
+		reasons := make([]string, len(verdict.Reasons))
+		for i, reason := range verdict.Reasons {
+			reasons[i] = g.redact.String(reason)
+		}
+		approval, err := g.approver.Approve(ctx, req, reasons)
 		rec.Event, rec.Approver = EventApproval, approval.Approver
 		rec.Decision, rec.Reason = Allow, approval.Reason
 		switch {
@@ -231,7 +238,7 @@ func (r *Run) Call(ctx context.Context, call ToolCall) (json.RawMessage, error) 
 		}
 		auditErr := g.record(ctx, rec)
 		if rec.Decision == Deny {
-			return nil, errors.Join(denied(call.Name, g.redact.string(rec.Reason)), auditErr)
+			return nil, errors.Join(denied(call.Name, g.redact.String(rec.Reason)), auditErr)
 		}
 		if auditErr != nil {
 			return nil, auditErr
@@ -318,7 +325,7 @@ func (r *Run) countExecuted(name string) {
 // record writes rec to the audit log, with secrets redacted.
 func (g *Gateway) record(ctx context.Context, rec Record) error {
 	rec.Args, rec.Result = g.redact.json(rec.Args), g.redact.json(rec.Result)
-	rec.Reason, rec.Err, rec.Approver = g.redact.string(rec.Reason), g.redact.string(rec.Err), g.redact.string(rec.Approver)
+	rec.Reason, rec.Err, rec.Approver = g.redact.String(rec.Reason), g.redact.String(rec.Err), g.redact.String(rec.Approver)
 	if err := g.audit.Record(ctx, rec); err != nil {
 		return fmt.Errorf("%w: %s %s: %w", ErrAudit, rec.Event, rec.Tool, err)
 	}

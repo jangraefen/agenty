@@ -1,0 +1,4 @@
+provider:
+  anthropic:
+    api_key: {env: ANTHROPIC_API_KEY}
+    max_tokens: 1024

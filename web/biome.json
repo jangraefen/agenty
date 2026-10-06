@@ -4,6 +4,7 @@
   "files": {
     "includes": ["**", "!src/api/schema.ts", "!src/routeTree.gen.ts"]
   },
+  "css": { "parser": { "tailwindDirectives": true } },
   "formatter": { "indentStyle": "space", "lineWidth": 100 },
   "linter": {
     "rules": {

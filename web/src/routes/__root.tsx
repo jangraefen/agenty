@@ -1,19 +1,26 @@
-import { createRootRouteWithContext, Outlet } from "@tanstack/react-router";
+import { createRootRouteWithContext, Link, Outlet } from "@tanstack/react-router";
 import type { RouterContext } from "@/router";
 
 export const Route = createRootRouteWithContext<RouterContext>()({
-  component: Root,
+  component: Outlet,
+  notFoundComponent: NotFound,
+  errorComponent: ({ error }) => (
+    <main className="mx-auto max-w-xl p-6">
+      <h1 className="text-xl font-semibold">Something went wrong</h1>
+      <p role="alert" className="mt-2 text-muted-foreground">
+        {error instanceof Error ? error.message : String(error)}
+      </p>
+    </main>
+  ),
 });
 
-function Root() {
+function NotFound() {
   return (
-    <div className="min-h-screen bg-white text-slate-900">
-      <header className="border-b border-slate-200 px-6 py-3">
-        <span className="font-semibold">Agenty</span>
-      </header>
-      <main className="px-6 py-4">
-        <Outlet />
-      </main>
-    </div>
+    <main className="mx-auto max-w-xl p-6">
+      <h1 className="text-xl font-semibold">Page not found</h1>
+      <Link to="/" className="mt-2 inline-block underline">
+        Home
+      </Link>
+    </main>
   );
 }

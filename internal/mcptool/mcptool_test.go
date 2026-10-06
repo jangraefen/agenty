@@ -57,6 +57,7 @@ func toolsByName(t *testing.T, s *mcptool.Session) map[string]toolgateway.Tool {
 func callTool(ctx context.Context, t *testing.T, tool toolgateway.Tool, args json.RawMessage) (json.RawMessage, error) {
 	t.Helper()
 	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+		Redactor:     gatewaytest.NoSecrets,
 		Granted:      []string{tool.Definition().Name},
 		Servers:      gatewaytest.Servers(tool),
 		MaxToolCalls: 100,
@@ -87,6 +88,7 @@ func TestTools_PrefixesNamesAndKeepsDefinitions(t *testing.T) {
 	assert.Equal(t, "Echoes its arguments.", def.Description)
 	assert.JSONEq(t, `{"type":"object"}`, string(def.InputSchema))
 	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+		Redactor:     gatewaytest.NoSecrets,
 		Granted:      slices.Collect(maps.Keys(tools)),
 		Servers:      gatewaytest.Servers(slices.Collect(maps.Values(tools))...),
 		MaxToolCalls: 1,

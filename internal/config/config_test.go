@@ -122,7 +122,7 @@ func TestLoad_InvalidDocuments(t *testing.T) {
 	require.ErrorContains(t, err, "missing.yaml")
 }
 
-func TestResolve_ReadsTheEnvironmentAndCollectsSecrets(t *testing.T) {
+func TestResolve_ReadsTheEnvironmentAndRedactsItsSecrets(t *testing.T) {
 	cfg, err := config.Load(filepath.Join("testdata", "full.yaml"))
 	require.NoError(t, err)
 	env := map[string]string{"ANTHROPIC_API_KEY": "sk-ant-key-0123456789", "TICKETS_TOKEN": "tickets-token-0123"}
@@ -132,7 +132,8 @@ func TestResolve_ReadsTheEnvironmentAndCollectsSecrets(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "sk-ant-key-0123456789", got.AnthropicAPIKey)
 	assert.Equal(t, map[string]map[string]string{"tickets": {"TICKETS_TOKEN": "tickets-token-0123", "LOG_LEVEL": "info"}}, got.MCPServerEnv)
-	assert.ElementsMatch(t, []string{"sk-ant-key-0123456789", "tickets-token-0123"}, got.Secrets, "everything read from the environment is a secret; plain values are not")
+	assert.Equal(t, "[redacted] [redacted] info", got.Redactor.String("sk-ant-key-0123456789 tickets-token-0123 info"),
+		"everything read from the environment is a secret; plain values are not")
 }
 
 func TestResolve_Errors(t *testing.T) {

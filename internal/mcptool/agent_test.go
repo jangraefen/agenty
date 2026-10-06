@@ -36,6 +36,7 @@ func TestAgent_RunsMCPToolsThroughTheGateway(t *testing.T) {
 		modeltest.Reply("done"),
 	)
 	a, err := agent.New(t.Context(), agent.Config{
+		Redactor: gatewaytest.NoSecrets,
 		Harness: &harness.Harness{
 			Name:         "triage",
 			Instructions: "Triage the ticket.",

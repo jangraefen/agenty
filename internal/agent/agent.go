@@ -12,6 +12,7 @@ import (
 	"github.com/jangraefen/agenty/internal/harness"
 	"github.com/jangraefen/agenty/internal/model"
 	"github.com/jangraefen/agenty/internal/policy"
+	"github.com/jangraefen/agenty/internal/secret"
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
@@ -34,9 +35,10 @@ type Config struct {
 	// one, such calls are denied.
 	Approver toolgateway.Approver
 	Audit    toolgateway.Audit
-	// Secrets are credential values, such as the model API key and MCP server
-	// tokens, that the gateway redacts from everything it hands on.
-	Secrets []string
+	// Redactor holds credentials, such as the model API key and MCP server
+	// tokens, that the gateway redacts from everything it hands on. It is
+	// required.
+	Redactor *secret.Redactor
 }
 
 // Agent runs one harness. It holds the harness, the model and the tool gateway,
@@ -89,7 +91,7 @@ func New(ctx context.Context, cfg Config) (*Agent, error) {
 		Policy:       engine,
 		Approver:     cfg.Approver,
 		Audit:        cfg.Audit,
-		Secrets:      cfg.Secrets,
+		Redactor:     cfg.Redactor,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("agent: %w", err)

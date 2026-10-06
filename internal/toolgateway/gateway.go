@@ -84,11 +84,13 @@ type Config struct {
 	Approver Approver
 	// Audit records every decision, approval and result. It is required.
 	Audit Audit
-	// Secrets are credential values, at least 8 characters long, that must
-	// never reach the model or the audit log. The gateway replaces them with
-	// "[redacted]" in tool results, tool errors, denial reasons and audit
-	// records. Tools still receive their arguments unchanged.
-	Secrets []string
+	// Redactor holds the credentials that must never reach the model, an
+	// approver or the audit log. The gateway redacts them from tool results,
+	// tool errors, denial reasons, approval requests and audit records; tools
+	// still receive their arguments unchanged. It is required, so redaction
+	// is never left out by omission: without secrets, pass one built from
+	// none.
+	Redactor *secret.Redactor
 }
 
 // Gateway holds what every run of a harness shares: grants, tools, policy,
@@ -121,6 +123,8 @@ func New(ctx context.Context, cfg Config) (*Gateway, error) {
 		return nil, errors.New("toolgateway: policy is required")
 	case cfg.MaxToolCalls <= 0:
 		return nil, errors.New("toolgateway: max tool calls must be greater than 0")
+	case cfg.Redactor == nil:
+		return nil, errors.New("toolgateway: redactor is required")
 	}
 	if err := validateServers(cfg.Servers); err != nil {
 		return nil, err
@@ -135,10 +139,6 @@ func New(ctx context.Context, cfg Config) (*Gateway, error) {
 		}
 		granted[name] = true
 	}
-	redact, err := secret.NewRedactor(cfg.Secrets)
-	if err != nil {
-		return nil, fmt.Errorf("toolgateway: %w", err)
-	}
 
 	sessions, served, err := startServers(ctx, cfg.Servers, granted)
 	if err != nil {
@@ -151,7 +151,7 @@ func New(ctx context.Context, cfg Config) (*Gateway, error) {
 		policy:       cfg.Policy,
 		approver:     cfg.Approver,
 		audit:        cfg.Audit,
-		redact:       redact,
+		redact:       cfg.Redactor,
 		sessions:     sessions,
 	}
 	for _, tool := range served {

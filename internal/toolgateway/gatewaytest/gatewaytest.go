@@ -7,6 +7,8 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/jangraefen/agenty/internal/must"
+	"github.com/jangraefen/agenty/internal/secret"
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
@@ -189,3 +191,7 @@ func Servers(tools ...toolgateway.Tool) map[string]toolgateway.ToolServer {
 	}
 	return servers
 }
+
+// NoSecrets is a redactor without secrets, for tests that do not handle
+// credentials.
+var NoSecrets = must.Value(secret.NewRedactor(nil))

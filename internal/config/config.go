@@ -17,6 +17,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/jangraefen/agenty/internal/must"
 	"github.com/jangraefen/agenty/internal/policy"
 	"github.com/jangraefen/agenty/internal/secret"
 )
@@ -166,19 +167,20 @@ func (f *file) validate() error {
 }
 
 // Resolved holds the configuration's values, read from the environment where
-// configured, and the secrets among them.
+// configured, and the redactor for the secrets among them.
 type Resolved struct {
 	AnthropicAPIKey string
 	// MCPServerEnv holds each server's environment, by server name.
 	MCPServerEnv map[string]map[string]string
-	// Secrets are all values read from the environment. They are redacted
-	// from everything the model and the audit log see.
-	Secrets []string
+	// Redactor redacts every value read from the environment. It is the one
+	// redactor of a run: logs, output and the tool gateway all use it.
+	Redactor *secret.Redactor
 }
 
 // Resolve reads the configured environment variables through lookup.
 func (c *Config) Resolve(lookup func(string) (string, bool)) (*Resolved, error) {
 	r := &Resolved{MCPServerEnv: map[string]map[string]string{}}
+	var secrets []string
 	var errs []error
 	resolve := func(field string, v Value) string {
 		if v.Env == "" {
@@ -191,7 +193,7 @@ func (c *Config) Resolve(lookup func(string) (string, bool)) (*Resolved, error) 
 		case len(val) < secret.MinLength:
 			errs = append(errs, &FieldError{Field: field, Msg: fmt.Sprintf("comes from the environment, so it is redacted as a secret, but it is shorter than %d characters", secret.MinLength)})
 		default:
-			r.Secrets = append(r.Secrets, val)
+			secrets = append(secrets, val)
 		}
 		return val
 	}
@@ -207,5 +209,7 @@ func (c *Config) Resolve(lookup func(string) (string, bool)) (*Resolved, error) 
 	if err := errors.Join(errs...); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
+	// Every secret is long enough: resolve rejected the short ones.
+	r.Redactor = must.Value(secret.NewRedactor(secrets))
 	return r, nil
 }

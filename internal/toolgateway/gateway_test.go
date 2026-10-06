@@ -20,13 +20,14 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 		cfg     toolgateway.Config
 		wantErr string
 	}{
-		{"missing policy", toolgateway.Config{MaxToolCalls: 100, Audit: &gatewaytest.Audit{}}, "policy is required"},
-		{"zero tool call limit", toolgateway.Config{Policy: &gatewaytest.Policy{}, Audit: &gatewaytest.Audit{}}, "max tool calls must be greater than 0"},
-		{"nil audit", toolgateway.Config{MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Servers: gatewaytest.Servers(read)}, "audit is required"},
-		{"empty grant", toolgateway.Config{MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Granted: []string{""}, Audit: &gatewaytest.Audit{}}, `grant 0: tool name ""`},
-		{"invalid grant", toolgateway.Config{MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Granted: []string{"tickets.read"}, Audit: &gatewaytest.Audit{}}, `grant 0: tool name "tickets.read"`},
-		{"grant of an unconfigured server", toolgateway.Config{MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Granted: []string{"tickets_read"}, Audit: &gatewaytest.Audit{}}, `grant tickets_read: no server "tickets" is configured`},
-		{"grant without a server part", toolgateway.Config{MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Granted: []string{"read"}, Servers: gatewaytest.Servers(read), Audit: &gatewaytest.Audit{}}, `grant read: no server "read" is configured`},
+		{"missing policy", toolgateway.Config{MaxToolCalls: 100, Audit: &gatewaytest.Audit{}, Redactor: gatewaytest.NoSecrets}, "policy is required"},
+		{"missing redactor", toolgateway.Config{MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Audit: &gatewaytest.Audit{}}, "redactor is required"},
+		{"zero tool call limit", toolgateway.Config{Policy: &gatewaytest.Policy{}, Audit: &gatewaytest.Audit{}, Redactor: gatewaytest.NoSecrets}, "max tool calls must be greater than 0"},
+		{"nil audit", toolgateway.Config{MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Servers: gatewaytest.Servers(read), Redactor: gatewaytest.NoSecrets}, "audit is required"},
+		{"empty grant", toolgateway.Config{MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Granted: []string{""}, Audit: &gatewaytest.Audit{}, Redactor: gatewaytest.NoSecrets}, `grant 0: tool name ""`},
+		{"invalid grant", toolgateway.Config{MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Granted: []string{"tickets.read"}, Audit: &gatewaytest.Audit{}, Redactor: gatewaytest.NoSecrets}, `grant 0: tool name "tickets.read"`},
+		{"grant of an unconfigured server", toolgateway.Config{MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Granted: []string{"tickets_read"}, Audit: &gatewaytest.Audit{}, Redactor: gatewaytest.NoSecrets}, `grant tickets_read: no server "tickets" is configured`},
+		{"grant without a server part", toolgateway.Config{MaxToolCalls: 100, Policy: &gatewaytest.Policy{}, Granted: []string{"read"}, Servers: gatewaytest.Servers(read), Audit: &gatewaytest.Audit{}, Redactor: gatewaytest.NoSecrets}, `grant read: no server "read" is configured`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -41,6 +42,7 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 func TestCall_PassesArgsAndReturnsResult(t *testing.T) {
 	read := &gatewaytest.Tool{Name: "tickets_read", Result: json.RawMessage(`{"title":"Printer on fire"}`)}
 	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+		Redactor:     gatewaytest.NoSecrets,
 		MaxToolCalls: 100,
 		Policy:       &gatewaytest.Policy{},
 		Granted:      []string{"tickets_read"},
@@ -63,6 +65,7 @@ func TestCall_GrantsAreFixedAtConstruction(t *testing.T) {
 	del := &gatewaytest.Tool{Name: "tickets_delete"}
 	granted := []string{"tickets_read"}
 	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+		Redactor:     gatewaytest.NoSecrets,
 		MaxToolCalls: 100,
 		Policy:       &gatewaytest.Policy{},
 		Granted:      granted,
@@ -82,6 +85,7 @@ func TestCall_GrantsAreFixedAtConstruction(t *testing.T) {
 func TestCall_EachCallGetsItsOwnCallID(t *testing.T) {
 	audit := &gatewaytest.Audit{}
 	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+		Redactor:     gatewaytest.NoSecrets,
 		MaxToolCalls: 100,
 		Policy:       &gatewaytest.Policy{},
 		Granted:      []string{"tickets_read"},
@@ -102,6 +106,7 @@ func TestCall_EachCallGetsItsOwnCallID(t *testing.T) {
 
 func TestDefinitions_OnlyGrantedToolsSortedByName(t *testing.T) {
 	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+		Redactor:     gatewaytest.NoSecrets,
 		MaxToolCalls: 100,
 		Policy:       &gatewaytest.Policy{},
 		Granted:      []string{"tickets_read", "tickets_label"},
@@ -126,6 +131,7 @@ func TestDefinitions_OnlyGrantedToolsSortedByName(t *testing.T) {
 func TestStart_EachRunHasItsOwnID(t *testing.T) {
 	audit := &gatewaytest.Audit{}
 	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+		Redactor:     gatewaytest.NoSecrets,
 		MaxToolCalls: 100,
 		Policy:       &gatewaytest.Policy{},
 		Granted:      []string{"tickets_read"},
@@ -158,6 +164,7 @@ func TestStart_EachRunHasItsOwnLimitAndCounts(t *testing.T) {
 	policy := &gatewaytest.Policy{}
 	read := &gatewaytest.Tool{Name: "tickets_read"}
 	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+		Redactor:     gatewaytest.NoSecrets,
 		MaxToolCalls: 1,
 		Policy:       policy,
 		Granted:      []string{"tickets_read"},
@@ -196,6 +203,7 @@ func TestNew_ValidatesServerTools(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tickets := &gatewaytest.Server{Tools: tt.tools}
 			gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+				Redactor:     gatewaytest.NoSecrets,
 				Granted:      []string{"tickets_read"},
 				Servers:      map[string]toolgateway.ToolServer{"tickets": tickets},
 				MaxToolCalls: 1,
@@ -217,6 +225,7 @@ func TestNew_FailsOnGrantsNoServerServes(t *testing.T) {
 	tickets := &gatewaytest.Server{Tools: []toolgateway.Tool{&gatewaytest.Tool{Name: "tickets_read"}}}
 
 	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+		Redactor:     gatewaytest.NoSecrets,
 		Granted:      []string{"tickets_read", "tickets_ghost"},
 		Servers:      map[string]toolgateway.ToolServer{"tickets": tickets},
 		MaxToolCalls: 1,

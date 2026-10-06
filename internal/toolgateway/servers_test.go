@@ -23,6 +23,7 @@ func serverConfig() (toolgateway.Config, *gatewaytest.Server, *gatewaytest.Serve
 	}}
 	mail := &gatewaytest.Server{Tools: []toolgateway.Tool{&gatewaytest.Tool{Name: "mail_send"}}}
 	return toolgateway.Config{
+		Redactor:     gatewaytest.NoSecrets,
 		Granted:      []string{"files_read"},
 		Servers:      map[string]toolgateway.ToolServer{"files": files, "mail": mail},
 		MaxToolCalls: 10,

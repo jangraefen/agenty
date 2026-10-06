@@ -37,7 +37,8 @@ func TestExample_Notes(t *testing.T) {
 		return model.ToolCall{ID: id, Name: name, Args: json.RawMessage(args)}
 	}
 	a, err := agent.New(context.Background(), agent.Config{
-		Harness: h,
+		Redactor: gatewaytest.NoSecrets,
+		Harness:  h,
 		Model: modeltest.NewScripted(
 			modeltest.CallTools(
 				call("1", "files_read_text_file", `{"path":"notes.md"}`),

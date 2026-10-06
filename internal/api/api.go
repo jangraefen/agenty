@@ -9,6 +9,7 @@
 //	POST /v1/runs                               start a run
 //	GET  /v1/runs/{id}                          a run
 //	GET  /v1/runs/{id}/audit                    a run's audit records
+//	GET  /v1/runs/{id}/transcript               a run's conversation with the model
 //	GET  /v1/runs/{id}/events                   a run's events, as server-sent events
 //	POST /v1/runs/{id}/approvals/{approval}     answer an approval request
 //
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/jangraefen/agenty/internal/harness"
+	"github.com/jangraefen/agenty/internal/model"
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
@@ -67,6 +69,16 @@ type Run struct {
 type AuditRecord struct {
 	toolgateway.Record
 	RecordedAt time.Time `json:"recorded_at"`
+}
+
+// TranscriptMessage is one message of a run's conversation with the model:
+// the input, a model reply, or the results of the reply's tool calls.
+// Secrets are redacted from it.
+type TranscriptMessage struct {
+	// Position is the message's index in the conversation.
+	Position int `json:"position"`
+	model.Message
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // Event names of the server-sent events of a run. Every event's data is JSON:

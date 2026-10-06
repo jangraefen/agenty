@@ -111,7 +111,7 @@ func TestPutHarness_Rejects(t *testing.T) {
 
 func TestNotFound(t *testing.T) {
 	f := newFixture(t, options{})
-	for _, path := range []string{"/v1/harnesses/ghost", "/v1/runs/ghost", "/v1/runs/ghost/audit", "/v1/runs/ghost/events"} {
+	for _, path := range []string{"/v1/harnesses/ghost", "/v1/runs/ghost", "/v1/runs/ghost/audit", "/v1/runs/ghost/events", "/v1/runs/ghost/transcript"} {
 		var resp api.Error
 		assert.Equal(t, http.StatusNotFound, f.do(t, http.MethodGet, path, nil, &resp), path)
 		assert.Contains(t, resp.Error, "not found", path)
@@ -154,6 +154,18 @@ func TestRun_SucceedsAndStreamsItsEvents(t *testing.T) {
 
 	replay := f.events(t, run.ID).rest()
 	assert.Equal(t, events, replay, "a finished run's events are replayed from the store")
+
+	var transcript []api.TranscriptMessage
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, "/v1/runs/"+run.ID+"/transcript", nil, &transcript))
+	require.Len(t, transcript, 4)
+	assert.Equal(t, model.Message{Role: model.RoleUser, Text: "tidy my notes"}, transcript[0].Message)
+	assert.Equal(t, []model.ToolCall{{ID: "c1", Name: "files_read", Args: json.RawMessage(`{"path":"notes.md"}`)}}, transcript[1].ToolCalls)
+	assert.Equal(t, []model.ToolResult{{CallID: "c1", Content: `{"content":"- milk"}`}}, transcript[2].ToolResults)
+	assert.Equal(t, "- milk", transcript[3].Text)
+	for i, m := range transcript {
+		assert.Equal(t, i, m.Position)
+		assert.False(t, m.CreatedAt.IsZero())
+	}
 }
 
 func TestRun_Approvals(t *testing.T) {
@@ -282,7 +294,7 @@ func TestRun_ModelFailureFailsTheRun(t *testing.T) {
 
 // TestInvariant_ServerCredentialsNeverLeak guards trust-model guarantee 5 on
 // the server: a credential a tool or the model echoes back never reaches a
-// response, an event, the store or the log.
+// response, an event, the store (run, audit log or transcript) or the log.
 func TestInvariant_ServerCredentialsNeverLeak(t *testing.T) {
 	f := newFixture(t, options{policy: []policy.Module{policy.RulesModule("central", `require_approval contains "writes need a human" if input.tool == "files_write"`)}})
 	f.putNotes(t)
@@ -311,13 +323,19 @@ func TestInvariant_ServerCredentialsNeverLeak(t *testing.T) {
 	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, "/v1/runs/"+run.ID, nil, &stored))
 	var audit []api.AuditRecord
 	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, "/v1/runs/"+run.ID+"/audit", nil, &audit))
+	var transcript []api.TranscriptMessage
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, "/v1/runs/"+run.ID+"/transcript", nil, &transcript))
 	storedJSON, err := json.Marshal(stored)
 	require.NoError(t, err)
 	auditJSON, err := json.Marshal(audit)
 	require.NoError(t, err)
+	transcriptJSON, err := json.Marshal(transcript)
+	require.NoError(t, err)
 
 	assert.Equal(t, "the token is [redacted]", stored.Output)
-	for _, data := range append(seen, string(storedJSON), string(auditJSON), f.logs.String()) {
+	assert.Equal(t, "the token is [redacted]", transcript[len(transcript)-1].Text)
+	assert.Contains(t, string(transcript[1].ToolCalls[1].Args), "[redacted]", "the model's own arguments are redacted too")
+	for _, data := range append(seen, string(storedJSON), string(auditJSON), string(transcriptJSON), f.logs.String()) {
 		assert.NotContains(t, data, token)
 	}
 	assert.Contains(t, strings.Join(seen, "\n"), "[redacted]")

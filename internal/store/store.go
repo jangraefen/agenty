@@ -22,6 +22,7 @@ import (
 	"github.com/pressly/goose/v3"
 
 	"github.com/jangraefen/agenty/internal/harness"
+	"github.com/jangraefen/agenty/internal/model"
 	"github.com/jangraefen/agenty/internal/must"
 	"github.com/jangraefen/agenty/internal/store/db"
 	"github.com/jangraefen/agenty/internal/toolgateway"
@@ -340,4 +341,70 @@ func notFound(what string, err error) error {
 		return fmt.Errorf("store: %s: %w", what, ErrNotFound)
 	}
 	return fmt.Errorf("store: %s: %w", what, err)
+}
+
+// TranscriptMessage is a stored message of a run's transcript.
+type TranscriptMessage struct {
+	// Position is the message's index in the run's conversation.
+	Position int
+	model.Message
+	CreatedAt time.Time
+}
+
+// AppendMessage stores msg at position in the transcript of the run runID,
+// which must exist. A position is written once. As with Record, content never
+// makes storing fail: invalid UTF-8 and NUL bytes in the text are replaced,
+// and tool call arguments that are not valid JSON are kept as a JSON string.
+func (s *Store) AppendMessage(ctx context.Context, runID string, position int, msg model.Message) error {
+	calls := make([]model.ToolCall, len(msg.ToolCalls))
+	for i, c := range msg.ToolCalls {
+		c.Args = jsonText(c.Args)
+		calls[i] = c
+	}
+	err := s.queries.InsertRunMessage(ctx, db.InsertRunMessageParams{
+		RunID:       text(runID),
+		Position:    int32(position), //nolint:gosec // G115: a position is bounded by the harness's max_steps.
+		Role:        text(string(msg.Role)),
+		Text:        text(msg.Text),
+		ToolCalls:   jsonList(calls),
+		ToolResults: jsonList(msg.ToolResults),
+	})
+	if err != nil {
+		return fmt.Errorf("store: run %s: message %d: %w", runID, position, err)
+	}
+	return nil
+}
+
+// jsonList encodes a list for a json column; an empty list stays NULL.
+// json.Marshal replaces invalid UTF-8 and escapes NUL, which json accepts.
+func jsonList[T any](list []T) []byte {
+	if len(list) == 0 {
+		return nil
+	}
+	return must.Value(json.Marshal(list))
+}
+
+// Transcript returns the stored transcript of a run, in order. A run without
+// messages, or one that does not exist, has an empty transcript.
+func (s *Store) Transcript(ctx context.Context, runID string) ([]TranscriptMessage, error) {
+	rows, err := s.queries.RunMessages(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("store: run %s: transcript: %w", runID, err)
+	}
+	out := make([]TranscriptMessage, len(rows))
+	for i, row := range rows {
+		msg := model.Message{Role: model.Role(row.Role), Text: row.Text}
+		if row.ToolCalls != nil {
+			if err := json.Unmarshal(row.ToolCalls, &msg.ToolCalls); err != nil {
+				return nil, fmt.Errorf("store: run %s: message %d: tool calls: %w", runID, row.Position, err)
+			}
+		}
+		if row.ToolResults != nil {
+			if err := json.Unmarshal(row.ToolResults, &msg.ToolResults); err != nil {
+				return nil, fmt.Errorf("store: run %s: message %d: tool results: %w", runID, row.Position, err)
+			}
+		}
+		out[i] = TranscriptMessage{Position: int(row.Position), Message: msg, CreatedAt: row.CreatedAt}
+	}
+	return out, nil
 }

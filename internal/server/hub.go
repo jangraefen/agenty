@@ -3,9 +3,13 @@ package server
 import (
 	"context"
 	"crypto/rand"
+	"slices"
 	"sync"
 
+	"github.com/jangraefen/agenty/internal/agent"
 	"github.com/jangraefen/agenty/internal/api"
+	"github.com/jangraefen/agenty/internal/model"
+	"github.com/jangraefen/agenty/internal/secret"
 	"github.com/jangraefen/agenty/internal/store"
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
@@ -113,4 +117,26 @@ func (a runAudit) Record(ctx context.Context, rec toolgateway.Record) error {
 	}
 	a.hub.publish(event{api.EventAudit, rec})
 	return nil
+}
+
+// runTranscript redacts each message of a run's conversation and stores it.
+type runTranscript struct {
+	store  *store.Store
+	redact *secret.Redactor
+}
+
+var _ agent.Transcript = runTranscript{}
+
+// Append stores msg even if the run is being cancelled, as Record does.
+func (t runTranscript) Append(ctx context.Context, runID string, index int, msg model.Message) error {
+	msg.Text = t.redact.String(msg.Text)
+	msg.ToolCalls = slices.Clone(msg.ToolCalls)
+	for i := range msg.ToolCalls {
+		msg.ToolCalls[i].Args = t.redact.JSON(msg.ToolCalls[i].Args)
+	}
+	msg.ToolResults = slices.Clone(msg.ToolResults)
+	for i := range msg.ToolResults {
+		msg.ToolResults[i].Content = t.redact.String(msg.ToolResults[i].Content)
+	}
+	return t.store.AppendMessage(context.WithoutCancel(ctx), runID, index, msg)
 }

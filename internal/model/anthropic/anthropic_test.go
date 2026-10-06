@@ -182,8 +182,8 @@ func TestGenerate_UnusableRepliesAreErrors(t *testing.T) {
 		}, anthropic.ErrTruncated, ""},
 		{"paused turn", func(t *testing.T) anthropictest.Response { return anthropictest.Reply(t, "pause_turn") }, nil, `stop reason "pause_turn"`},
 		{"unsupported content block", func(t *testing.T) anthropictest.Response {
-			return anthropictest.Reply(t, "end_turn", map[string]any{"type": "redacted_thinking", "data": "x"})
-		}, nil, `content block "redacted_thinking"`},
+			return anthropictest.Reply(t, "end_turn", map[string]any{"type": "mystery_block"})
+		}, nil, `content block "mystery_block"`},
 		{"API error", func(*testing.T) anthropictest.Response {
 			return anthropictest.Response{Status: http.StatusBadRequest, Body: `{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long"}}`}
 		}, nil, "prompt is too long"},
@@ -320,4 +320,46 @@ func TestGenerate_IgnoresTheEnvironment(t *testing.T) {
 			assert.Empty(t, reqs[0].Header.Get("X-Leak"))
 		})
 	}
+}
+
+// TestGenerate_ReplaysTheReplyUnchanged: models that think by default return
+// thinking blocks, which must come back unchanged and in their place on the
+// next request. The assistant turn is replayed exactly as the API sent it.
+func TestGenerate_ReplaysTheReplyUnchanged(t *testing.T) {
+	api := anthropictest.New(t,
+		anthropictest.Reply(t, "tool_use",
+			map[string]any{"type": "thinking", "thinking": "", "signature": "sig-1"},
+			anthropictest.TextBlock("Let me look."),
+			map[string]any{"type": "redacted_thinking", "data": "opaque-2"},
+			anthropictest.ToolUseBlock("toolu_1", "tickets_read", map[string]any{"id": 7}),
+		),
+		anthropictest.Reply(t, "end_turn", anthropictest.TextBlock("Printer on fire.")),
+	)
+	m := newModel(t, api)
+	req := model.Request{Messages: []model.Message{{Role: model.RoleUser, Text: "ticket 7"}}}
+
+	first, err := m.Generate(context.Background(), req)
+	require.NoError(t, err)
+	assert.Equal(t, "Let me look.", first.Text, "thinking is not part of the answer")
+	require.Len(t, first.ToolCalls, 1)
+
+	req.Messages = append(req.Messages, first, model.Message{Role: model.RoleUser, ToolResults: []model.ToolResult{{CallID: "toolu_1", Content: `{"title":"Printer on fire"}`}}})
+	_, err = m.Generate(context.Background(), req)
+	require.NoError(t, err)
+
+	var body struct {
+		Messages []struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(api.Requests()[1].Body, &body))
+	require.Len(t, body.Messages, 3)
+	assert.Equal(t, "assistant", body.Messages[1].Role)
+	assert.JSONEq(t, `[
+		{"type":"thinking","thinking":"","signature":"sig-1"},
+		{"type":"text","text":"Let me look."},
+		{"type":"redacted_thinking","data":"opaque-2"},
+		{"type":"tool_use","id":"toolu_1","name":"tickets_read","input":{"id":7}}
+	]`, string(body.Messages[1].Content))
 }

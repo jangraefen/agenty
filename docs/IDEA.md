@@ -91,15 +91,14 @@ The PoC held. The next step splits the command line: a server holds the state an
 - **Approvals**: the server streams each run's events over server-sent events. A call that needs approval waits in the server until a client posts the answer; one that nobody answers waits until the server stops, as there is no timeout yet. A run does not survive a server restart.
 - **CLI**: a client of the API instead of running agents itself.
 
-To try it (needs PostgreSQL, Node.js for the example's filesystem MCP server, and `ANTHROPIC_API_KEY` and `DATABASE_URL` in the environment or a `.env` file):
+To try it (needs [Task](https://taskfile.dev), Docker for the database, Node.js for the example's filesystem MCP server, and `ANTHROPIC_API_KEY` in the environment or a `.env` file at the module root):
 
 ```sh
-go build -o agenty ./cmd/agenty
-cd examples/notes
-../../agenty serve &
-../../agenty apply notes.yaml
-../../agenty run notes "tidy my notes"
+task serve   # starts PostgreSQL with Docker Compose, builds agenty, serves the notes example
+task demo    # in a second terminal: applies the notes harness and runs it
 ```
+
+`task --list` shows the other tasks: `test`, `lint`, `check` (what CI checks), and the database's `db`, `db:stop` and `db:reset`. MCP servers inherit only `PATH`; behind an HTTP proxy, set its variables in the server's `env` in `agenty.yaml`.
 
 The example's central policy asks before every file change and denies dotfiles; its harness allows one rewrite per run. `agenty run` asks at the terminal, and the audit log of a run is at `GET /v1/runs/{id}/audit`.
 

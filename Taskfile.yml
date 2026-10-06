@@ -1,0 +1,88 @@
+# Development tasks, run with Task (https://taskfile.dev): "task --list".
+version: "3"
+
+# Credentials such as ANTHROPIC_API_KEY come from the environment or a
+# git-ignored .env at the module root.
+dotenv: [".env"]
+
+vars:
+  # The database of compose.yaml. Set DATABASE_URL to use another one.
+  LOCAL_DATABASE_URL: postgres://agenty:{{.POSTGRES_PASSWORD | default "agenty-dev-password"}}@127.0.0.1:{{.POSTGRES_PORT | default "5432"}}/agenty
+  DATABASE_URL: "{{.DATABASE_URL | default .LOCAL_DATABASE_URL}}"
+  GOLANGCI_LINT_VERSION: v2.14.0
+  SERVER: http://127.0.0.1:8080
+
+tasks:
+  db:
+    desc: Start the local PostgreSQL database and wait until it is ready
+    cmds:
+      - docker compose up --detach --wait
+
+  db:stop:
+    desc: Stop the local database, keeping its data
+    cmds:
+      - docker compose down
+
+  db:reset:
+    desc: Stop the local database and delete its data
+    cmds:
+      - docker compose down --volumes
+
+  generate:
+    desc: Generate the sqlc queries after changing a query or migration
+    cmds:
+      - go generate ./internal/store/
+
+  lint:
+    desc: Run golangci-lint, at the version CI uses
+    vars:
+      GO_VERSION:
+        sh: go env GOVERSION
+    env:
+      # Build golangci-lint with this module's Go, not the older one its own
+      # module asks for: it cannot lint code newer than itself.
+      GOTOOLCHAIN: "{{.GO_VERSION}}"
+    cmds:
+      - go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}} run ./...
+
+  test:
+    desc: Run the tests with the race detector against the local database; pass Go test flags after --
+    deps: [db]
+    env:
+      AGENTY_TEST_DATABASE_URL: "{{.DATABASE_URL}}"
+    cmds:
+      - go test -race {{.CLI_ARGS | default "./..."}}
+
+  check:
+    desc: "What CI checks: generated code, lint, go mod tidy and the tests"
+    cmds:
+      - task: generate
+      - test -z "$(git status --porcelain internal/store/db)"
+      - task: lint
+      - go mod tidy
+      - git diff --exit-code go.mod go.sum
+      - task: test
+
+  build:
+    desc: Build the agenty binary
+    sources: ["**/*.go", "go.mod", "go.sum", "internal/store/migrations/*.sql"]
+    generates: [agenty]
+    cmds:
+      - go build -o agenty ./cmd/agenty
+
+  serve:
+    desc: Serve the API for the notes example on the local database (needs ANTHROPIC_API_KEY and Node.js)
+    deps: [build, db]
+    dir: examples/notes
+    env:
+      DATABASE_URL: "{{.DATABASE_URL}}"
+    cmds:
+      - ../../agenty serve
+
+  demo:
+    desc: Apply the notes harness and run it on the running server; pass the input after --
+    deps: [build]
+    dir: examples/notes
+    cmds:
+      - ../../agenty apply --server {{.SERVER}} notes.yaml
+      - ../../agenty run --server {{.SERVER}} notes {{.CLI_ARGS | default "tidy my notes" | shellQuote}}

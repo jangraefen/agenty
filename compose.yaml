@@ -1,0 +1,22 @@
+# Local development database. "task db" starts it; see Taskfile.yml.
+# The password is for this local container only, which listens on the
+# loopback address alone; set POSTGRES_PASSWORD to use another.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: agenty
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agenty-dev-password}
+      POSTGRES_DB: agenty
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "agenty", "-d", "agenty"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+volumes:
+  postgres:

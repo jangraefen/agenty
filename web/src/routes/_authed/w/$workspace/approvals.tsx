@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
+import { useState } from "react";
 import { approvalsQuery } from "@/api/queries";
+import { AnswerNotice, type AnswerOutcome } from "@/components/answer-notice";
 import { ApprovalCard } from "@/components/approval-card";
 
 export const Route = createFileRoute("/_authed/w/$workspace/approvals")({
@@ -11,6 +13,7 @@ function Approvals() {
   const { workspace } = Route.useParams();
   const { api } = Route.useRouteContext();
   const approvals = useQuery({ ...approvalsQuery(api, workspace), refetchInterval: 5000 });
+  const [outcome, setOutcome] = useState<AnswerOutcome | null>(null);
 
   return (
     <section className="grid max-w-4xl gap-4">
@@ -19,6 +22,7 @@ function Approvals() {
         Tool calls that policy holds until a member of the workspace answers. An unanswered request
         is rejected when its time runs out.
       </p>
+      <AnswerNotice outcome={outcome} />
       {approvals.isPending && <p className="text-muted-foreground">Loading approvals…</p>}
       {approvals.isError && (
         <p role="alert" className="text-destructive">
@@ -31,7 +35,13 @@ function Approvals() {
       {approvals.data !== undefined && approvals.data.length > 0 && (
         <ul aria-label="Waiting approvals" className="grid gap-3">
           {approvals.data.map((request) => (
-            <ApprovalCard key={request.id} request={request} workspace={workspace} showRun />
+            <ApprovalCard
+              key={request.id}
+              request={request}
+              workspace={workspace}
+              showRun
+              onOutcome={setOutcome}
+            />
           ))}
         </ul>
       )}

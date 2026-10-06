@@ -1,9 +1,10 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useId } from "react";
+import { useId, useState } from "react";
 import { ApiError, unwrap } from "@/api/client";
 import { approvalsQuery, runQuery, transcriptQuery } from "@/api/queries";
 import type { components } from "@/api/schema";
+import { AnswerNotice, type AnswerOutcome } from "@/components/answer-notice";
 import { ApprovalCard } from "@/components/approval-card";
 import { Json } from "@/components/json";
 import { RunStatusBadge } from "@/components/run-status";
@@ -76,6 +77,7 @@ function RunDetails({
   const waiting = running
     ? (approvals.data?.filter((request) => request.run_id === runId) ?? [])
     : [];
+  const [outcome, setOutcome] = useState<AnswerOutcome | null>(null);
   const cancel = useMutation({
     mutationFn: () =>
       unwrap(
@@ -144,7 +146,8 @@ function RunDetails({
       {run.output !== "" && <Text title="Output" text={run.output} />}
       {run.error !== undefined && run.error !== "" && <Text title="Error" text={run.error} />}
 
-      {waiting.length > 0 && <WaitingApprovals waiting={waiting} />}
+      <AnswerNotice outcome={outcome} />
+      {waiting.length > 0 && <WaitingApprovals waiting={waiting} onOutcome={setOutcome} />}
 
       {events.error !== null && running && (
         <div role="alert" className="flex items-center gap-3 text-sm text-destructive">
@@ -169,7 +172,13 @@ function Text({ title, text }: { title: string; text: string }) {
   );
 }
 
-function WaitingApprovals({ waiting }: { waiting: Schemas["ApprovalRequest"][] }) {
+function WaitingApprovals({
+  waiting,
+  onOutcome,
+}: {
+  waiting: Schemas["ApprovalRequest"][];
+  onOutcome: (outcome: AnswerOutcome) => void;
+}) {
   const { workspace } = Route.useParams();
   const heading = useId();
   return (
@@ -182,7 +191,13 @@ function WaitingApprovals({ waiting }: { waiting: Schemas["ApprovalRequest"][] }
       </h2>
       <ul className="mt-2 grid gap-3">
         {waiting.map((request) => (
-          <ApprovalCard key={request.id} request={request} workspace={workspace} showRun={false} />
+          <ApprovalCard
+            key={request.id}
+            request={request}
+            workspace={workspace}
+            showRun={false}
+            onOutcome={onOutcome}
+          />
         ))}
       </ul>
     </section>

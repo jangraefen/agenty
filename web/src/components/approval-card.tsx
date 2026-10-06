@@ -4,6 +4,7 @@ import { useId, useState } from "react";
 import { ApiError, unwrap } from "@/api/client";
 import { approvalsQuery } from "@/api/queries";
 import type { components } from "@/api/schema";
+import type { AnswerOutcome } from "@/components/answer-notice";
 import { Json } from "@/components/json";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,16 +14,19 @@ import { formatRemaining, formatTime } from "@/lib/format";
 type ApprovalRequest = components["schemas"]["ApprovalRequest"];
 
 // ApprovalCard shows a call waiting for approval, as a list item, and
-// answers it as the signed-in user. Everything in the request comes from the
-// model or policy, so it is shown as text only.
+// answers it as the signed-in user, telling onOutcome how that went: the card
+// itself leaves when the request does. Everything in the request comes from
+// the model or policy, so it is shown as text only.
 export function ApprovalCard({
   request,
   workspace,
   showRun,
+  onOutcome,
 }: {
   request: ApprovalRequest;
   workspace: string;
   showRun: boolean;
+  onOutcome: (outcome: AnswerOutcome) => void;
 }) {
   const { api } = useRouteContext({ from: "/_authed/w/$workspace" });
   const queryClient = useQueryClient();
@@ -30,6 +34,7 @@ export function ApprovalCard({
   const [reason, setReason] = useState("");
   const id = useId();
   const expired = Date.parse(request.expires_at) <= now;
+  const { tool } = request;
 
   const answer = useMutation({
     mutationFn: (approved: boolean) => {
@@ -41,14 +46,33 @@ export function ApprovalCard({
         }),
       );
     },
+    onSuccess: (_, approved) =>
+      onOutcome({ ok: true, message: `${approved ? "Approved" : "Rejected"} ${tool}.` }),
+    onError: (error) =>
+      onOutcome({
+        ok: false,
+        message:
+          error instanceof ApiError && error.status === 404
+            ? `${tool} was already answered, or it expired: your answer did not count.`
+            : `The answer to ${tool} could not be sent: ${error.message}`,
+      }),
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: approvalsQuery(api, workspace).queryKey }),
   });
+  // Not disabled, which would drop the focus.
+  const blocked = expired || answer.isPending;
+  function send(approved: boolean) {
+    if (!blocked) {
+      answer.mutate(approved);
+    }
+  }
 
   return (
     <li className="grid gap-2 rounded-md border bg-background p-4 text-sm">
       <div className="flex flex-wrap items-baseline gap-2">
-        <code className="font-semibold">{request.tool}</code>
+        <code id={`${id}-tool`} className="font-semibold">
+          {tool}
+        </code>
         {showRun && (
           <Link
             to="/w/$workspace/runs/$runId"
@@ -81,24 +105,18 @@ export function ApprovalCard({
             disabled={expired}
           />
         </div>
-        <Button disabled={expired || answer.isPending} onClick={() => answer.mutate(true)}>
+        <Button aria-disabled={blocked} aria-describedby={`${id}-tool`} onClick={() => send(true)}>
           Approve
         </Button>
         <Button
           variant="destructive"
-          disabled={expired || answer.isPending}
-          onClick={() => answer.mutate(false)}
+          aria-disabled={blocked}
+          aria-describedby={`${id}-tool`}
+          onClick={() => send(false)}
         >
           Reject
         </Button>
       </div>
-      {answer.isError && (
-        <p role="alert" className="text-destructive">
-          {answer.error instanceof ApiError && answer.error.status === 404
-            ? "This request was already answered, or it expired."
-            : `The answer could not be sent: ${answer.error.message}`}
-        </p>
-      )}
     </li>
   );
 }

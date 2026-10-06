@@ -80,6 +80,9 @@ describe("the approvals page", () => {
     await user.click(within(card("files_write_file")).getByRole("button", { name: "Approve" }));
 
     expect(await screen.findByText("Nothing is waiting for approval.")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Answers" })).toHaveTextContent(
+      "Approved files_write_file.",
+    );
     expect(answers).toEqual([
       {
         url: "/v1/workspaces/notes/runs/run-7/approvals/a",
@@ -105,21 +108,28 @@ describe("the approvals page", () => {
   });
 
   test("reports a request that was answered or expired meanwhile", async () => {
+    // As the server does: once answered elsewhere, the request is no longer listed.
+    let gone = false;
     server.use(
       http.get(`${base}/approvals`, () =>
-        HttpResponse.json([approvalRequest({ id: "a", expires_at: inAnHour() })]),
+        HttpResponse.json(gone ? [] : [approvalRequest({ id: "a", expires_at: inAnHour() })]),
       ),
-      http.post(`${base}/runs/:run/approvals/:approval`, () =>
-        HttpResponse.json({ error: "run run-1 is not waiting for approval a" }, { status: 404 }),
-      ),
+      http.post(`${base}/runs/:run/approvals/:approval`, () => {
+        gone = true;
+        return HttpResponse.json(
+          { error: "run run-1 is not waiting for approval a" },
+          { status: 404 },
+        );
+      }),
     );
     const { user } = renderApp("/w/notes/approvals", TOKEN);
 
     await screen.findByText("files_write_file", { selector: "code" });
     await user.click(within(card("files_write_file")).getByRole("button", { name: "Approve" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "This request was already answered, or it expired.",
+    await screen.findByText("Nothing is waiting for approval.");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "files_write_file was already answered, or it expired: your answer did not count.",
     );
   });
 
@@ -130,8 +140,39 @@ describe("the approvals page", () => {
     await screen.findByText("files_write_file", { selector: "code" });
     const request = card("files_write_file");
     expect(request).toHaveTextContent("expired");
-    expect(within(request).getByRole("button", { name: "Approve" })).toBeDisabled();
-    expect(within(request).getByRole("button", { name: "Reject" })).toBeDisabled();
+    expect(within(request).getByRole("button", { name: "Approve" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(within(request).getByRole("button", { name: "Reject" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  });
+
+  test("names the call each button answers", async () => {
+    approvalsServer([
+      approvalRequest({ id: "a", tool: "files_write_file", expires_at: inAnHour() }),
+    ]);
+    renderApp("/w/notes/approvals", TOKEN);
+
+    expect(await screen.findByRole("button", { name: "Approve" })).toHaveAccessibleDescription(
+      "files_write_file",
+    );
+    expect(screen.getByRole("button", { name: "Reject" })).toHaveAccessibleDescription(
+      "files_write_file",
+    );
+  });
+
+  test("an expired request ignores clicks", async () => {
+    const answers = approvalsServer([
+      approvalRequest({ id: "a", expires_at: "2020-01-01T00:00:00Z" }),
+    ]);
+    const { user } = renderApp("/w/notes/approvals", TOKEN);
+
+    await user.click(await screen.findByRole("button", { name: "Approve" }));
+
+    expect(answers).toEqual([]);
   });
 
   test("says when nothing is waiting", async () => {

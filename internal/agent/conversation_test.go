@@ -46,6 +46,9 @@ func TestRun_ContinuesAConversation(t *testing.T) {
 	require.Len(t, requests, 2)
 	want := append(earlier(), model.Message{Role: model.RoleUser, Text: "label it urgent"})
 	assert.Equal(t, want, requests[0].Messages, "the model sees the earlier conversation, then the new input")
+	for _, req := range requests {
+		assert.Equal(t, len(earlier()), req.History, "every step names the messages of earlier runs")
+	}
 	assert.Equal(t, instructions, requests[0].System)
 	require.Len(t, res.Messages, 4, "the result holds this run's messages only")
 	assert.Equal(t, "label it urgent", res.Messages[0].Text)

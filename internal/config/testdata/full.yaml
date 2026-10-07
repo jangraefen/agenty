@@ -2,6 +2,7 @@ provider:
   anthropic:
     api_key: {env: ANTHROPIC_API_KEY}
     max_tokens: 4096
+    history_cache_ttl: 1h
     base_url: http://localhost:8080
 database:
   url: {env: DATABASE_URL}

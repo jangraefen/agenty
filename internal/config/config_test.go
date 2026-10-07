@@ -18,9 +18,10 @@ func TestLoad_Valid(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, &config.Anthropic{
-		APIKey:    config.Value{Env: "ANTHROPIC_API_KEY"},
-		MaxTokens: 4096,
-		BaseURL:   "http://localhost:8080",
+		APIKey:          config.Value{Env: "ANTHROPIC_API_KEY"},
+		MaxTokens:       4096,
+		BaseURL:         "http://localhost:8080",
+		HistoryCacheTTL: "1h",
 	}, got.Provider.Anthropic)
 	assert.Equal(t, &config.Database{URL: config.Value{Env: "DATABASE_URL"}}, got.Database)
 	assert.Equal(t, map[string]config.MCPServer{
@@ -88,6 +89,7 @@ func TestLoad_InvalidFields(t *testing.T) {
 	}{
 		{"no provider", "{}", []string{"provider.anthropic"}},
 		{"no max tokens", "provider: {anthropic: {api_key: {env: K}}}", []string{"provider.anthropic.max_tokens"}},
+		{"history cache TTL", "provider: {anthropic: {api_key: {env: K}, max_tokens: 1, history_cache_ttl: 10m}}", []string{"provider.anthropic.history_cache_ttl"}},
 		{"api key with both env and value", "provider: {anthropic: {api_key: {env: K, value: v}, max_tokens: 1}}", []string{"provider.anthropic.api_key"}},
 		{"api key with neither", "provider: {anthropic: {api_key: {}, max_tokens: 1}}", []string{"provider.anthropic.api_key"}},
 		{"mcp server without command", "provider: {anthropic: {api_key: {env: K}, max_tokens: 1}}\nmcp_servers: {tickets: {}}", []string{"mcp_servers.tickets.command"}},

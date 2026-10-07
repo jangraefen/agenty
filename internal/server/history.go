@@ -57,21 +57,29 @@ func conversationHistory(redact *secret.Redactor, prior []priorRun, digest strin
 	}
 	from[len(prior)] = len(history)
 
+	// Each message's sum, as sent with its provider form and without.
+	with, without := make([][sha256.Size]byte, len(history)), make([][sha256.Size]byte, len(history))
+	for i, msg := range history {
+		with[i] = messageSum(msg)
+		msg.Provider = nil
+		without[i] = messageSum(msg)
+	}
 	// Keep the forms of runs keep and later, if each of these runs was sent
 	// what it would be sent so.
 	sentAsBefore := func(keep int) bool {
 		h := newHistoryHash()
 		j := keep
-		for i, msg := range history {
+		for i := range history {
 			for ; j < len(prior) && from[j] == i; j++ {
 				if h.digest() != prior[j].historyDigest {
 					return false
 				}
 			}
 			if i < from[keep] {
-				msg.Provider = nil
+				h.add(without[i])
+			} else {
+				h.add(with[i])
 			}
-			h.add(msg)
 		}
 		return true
 	}
@@ -94,21 +102,30 @@ func conversationHistory(redact *secret.Redactor, prior []priorRun, digest strin
 func historyDigest(history []model.Message) string {
 	h := newHistoryHash()
 	for _, msg := range history {
-		h.add(msg)
+		h.add(messageSum(msg))
 	}
 	return h.digest()
 }
 
-// historyHash hashes a history message by message, so the digest of each of
-// its beginnings is known along the way.
+// historyHash hashes a history from the sums of its messages, so the digest
+// of each of its beginnings is known along the way.
 type historyHash struct{ hash.Hash }
 
 func newHistoryHash() historyHash {
 	return historyHash{sha256.New()}
 }
 
-// add adds what of msg is sent to the model.
-func (h historyHash) add(msg model.Message) {
+func (h historyHash) add(sum [sha256.Size]byte) {
+	must.Value(h.Write(sum[:]))
+}
+
+func (h historyHash) digest() string {
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// messageSum hashes what of msg is sent to the model. Everything read back
+// from the store is valid UTF-8, which JSON keeps as is.
+func messageSum(msg model.Message) [sha256.Size]byte {
 	type call struct{ ID, Name, Args string }
 	sent := struct {
 		Role                   model.Role
@@ -124,10 +141,5 @@ func (h historyHash) add(msg model.Message) {
 		sent.Provider, sent.ProviderData = p.Name, string(p.Data)
 	}
 	// Strings and structs of them always marshal.
-	sum := sha256.Sum256(must.Value(json.Marshal(sent)))
-	must.Value(h.Write(sum[:]))
-}
-
-func (h historyHash) digest() string {
-	return hex.EncodeToString(h.Sum(nil))
+	return sha256.Sum256(must.Value(json.Marshal(sent)))
 }

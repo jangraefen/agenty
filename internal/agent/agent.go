@@ -128,7 +128,10 @@ func (a *Agent) Tools() []toolgateway.Definition {
 
 // PromptDigest identifies what every run of the agent sends the model before
 // the conversation: the model, the instructions and the tools. Two agents
-// with the same digest send the same.
+// with the same digest send the same. The model is identified by its name:
+// a name whose model the provider changes is taken as the same model, which
+// providers that bind reasoning to a model are expected to handle as a
+// switch of models, leaving out what the new one cannot read.
 func (a *Agent) PromptDigest() string {
 	type tool struct{ Name, Description, InputSchema string }
 	prompt := struct {

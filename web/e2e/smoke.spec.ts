@@ -42,7 +42,12 @@ test("signs in, makes a harness, runs it to its end, and signs out", async ({ pa
   await expect(page).toHaveURL(/\/w\/smoke\/runs\/[^/]+$/);
   await expect(page.getByText("failed", { exact: true })).toBeVisible({ timeout: 45_000 });
   await expect(page.getByRole("heading", { name: "The run failed" })).toBeVisible();
-  await expect(page.getByText("This conversation cannot continue")).toBeVisible();
+  await expect(
+    page.getByText("The last run failed. A reply continues from where it stopped."),
+  ).toBeVisible();
+  await page.getByLabel("Message").fill("Try again.");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("failed", { exact: true })).toHaveCount(2, { timeout: 45_000 });
 
   await pages.getByRole("link", { name: "Approvals" }).click();
   await expect(page.getByText("Nothing is waiting for approval.")).toBeVisible();

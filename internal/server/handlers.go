@@ -124,7 +124,8 @@ func (s handlers) startRun(c *gin.Context, workspace string, r newRun) {
 }
 
 // FollowUpRun starts a run that continues the conversation of a run, the
-// conversation's latest, which must have succeeded. The new run runs the
+// conversation's latest, which must have finished; one that failed or was
+// cancelled is continued from where it stopped, see ended. The new run runs the
 // harness's latest version, so grants and rules taken away since apply to
 // no conversation. The model sees the conversation as stored, redacted
 // again with the secrets known now.
@@ -149,8 +150,8 @@ func (s handlers) FollowUpRun(c *gin.Context, workspace, id string) {
 	case last.ID != id:
 		s.fail(c, http.StatusConflict, fmt.Errorf("run %s is already followed up; follow up run %s, the conversation's latest", id, last.ID))
 		return
-	case last.Status != store.RunSucceeded:
-		s.fail(c, http.StatusConflict, fmt.Errorf("run %s is %s: only a run that succeeded can be followed up", id, last.Status))
+	case last.Status == store.RunRunning:
+		s.fail(c, http.StatusConflict, fmt.Errorf("run %s is still running: follow it up once it has finished", id))
 		return
 	}
 	prior := make([]priorRun, len(runs))
@@ -160,7 +161,7 @@ func (s handlers) FollowUpRun(c *gin.Context, workspace, id string) {
 			s.failStore(c, err)
 			return
 		}
-		prior[i] = priorRun{digest: r.PromptDigest, historyDigest: r.HistoryDigest, messages: messages}
+		prior[i] = priorRun{digest: r.PromptDigest, historyDigest: r.HistoryDigest, messages: ended(r, messages)}
 	}
 	v, err := s.cfg.Store.Harness(ctx, workspace, last.Harness)
 	if err != nil {

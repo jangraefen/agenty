@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sync"
 	"testing"
@@ -148,21 +149,11 @@ func TestFollowUp_Rejects(t *testing.T) {
 	f.script(modeltest.Reply("ok"))
 	followed := f.followUp(t, aliceToken, done.ID, "two")
 	f.finish(t, followed.ID)
-	f.script(modeltest.Fail(assert.AnError))
-	failed := f.startRun(t, "three")
-	f.finish(t, failed.ID)
 	f.script(modeltest.CallTools(call("c1", "files_write", `{}`)), modeltest.Reply("ok"))
 	running := f.startRun(t, "four")
 	events := f.events(t, running.ID)
 	events.next()
 	events.next()
-	f.script(modeltest.CallTools(call("c2", "files_write", `{}`)))
-	cancelled := f.startRun(t, "five")
-	waiting := f.events(t, cancelled.ID)
-	waiting.next()
-	waiting.next()
-	require.Equal(t, http.StatusAccepted, f.do(t, http.MethodPost, home+"/runs/"+cancelled.ID+"/cancel", nil, nil))
-	require.Equal(t, api.RunStatusCancelled, f.finish(t, cancelled.ID).Status)
 
 	tests := []struct {
 		name, path string
@@ -174,9 +165,7 @@ func TestFollowUp_Rejects(t *testing.T) {
 		{"no input", home + "/runs/" + followed.ID + "/follow-up", api.FollowUp{}, http.StatusBadRequest, "input is required"},
 		{"unknown field", home + "/runs/" + followed.ID + "/follow-up", `{"input":"x","bogus":1}`, http.StatusBadRequest, "bogus"},
 		{"a run already followed up", home + "/runs/" + done.ID + "/follow-up", api.FollowUp{Input: "x"}, http.StatusConflict, "already followed"},
-		{"a failed run", home + "/runs/" + failed.ID + "/follow-up", api.FollowUp{Input: "x"}, http.StatusConflict, "only a run that succeeded"},
-		{"a running run", home + "/runs/" + running.ID + "/follow-up", api.FollowUp{Input: "x"}, http.StatusConflict, "only a run that succeeded"},
-		{"a cancelled run", home + "/runs/" + cancelled.ID + "/follow-up", api.FollowUp{Input: "x"}, http.StatusConflict, "only a run that succeeded"},
+		{"a running run", home + "/runs/" + running.ID + "/follow-up", api.FollowUp{Input: "x"}, http.StatusConflict, "still running"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -386,4 +375,167 @@ func TestFollowUp_DropsTheProviderFormOfAlteredRuns(t *testing.T) {
 
 	require.Len(t, m.Requests(), 1)
 	assert.Equal(t, []string{"three"}, replayed(m.Requests()[0].Messages))
+}
+
+func TestFollowUp_ContinuesAfterAFailedRun(t *testing.T) {
+	f := newFixture(t, options{})
+	f.putNotes(t)
+	f.script(modeltest.CallTools(call("c1", "files_read", `{"path":"notes.md"}`)), modeltest.Fail(errors.New("overloaded")))
+	first := f.startRun(t, "tidy my notes")
+	failed := f.finish(t, first.ID)
+	require.Equal(t, api.RunStatusFailed, failed.Status)
+	m := f.script(modeltest.Reply("tidied"))
+
+	second := f.followUp(t, aliceToken, first.ID, "try again")
+	finished := f.finish(t, second.ID)
+
+	assert.Equal(t, api.RunStatusSucceeded, finished.Status)
+	require.Len(t, m.Requests(), 1)
+	want := []model.Message{
+		{Role: model.RoleUser, Text: "tidy my notes"},
+		{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{call("c1", "files_read", `{"path":"notes.md"}`)}},
+		{Role: model.RoleUser, ToolResults: []model.ToolResult{{CallID: "c1", Content: `{"content":"- milk"}`}}},
+		{Role: model.RoleAssistant, Text: "[This turn ended without an answer: the run failed.]"},
+		{Role: model.RoleUser, Text: "try again"},
+	}
+	assert.Equal(t, want, m.Requests()[0].Messages, "the model is told how the earlier run ended, not its error")
+	assert.Equal(t, 1, f.read.Calls)
+}
+
+// TestFollowUp_ContinuesAfterACancelledRun: a run cancelled while a call
+// waits for approval records the call as denied, which the model sees.
+func TestFollowUp_ContinuesAfterACancelledRun(t *testing.T) {
+	f := newFixture(t, options{policy: []policy.Module{policy.RulesModule("central", `require_approval contains "writes need a human" if input.tool == "files_write"`)}})
+	f.putNotes(t)
+	f.script(modeltest.CallTools(call("c1", "files_write", `{"path":"notes.md"}`)))
+	first := f.startRun(t, "write my notes")
+	waiting := f.events(t, first.ID)
+	waiting.next()
+	waiting.next()
+	require.Equal(t, http.StatusAccepted, f.do(t, http.MethodPost, home+"/runs/"+first.ID+"/cancel", nil, nil))
+	require.Equal(t, api.RunStatusCancelled, f.finish(t, first.ID).Status)
+	m := f.script(modeltest.Reply("ok"))
+
+	second := f.followUp(t, aliceToken, first.ID, "never mind")
+	f.finish(t, second.ID)
+
+	assert.Zero(t, f.write.Calls)
+	require.Len(t, m.Requests(), 1)
+	want := []model.Message{
+		{Role: model.RoleUser, Text: "write my notes"},
+		{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{call("c1", "files_write", `{"path":"notes.md"}`)}},
+		{Role: model.RoleUser, ToolResults: []model.ToolResult{{CallID: "c1", Content: "tool call denied: files_write: approval failed: cancelled by alice", IsError: true}}},
+		{Role: model.RoleAssistant, Text: "[This turn ended without an answer: the run was cancelled.]"},
+		{Role: model.RoleUser, Text: "never mind"},
+	}
+	assert.Equal(t, want, m.Requests()[0].Messages)
+}
+
+// TestInvariant_InterruptedCallsAreNotRepeated guards a trust-model
+// guarantee: a follow-up of a run that stopped during a tool call, here
+// stored as a server restart leaves it, never runs that call again. Nothing records whether
+// it ran, so the model is told it may or may not have, as the tool may not
+// be idempotent.
+func TestInvariant_InterruptedCallsAreNotRepeated(t *testing.T) {
+	f := newFixture(t, options{})
+	f.putNotes(t)
+	ctx := context.Background()
+	v, err := f.store.Harness(ctx, "home", "notes")
+	require.NoError(t, err)
+	require.NoError(t, f.store.CreateRun(ctx, store.NewRun{ID: "crashed", HarnessVersionID: v.ID, Input: "write my notes", StartedBy: "alice"}))
+	calls := []model.ToolCall{call("c1", "files_write", `{"path":"notes.md"}`), call("c2", "files_read", `{"path":"notes.md"}`)}
+	require.NoError(t, f.store.AppendMessage(ctx, "crashed", store.NewMessage{Position: 0, Message: model.Message{Role: model.RoleUser, Text: "write my notes"}}))
+	require.NoError(t, f.store.AppendMessage(ctx, "crashed", store.NewMessage{Position: 1, Message: model.Message{Role: model.RoleAssistant, ToolCalls: calls}}))
+	require.NoError(t, f.store.FinishRun(ctx, "crashed", store.RunFailed, "", 1, "the server stopped before the run finished"))
+	m := f.script(modeltest.Reply("ok"))
+
+	second := f.followUp(t, aliceToken, "crashed", "did it work?")
+	f.finish(t, second.ID)
+
+	assert.Zero(t, f.write.Calls, "the interrupted calls are not run again")
+	assert.Zero(t, f.read.Calls)
+	require.Len(t, m.Requests(), 1)
+	want := []model.Message{
+		{Role: model.RoleUser, Text: "write my notes"},
+		{Role: model.RoleAssistant, ToolCalls: calls},
+		{Role: model.RoleUser, ToolResults: []model.ToolResult{{CallID: "c1", Content: interrupted, IsError: true}, {CallID: "c2", Content: interrupted, IsError: true}}},
+		{Role: model.RoleAssistant, Text: "[This turn ended without an answer: the run failed.]"},
+		{Role: model.RoleUser, Text: "did it work?"},
+	}
+	assert.Equal(t, want, m.Requests()[0].Messages)
+}
+
+// interrupted is what the model is told of a call whose result was not
+// recorded.
+const interrupted = "The run ended before this call's result was recorded: it may or may not have run. Check before repeating it."
+
+// TestInvariant_FollowUpsOfEndedRunsNeverShowTheModelACredential extends
+// trust-model guarantee 5 to the runs a follow-up completes: a run that
+// failed before even its input was stored is sent as its input, which a
+// user may have pasted a secret into, redacted like the rest.
+func TestInvariant_FollowUpsOfEndedRunsNeverShowTheModelACredential(t *testing.T) {
+	f := newFixture(t, options{})
+	f.putNotes(t)
+	ctx := context.Background()
+	v, err := f.store.Harness(ctx, "home", "notes")
+	require.NoError(t, err)
+	require.NoError(t, f.store.CreateRun(ctx, store.NewRun{ID: "lost", HarnessVersionID: v.ID, Input: "use " + token, StartedBy: "alice"}))
+	require.NoError(t, f.store.FinishRun(ctx, "lost", store.RunFailed, "", 0, "transcript down: "+token))
+	m := f.script(modeltest.Reply("ok"))
+
+	second := f.followUp(t, aliceToken, "lost", "again")
+	f.finish(t, second.ID)
+
+	require.Len(t, m.Requests(), 1)
+	want := []model.Message{
+		{Role: model.RoleUser, Text: "use [redacted]"},
+		{Role: model.RoleAssistant, Text: "[This turn ended without an answer: the run failed.]"},
+		{Role: model.RoleUser, Text: "again"},
+	}
+	assert.Equal(t, want, m.Requests()[0].Messages)
+}
+
+func TestFollowUp_ContinuesAfterTheStepLimit(t *testing.T) {
+	f := newFixture(t, options{})
+	limited := notes()
+	limited.Limits.MaxSteps = 1
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodPut, home+"/harnesses/notes", limited, nil))
+	f.script(modeltest.CallTools(call("c1", "files_read", `{"path":"notes.md"}`)))
+	first := f.startRun(t, "tidy my notes")
+	require.Equal(t, api.RunStatusFailed, f.finish(t, first.ID).Status)
+	m := f.script(modeltest.Reply("ok"))
+
+	second := f.followUp(t, aliceToken, first.ID, "go on")
+	f.finish(t, second.ID)
+
+	assert.Zero(t, f.read.Calls)
+	require.Len(t, m.Requests(), 1)
+	sent := m.Requests()[0].Messages
+	require.Len(t, sent, 5)
+	assert.Equal(t, []model.ToolResult{{CallID: "c1", Content: "Not run: the run reached its limit of 1 step.", IsError: true}}, sent[2].ToolResults)
+	assert.Equal(t, "[This turn ended without an answer: the run failed.]", sent[3].Text)
+}
+
+// TestFollowUp_KeepsProviderFormsAcrossAnEndedRun: the completion of an
+// ended run is the same for every follow-up, so the replies since it keep
+// their provider forms.
+func TestFollowUp_KeepsProviderFormsAcrossAnEndedRun(t *testing.T) {
+	f := newFixture(t, options{})
+	f.putNotes(t)
+	f.script(modeltest.Step{Response: model.Message{
+		Role: model.RoleAssistant, ToolCalls: []model.ToolCall{call("c1", "files_read", `{}`)},
+		Provider: &model.ProviderPart{Name: "scripted", Data: json.RawMessage(`{"thinking":"one"}`)},
+	}}, modeltest.Fail(errors.New("overloaded")))
+	first := f.startRun(t, "one")
+	require.Equal(t, api.RunStatusFailed, f.finish(t, first.ID).Status)
+	f.script(thought("two"))
+	second := f.followUp(t, aliceToken, first.ID, "two")
+	f.finish(t, second.ID)
+	m := f.script(modeltest.Reply("ok"))
+
+	third := f.followUp(t, aliceToken, second.ID, "three")
+	f.finish(t, third.ID)
+
+	require.Len(t, m.Requests(), 1)
+	assert.Equal(t, []string{"", "two"}, replayed(m.Requests()[0].Messages))
 }

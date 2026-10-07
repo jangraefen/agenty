@@ -183,7 +183,8 @@ func (r *Run) ID() string {
 // call. Tool calls go through the run's gateway; denials and tool errors are
 // reported back to the model, while model errors, audit failures and
 // cancellation end the run. If the model still asks for tools on the last
-// allowed step, those calls are not executed and Execute returns ErrMaxSteps.
+// allowed step, those calls are not executed, which the transcript records
+// as their results, and Execute returns ErrMaxSteps.
 func (r *Run) Execute(ctx context.Context, input string) (Result, error) {
 	return r.Continue(ctx, nil, input)
 }
@@ -247,6 +248,11 @@ func (r *Run) Continue(ctx context.Context, history []model.Message, input strin
 			return res, nil
 		}
 		if step == maxSteps {
+			// Recorded, so the transcript ends as a conversation can
+			// continue from.
+			if err := add(notRun(msg.ToolCalls, maxSteps)); err != nil {
+				return res, err
+			}
 			break
 		}
 		results, err := callTools(ctx, run, msg.ToolCalls)
@@ -274,6 +280,19 @@ func checkHistory(history []model.Message) error {
 		return errors.New("agent: the conversation to continue does not end with an answer")
 	}
 	return nil
+}
+
+// notRun answers calls the run does not make, as it reached its step limit.
+func notRun(calls []model.ToolCall, maxSteps int) model.Message {
+	steps := "steps"
+	if maxSteps == 1 {
+		steps = "step"
+	}
+	results := make([]model.ToolResult, len(calls))
+	for i, c := range calls {
+		results[i] = model.ToolResult{CallID: c.ID, Content: fmt.Sprintf("Not run: the run reached its limit of %d %s.", maxSteps, steps), IsError: true}
+	}
+	return model.Message{Role: model.RoleUser, ToolResults: results}
 }
 
 // callsAsText returns history with its tool calls and results written as

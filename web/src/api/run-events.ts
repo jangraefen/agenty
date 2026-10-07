@@ -2,7 +2,7 @@
 import { queryOptions, experimental_streamedQuery as streamedQuery } from "@tanstack/react-query";
 import { parseEventStream } from "@/lib/sse";
 import { type Api, unwrap } from "./client";
-import { approvalsQuery, runQuery, transcriptQuery } from "./queries";
+import { approvalsQuery, runQuery, runsKey, transcriptQuery } from "./queries";
 import type { components } from "./schema";
 
 type AuditRecord = components["schemas"]["AuditRecord"];
@@ -53,7 +53,7 @@ export function runEventsQuery(api: Api, workspace: string, id: string) {
               client.setQueryData(queryKey, JSON.parse(data));
               invalidate(transcript);
               invalidate(approvals);
-              invalidate(["workspaces", workspace, "runs"]);
+              invalidate(runsKey(workspace));
               return;
             }
           }

@@ -30,11 +30,16 @@ export interface RunFilters {
   status?: RunStatus;
 }
 
+/** The key under which every list of a workspace's runs is cached. */
+export function runsKey(workspace: string) {
+  return ["workspaces", workspace, "runs"] as const;
+}
+
 // A workspace's runs, newest first, a page at a time. While one of them runs,
 // the pages are refreshed, so its status follows.
 export function runsQuery(api: Api, workspace: string, filters: RunFilters) {
   return infiniteQueryOptions({
-    queryKey: ["workspaces", workspace, "runs", filters],
+    queryKey: [...runsKey(workspace), filters],
     queryFn: ({ pageParam }) =>
       unwrap(
         api.GET("/v1/workspaces/{workspace}/runs", {

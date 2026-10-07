@@ -51,7 +51,7 @@ func NewPool(idleTimeout map[string]time.Duration, logger *slog.Logger) *Pool {
 // Lease returns a lease on the servers of conversation, for one run of it.
 // A run that starts a conversation has none yet: conversation is empty.
 func (p *Pool) Lease(conversation string, servers map[string]ToolServer) *Lease {
-	l := &Lease{pool: p, conversation: conversation, servers: map[string]ToolServer{}, held: map[string]ToolSession{}}
+	l := &Lease{pool: p, conversation: conversation, servers: map[string]ToolServer{}, held: map[string]ToolSession{}, taken: map[string]bool{}}
 	for name, srv := range servers {
 		l.servers[name] = leasedServer{lease: l, server: srv}
 	}
@@ -120,14 +120,15 @@ func (p *Pool) Close() error {
 	idle := p.idle
 	p.idle = map[poolKey]*idleSession{}
 	p.mu.Unlock()
-	var errs []error
+	// All at once, as a server may take seconds to stop.
+	sessions := make([]namedSession, 0, len(idle))
 	for _, key := range slices.SortedFunc(maps.Keys(idle), func(a, b poolKey) int {
 		return cmp.Or(strings.Compare(a.conversation, b.conversation), strings.Compare(a.server, b.server))
 	}) {
 		idle[key].timer.Stop()
-		errs = append(errs, closeSession(key.server, idle[key].session))
+		sessions = append(sessions, namedSession{name: key.server, session: idle[key].session})
 	}
-	return errors.Join(errs...)
+	return closeSessions(sessions)
 }
 
 func closeSession(name string, session ToolSession) error {
@@ -136,6 +137,10 @@ func closeSession(name string, session ToolSession) error {
 	}
 	return nil
 }
+
+// probeTimeout bounds how long a kept server may take to answer before it is
+// taken as dead and replaced.
+const probeTimeout = 10 * time.Second
 
 // Lease is a run's hold on the servers of its conversation. Hand Servers to
 // the run's gateway; once the gateway has stopped them, Keep hands them back
@@ -148,7 +153,9 @@ type Lease struct {
 	mu sync.Mutex
 	// held are the servers the gateway has stopped, by name.
 	held map[string]ToolSession
-	// fresh names the servers started anew rather than taken from the pool.
+	// taken names the servers taken from the pool, and fresh those started
+	// anew.
+	taken map[string]bool
 	fresh []string
 }
 
@@ -176,7 +183,26 @@ func (l *Lease) Keep(conversation string) error {
 	return errors.Join(errs...)
 }
 
-// Close stops the servers the gateway stopped, for a run that is not kept.
+// Return gives the conversation back the servers the lease took from the
+// pool and stops those it started, for a run that does not go ahead: it never
+// replaces what another run of the conversation keeps.
+func (l *Lease) Return() error {
+	l.mu.Lock()
+	taken := maps.Clone(l.taken)
+	l.mu.Unlock()
+	var errs []error
+	for name, session := range l.release() {
+		if taken[name] {
+			errs = append(errs, l.pool.keep(l.conversation, name, session))
+		} else {
+			errs = append(errs, closeSession(name, session))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// Close stops the servers the gateway stopped, for a run whose servers
+// cannot be kept.
 func (l *Lease) Close() error {
 	var errs []error
 	for name, session := range l.release() {
@@ -204,9 +230,23 @@ type leasedServer struct {
 func (s leasedServer) Start(ctx context.Context, name string) (ToolSession, error) {
 	l := s.lease
 	if kept := l.pool.take(l.conversation, name); kept != nil {
-		// A server that died while idle answers no more.
-		if _, err := kept.Tools(ctx); err == nil {
+		// A server that died, or hangs, while idle answers no more.
+		probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+		_, err := kept.Tools(probeCtx)
+		cancel()
+		switch {
+		case err == nil:
+			l.mu.Lock()
+			l.taken[name] = true
+			l.mu.Unlock()
 			return leasedSession{ToolSession: kept, lease: l, name: name}, nil
+		case ctx.Err() != nil:
+			// The start was cancelled, which says nothing of the server: the
+			// lease holds it, to give it back.
+			l.mu.Lock()
+			l.taken[name], l.held[name] = true, kept
+			l.mu.Unlock()
+			return nil, fmt.Errorf("toolgateway: server %s: %w", name, ctx.Err())
 		}
 		if err := closeSession(name, kept); err != nil {
 			return nil, fmt.Errorf("toolgateway: server %s: replacing it: %w", name, err)

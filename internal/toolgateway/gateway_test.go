@@ -281,3 +281,30 @@ func TestRecord_JSONIsTheAuditFormat(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"run_id":"r1","call_id":"c1","event":"decision","tool":"t","decision":"deny"}`, string(minimal), "empty optional fields are left out")
 }
+
+// TestRun_CallsAfterCloseAreDenied: once the gateway has stopped its
+// servers, which a pool may keep running for a later run, no call of this
+// run reaches them.
+func TestRun_CallsAfterCloseAreDenied(t *testing.T) {
+	read := &gatewaytest.Tool{Name: "tickets_read"}
+	audit := &gatewaytest.Audit{}
+	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+		Harness:      "triage",
+		Granted:      []string{"tickets_read"},
+		Servers:      gatewaytest.Servers(read),
+		MaxToolCalls: 5,
+		Policy:       &gatewaytest.Policy{},
+		Audit:        audit,
+		Redactor:     gatewaytest.NoSecrets,
+	})
+	require.NoError(t, err)
+	run := gw.Start()
+	require.NoError(t, gw.Close())
+
+	_, err = run.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_read"})
+
+	require.ErrorIs(t, err, toolgateway.ErrDenied)
+	assert.Zero(t, read.Calls)
+	require.Len(t, audit.Records, 1, "the denial is recorded")
+	assert.Equal(t, toolgateway.Deny, audit.Records[0].Decision)
+}

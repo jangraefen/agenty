@@ -151,7 +151,9 @@ func ended(r store.Run, messages []store.TranscriptMessage) []store.TranscriptMe
 // withLostState returns input, for the model, after a note naming the tool
 // servers that were started anew for the run although the conversation used
 // them before, from history: what they held, which the earlier turns may
-// describe, is gone.
+// describe, is gone. The note is part of the input the run's transcript
+// records, not of the run's input as users see it; a run whose transcript
+// was lost is continued with the latter.
 func withLostState(input string, fresh []string, history []model.Message) string {
 	var lost []string
 	for _, server := range fresh {

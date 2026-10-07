@@ -287,10 +287,11 @@ type newRun struct {
 
 // start builds an agent for the run's harness version, which starts the MCP
 // servers it needs or takes those its conversation keeps, stores the run,
-// and executes it in the background. On
-// error it also returns the status to respond with: 422 for a harness that
-// cannot run, 409 for a run that another run already follows, 503 when the
-// server is stopping, 500 otherwise.
+// and executes it in the background. A run that does not go ahead gives
+// the conversation back the servers it took. On error it also returns the
+// status to respond with: 422 for a harness that cannot run, 409 for a run
+// that another run already follows, 503 when the server is stopping, 500
+// otherwise.
 func (s *Server) start(r newRun) (string, int, error) {
 	v := r.version
 	h := v.Harness
@@ -319,7 +320,7 @@ func (s *Server) start(r newRun) (string, int, error) {
 		Transcript: runTranscript{store: s.cfg.Store, redact: s.cfg.Resolved.Redactor},
 	})
 	if err != nil {
-		return "", http.StatusUnprocessableEntity, errors.Join(err, lease.Close())
+		return "", http.StatusUnprocessableEntity, errors.Join(err, lease.Return())
 	}
 	digest := a.PromptDigest()
 	history := conversationHistory(s.cfg.Resolved.Redactor, r.prior, digest)
@@ -334,7 +335,7 @@ func (s *Server) start(r newRun) (string, int, error) {
 	if s.closed {
 		s.mu.Unlock()
 		cancel(nil)
-		return "", http.StatusServiceUnavailable, errors.Join(errClosed, a.Close(), lease.Close())
+		return "", http.StatusServiceUnavailable, errors.Join(errClosed, a.Close(), lease.Return())
 	}
 	s.runs[run.ID()] = hub
 	s.wg.Add(1)
@@ -351,12 +352,7 @@ func (s *Server) start(r newRun) (string, int, error) {
 			status = http.StatusConflict
 			err = fmt.Errorf("run %s is already followed up; follow up the conversation's latest run", r.follows)
 		}
-		// The servers of a conversation stay its own, whoever follows it up.
-		release := lease.Close
-		if r.conversation != "" {
-			release = func() error { return lease.Keep(r.conversation) }
-		}
-		return "", status, errors.Join(err, a.Close(), release())
+		return "", status, errors.Join(err, a.Close(), lease.Return())
 	}
 	conversation := cmp.Or(r.conversation, run.ID())
 	go func() {
@@ -365,6 +361,16 @@ func (s *Server) start(r newRun) (string, int, error) {
 		s.execute(runCtx, a, lease, conversation, run, hub, history, withLostState(r.input, lease.Fresh(), history))
 	}()
 	return run.ID(), 0, nil
+}
+
+// keep keeps the run's servers for its conversation, unless the run was
+// cancelled: a call may still be running in a server then, which stopping
+// the server ends.
+func keep(ctx context.Context, lease *toolgateway.Lease, conversation string) error {
+	if ctx.Err() != nil {
+		return lease.Close()
+	}
+	return lease.Keep(conversation)
 }
 
 // cancelledBy is the cause of a run's cancellation by a user: the user.
@@ -385,7 +391,7 @@ func (s *Server) execute(ctx context.Context, a *agent.Agent, lease *toolgateway
 	}()
 	redact := s.cfg.Resolved.Redactor
 	res, runErr := run.Continue(ctx, history, input)
-	err := errors.Join(runErr, a.Close(), lease.Keep(conversation))
+	err := errors.Join(runErr, a.Close(), keep(ctx, lease, conversation))
 	status, errMsg := store.RunSucceeded, ""
 	var by cancelledBy
 	switch {

@@ -167,3 +167,54 @@ func (b *syncBuffer) String() string {
 	defer b.mu.Unlock()
 	return b.buf.String()
 }
+
+// TestPool_ReturnKeepsOnlyWhatWasTaken: a run that does not go ahead, such as
+// a follow-up that lost a race to another, gives the conversation back the
+// servers it took and stops those it started, so it never replaces what the
+// conversation's other run keeps.
+func TestPool_ReturnKeepsOnlyWhatWasTaken(t *testing.T) {
+	files, mail := &gatewaytest.Server{}, &gatewaytest.Server{}
+	pool := toolgateway.NewPool(map[string]time.Duration{"files": time.Hour, "mail": time.Hour}, slog.New(slog.DiscardHandler))
+	t.Cleanup(func() { assert.NoError(t, pool.Close()) })
+	first := pool.Lease("", map[string]toolgateway.ToolServer{"files": files})
+	use(t, first)
+	require.NoError(t, first.Keep("conv-1"))
+	lost := pool.Lease("conv-1", map[string]toolgateway.ToolServer{"files": files, "mail": mail})
+	use(t, lost)
+
+	require.NoError(t, lost.Return())
+
+	assert.Equal(t, 1, mail.Closed, "the server it started is stopped")
+	assert.Zero(t, files.Closed, "the server it took is the conversation's again")
+	next := pool.Lease("conv-1", map[string]toolgateway.ToolServer{"files": files})
+	use(t, next)
+	assert.Empty(t, next.Fresh())
+	require.NoError(t, next.Keep("conv-1"))
+}
+
+// TestPool_KeepsAServerWhoseProbeWasCancelled: a start cancelled, as when
+// another server of the run failed, is no sign the kept server died.
+func TestPool_KeepsAServerWhoseProbeWasCancelled(t *testing.T) {
+	files := &gatewaytest.Server{}
+	pool := toolgateway.NewPool(map[string]time.Duration{"files": time.Hour}, slog.New(slog.DiscardHandler))
+	t.Cleanup(func() { assert.NoError(t, pool.Close()) })
+	servers := map[string]toolgateway.ToolServer{"files": files}
+	first := pool.Lease("", servers)
+	use(t, first)
+	require.NoError(t, first.Keep("conv-1"))
+	files.ToolsErr = context.Canceled
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	cancelled := pool.Lease("conv-1", servers)
+	_, err := cancelled.Servers()["files"].Start(ctx, "files")
+	require.ErrorIs(t, err, context.Canceled)
+	require.NoError(t, cancelled.Return())
+
+	assert.Zero(t, files.Closed)
+	files.ToolsErr = nil
+	next := pool.Lease("conv-1", servers)
+	use(t, next)
+	assert.Empty(t, next.Fresh())
+	require.NoError(t, next.Keep("conv-1"))
+}

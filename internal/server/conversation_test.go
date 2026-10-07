@@ -427,7 +427,8 @@ func TestFollowUp_ContinuesAfterACancelledRun(t *testing.T) {
 		{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{call("c1", "files_write", `{"path":"notes.md"}`)}},
 		{Role: model.RoleUser, ToolResults: []model.ToolResult{{CallID: "c1", Content: "tool call denied: files_write: approval failed: cancelled by alice", IsError: true}}},
 		{Role: model.RoleAssistant, Text: "[This turn ended without an answer: the run was cancelled.]"},
-		{Role: model.RoleUser, Text: "never mind"},
+		// A cancelled run's servers are stopped.
+		{Role: model.RoleUser, Text: "[The tool server files was started anew since this conversation last used it: what it held from earlier, such as open files or pages, is gone.]\n\nnever mind"},
 	}
 	assert.Equal(t, want, m.Requests()[0].Messages)
 }
@@ -520,4 +521,44 @@ func TestFollowUp_TellsTheModelWhatAServerLost(t *testing.T) {
 	var stored api.Run
 	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+third.ID, nil, &stored))
 	assert.Equal(t, "and sort them", stored.Input, "the run's input is the user's")
+}
+
+// TestFollowUp_ARefusedFollowUpKeepsTheConversationsServers: a follow-up
+// whose harness cannot run gives the conversation's servers back.
+func TestFollowUp_ARefusedFollowUpKeepsTheConversationsServers(t *testing.T) {
+	f := newFixture(t, options{})
+	f.putNotes(t)
+	f.script(modeltest.Reply("ok"))
+	first := f.startRun(t, "one")
+	f.finish(t, first.ID)
+	broken := notes()
+	broken.Tools = append(broken.Tools, "files_delete")
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodPut, home+"/harnesses/notes", broken, nil))
+
+	var refused api.Error
+	require.Equal(t, http.StatusUnprocessableEntity, f.do(t, http.MethodPost, home+"/runs/"+first.ID+"/follow-up", api.FollowUp{Input: "two"}, &refused))
+
+	assert.Zero(t, f.files.ClosedCount(), "the conversation's server is still its own")
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodPut, home+"/harnesses/notes", notes(), nil))
+	f.script(modeltest.Reply("ok"))
+	second := f.followUp(t, aliceToken, first.ID, "two")
+	f.finish(t, second.ID)
+	assert.Equal(t, []string{"files"}, f.files.StartedAs)
+}
+
+// TestRun_ACancelledRunStopsItsServers: a call may still be running in a
+// server when its run is cancelled, so the server is stopped, not kept.
+func TestRun_ACancelledRunStopsItsServers(t *testing.T) {
+	f := newFixture(t, options{policy: []policy.Module{policy.RulesModule("central", `require_approval contains "writes need a human" if input.tool == "files_write"`)}})
+	f.putNotes(t)
+	f.script(modeltest.CallTools(call("c1", "files_write", `{}`)))
+	run := f.startRun(t, "write")
+	waiting := f.events(t, run.ID)
+	waiting.next()
+	waiting.next()
+
+	require.Equal(t, http.StatusAccepted, f.do(t, http.MethodPost, home+"/runs/"+run.ID+"/cancel", nil, nil))
+	require.Equal(t, api.RunStatusCancelled, f.finish(t, run.ID).Status)
+
+	assert.Equal(t, 1, f.files.ClosedCount())
 }

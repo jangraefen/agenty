@@ -43,7 +43,7 @@ const configYAML = `provider:
     max_tokens: 1024
     base_url: %s
 mcp_servers:
-  # The CLI runs no follow-ups: its servers stop with each run.
+  # Servers that stop with each run, as these tests check.
   files:
     command: files-mcp
     args: [--root, sandbox]

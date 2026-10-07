@@ -7,7 +7,9 @@
 // anything short of a clear allow is a denial.
 //
 // Every tool comes from a tool server, such as an MCP server. The gateway owns
-// them: it starts those that serve a granted tool and stops them on Close.
+// them: it starts those that serve a granted tool and stops them on Close,
+// after which it denies every call. Stopping may only hand a server back to
+// a Pool, which keeps it for the conversation's next run.
 package toolgateway
 
 import (
@@ -109,6 +111,8 @@ type Gateway struct {
 
 	mu       sync.Mutex
 	sessions []namedSession
+	// closed is set by Close.
+	closed bool
 }
 
 // New returns a Gateway for cfg, after starting the servers that serve a
@@ -171,11 +175,11 @@ func New(ctx context.Context, cfg Config) (*Gateway, error) {
 }
 
 // Close stops the gateway's servers and reports every one that failed to
-// stop. Calls to their tools fail afterwards. Closing again does nothing.
+// stop. Calls are denied afterwards. Closing again does nothing.
 func (g *Gateway) Close() error {
 	g.mu.Lock()
 	sessions := g.sessions
-	g.sessions = nil
+	g.sessions, g.closed = nil, true
 	g.mu.Unlock()
 	return closeSessions(sessions)
 }
@@ -298,6 +302,12 @@ func (r *Run) decide(ctx context.Context, call ToolCall) (Tool, decision) {
 	counts := r.executed.clone()
 	r.mu.Unlock()
 
+	g.mu.Lock()
+	closed := g.closed
+	g.mu.Unlock()
+	if closed {
+		return nil, deny("the run's tool servers were stopped")
+	}
 	tool, ok := g.tools[call.Name]
 	if !ok {
 		return nil, deny("tool not granted")

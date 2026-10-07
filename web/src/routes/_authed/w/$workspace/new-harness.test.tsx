@@ -129,6 +129,22 @@ describe("the new harness form", () => {
     });
   });
 
+  test("a policy module without Rego is refused on submit", async () => {
+    const puts = harnessServer();
+    const { user } = renderApp("/w/notes/new-harness", TOKEN);
+
+    await user.type(await screen.findByLabelText("Name"), "triage");
+    await user.type(screen.getByLabelText("Instructions"), "x");
+    await user.type(screen.getByLabelText("Model"), "a-model");
+    await user.click(screen.getByRole("button", { name: "Add policy module" }));
+    await user.type(screen.getByLabelText("Module name"), "limits.rego");
+    await user.clear(screen.getByLabelText("Rego"));
+    await user.click(screen.getByRole("button", { name: "Create harness" }));
+
+    expect(await screen.findByLabelText("Rego")).toHaveAccessibleDescription(/Rego is required/);
+    expect(puts).toEqual([]);
+  });
+
   test("refuses a name another harness has", async () => {
     const puts = harnessServer([storedHarness({ name: "notes" })]);
     const { user } = renderApp("/w/notes/new-harness", TOKEN);

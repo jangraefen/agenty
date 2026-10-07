@@ -1,15 +1,20 @@
-import { useMutation, useQuery, useSuspenseQuery } from "@tanstack/react-query";
+import {
+  type UseQueryResult,
+  useMutation,
+  useQuery,
+  useSuspenseQuery,
+} from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useId, useState } from "react";
 import { unwrap } from "@/api/client";
 import { approvalsQuery, runQuery, transcriptQuery } from "@/api/queries";
+import { runEventsQuery } from "@/api/run-events";
 import type { components } from "@/api/schema";
 import { AnswerNotice, type AnswerOutcome } from "@/components/answer-notice";
 import { ApprovalCard } from "@/components/approval-card";
 import { Json } from "@/components/json";
 import { RunStatusBadge } from "@/components/run-status";
 import { Button } from "@/components/ui/button";
-import { useRunEvents } from "@/hooks/use-run-events";
 import { formatDuration, formatTime } from "@/lib/format";
 import { orNotFound } from "@/lib/not-found";
 
@@ -26,7 +31,7 @@ function RunPage() {
   const { workspace, runId } = Route.useParams();
   const { api } = Route.useRouteContext();
   const run = useSuspenseQuery(runQuery(api, workspace, runId));
-  const events = useRunEvents(api, workspace, runId);
+  const events = useQuery(runEventsQuery(api, workspace, runId));
   return (
     <>
       {run.isError && (
@@ -56,7 +61,7 @@ function RunDetails({
   events,
 }: {
   run: Schemas["Run"];
-  events: ReturnType<typeof useRunEvents>;
+  events: UseQueryResult<Schemas["AuditRecord"][]>;
 }) {
   const { workspace, runId } = Route.useParams();
   const { api } = Route.useRouteContext();
@@ -137,15 +142,15 @@ function RunDetails({
       <AnswerNotice outcome={outcome} />
       {waiting.length > 0 && <WaitingApprovals waiting={waiting} onOutcome={setOutcome} />}
 
-      {events.error !== null && running && (
+      {events.isError && running && (
         <div role="alert" className="flex items-center gap-3 text-sm text-destructive">
-          Live updates stopped: {events.error}
-          <Button variant="outline" size="sm" onClick={events.reconnect}>
+          Live updates stopped: {events.error.message}
+          <Button variant="outline" size="sm" onClick={() => void events.refetch()}>
             Reconnect
           </Button>
         </div>
       )}
-      <Activity records={events.records} />
+      <Activity records={events.data ?? []} />
       <Transcript />
     </article>
   );

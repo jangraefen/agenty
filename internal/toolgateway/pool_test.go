@@ -218,3 +218,38 @@ func TestPool_KeepsAServerWhoseProbeWasCancelled(t *testing.T) {
 	assert.Empty(t, next.Fresh())
 	require.NoError(t, next.Keep("conv-1"))
 }
+
+// TestPool_AKeptServerReplacesTheOneBefore: should a conversation's server
+// be kept twice, the one kept before is stopped, not leaked.
+func TestPool_AKeptServerReplacesTheOneBefore(t *testing.T) {
+	files := &gatewaytest.Server{}
+	pool := toolgateway.NewPool(map[string]time.Duration{"files": time.Hour}, slog.New(slog.DiscardHandler))
+	t.Cleanup(func() { assert.NoError(t, pool.Close()) })
+	servers := map[string]toolgateway.ToolServer{"files": files}
+	first, second := pool.Lease("", servers), pool.Lease("", servers)
+	use(t, first)
+	use(t, second)
+
+	require.NoError(t, first.Keep("conv-1"))
+	require.NoError(t, second.Keep("conv-1"))
+
+	assert.Equal(t, 1, files.Closed)
+}
+
+func TestPool_ServersThatFailToStartOrStop(t *testing.T) {
+	files := &gatewaytest.Server{}
+	pool := toolgateway.NewPool(map[string]time.Duration{"files": time.Hour}, slog.New(slog.DiscardHandler))
+	t.Cleanup(func() { assert.NoError(t, pool.Close()) })
+	servers := map[string]toolgateway.ToolServer{"files": files}
+	lease := pool.Lease("", servers)
+	use(t, lease)
+	require.NoError(t, lease.Keep("conv-1"))
+	files.ToolsErr, files.CloseErr = errors.New("broken pipe"), errors.New("still running")
+
+	_, err := pool.Lease("conv-1", servers).Servers()["files"].Start(context.Background(), "files")
+	require.ErrorContains(t, err, "still running", "a dead server that does not stop is not replaced")
+
+	files.CloseErr, files.StartErr = nil, errors.New("no such command")
+	_, err = pool.Lease("", servers).Servers()["files"].Start(context.Background(), "files")
+	require.ErrorContains(t, err, "no such command")
+}

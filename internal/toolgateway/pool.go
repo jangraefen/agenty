@@ -75,17 +75,19 @@ func (p *Pool) take(conversation, name string) ToolSession {
 	return kept.session
 }
 
-// keep keeps session as the idle server name of conversation, stopping
-// whatever was kept under that name before, and stops it once idle for its
-// timeout. A closed pool, or a server without idle timeout, stops it at once.
-func (p *Pool) keep(conversation, name string, session ToolSession) error {
+// keep keeps session as the idle server name of conversation, and stops it
+// once idle for its timeout. What was kept under that name before is stopped,
+// unless returning: then session, taken by a run that did not go ahead, is
+// older than what another run kept since, and is stopped instead. A closed
+// pool, or a server without idle timeout, stops session at once.
+func (p *Pool) keep(conversation, name string, session ToolSession, returning bool) error {
 	timeout := p.idleTimeout[name]
+	key := poolKey{conversation, name}
 	p.mu.Lock()
-	if p.closed || timeout <= 0 {
+	if p.closed || timeout <= 0 || (returning && p.idle[key] != nil) {
 		p.mu.Unlock()
 		return closeSession(name, session)
 	}
-	key := poolKey{conversation, name}
 	old := p.idle[key]
 	kept := &idleSession{session: session}
 	kept.timer = time.AfterFunc(timeout, func() { p.expire(key, kept) })
@@ -178,14 +180,15 @@ func (l *Lease) Fresh() []string {
 func (l *Lease) Keep(conversation string) error {
 	var errs []error
 	for name, session := range l.release() {
-		errs = append(errs, l.pool.keep(conversation, name, session))
+		errs = append(errs, l.pool.keep(conversation, name, session, false))
 	}
 	return errors.Join(errs...)
 }
 
 // Return gives the conversation back the servers the lease took from the
-// pool and stops those it started, for a run that does not go ahead: it never
-// replaces what another run of the conversation keeps.
+// pool and stops those it started, for a run that does not go ahead. It never
+// replaces what another run of the conversation kept since: a taken server
+// the conversation has a newer one of is stopped.
 func (l *Lease) Return() error {
 	l.mu.Lock()
 	taken := maps.Clone(l.taken)
@@ -193,7 +196,7 @@ func (l *Lease) Return() error {
 	var errs []error
 	for name, session := range l.release() {
 		if taken[name] {
-			errs = append(errs, l.pool.keep(l.conversation, name, session))
+			errs = append(errs, l.pool.keep(l.conversation, name, session, true))
 		} else {
 			errs = append(errs, closeSession(name, session))
 		}

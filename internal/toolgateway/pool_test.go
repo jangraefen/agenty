@@ -253,3 +253,27 @@ func TestPool_ServersThatFailToStartOrStop(t *testing.T) {
 	_, err = pool.Lease("", servers).Servers()["files"].Start(context.Background(), "files")
 	require.ErrorContains(t, err, "no such command")
 }
+
+// TestPool_ReturnNeverReplacesANewerServer: a follow-up that took the
+// conversation's server, then lost to another that started anew, ran and
+// kept its own, gives back nothing: the conversation keeps the newer one.
+func TestPool_ReturnNeverReplacesANewerServer(t *testing.T) {
+	older, newer := &gatewaytest.Server{}, &gatewaytest.Server{}
+	pool := toolgateway.NewPool(map[string]time.Duration{"files": time.Hour}, slog.New(slog.DiscardHandler))
+	first := pool.Lease("", map[string]toolgateway.ToolServer{"files": older})
+	use(t, first)
+	require.NoError(t, first.Keep("conv-1"))
+	lost := pool.Lease("conv-1", map[string]toolgateway.ToolServer{"files": older})
+	use(t, lost)
+	won := pool.Lease("conv-1", map[string]toolgateway.ToolServer{"files": newer})
+	use(t, won)
+	require.Equal(t, []string{"files"}, won.Fresh())
+	require.NoError(t, won.Keep("conv-1"))
+
+	require.NoError(t, lost.Return())
+
+	assert.Equal(t, 1, older.Closed, "the older server is stopped")
+	assert.Zero(t, newer.Closed, "the conversation keeps the newer one")
+	require.NoError(t, pool.Close())
+	assert.Equal(t, 1, newer.Closed)
+}

@@ -1,17 +1,17 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouteContext } from "@tanstack/react-router";
 import { useId, useState } from "react";
-import { ApiError, unwrap } from "@/api/client";
+import { ApiError, type Schemas, unwrap } from "@/api/client";
 import { approvalsQuery } from "@/api/queries";
-import type { components } from "@/api/schema";
 import type { AnswerOutcome } from "@/components/answer-notice";
 import { Json } from "@/components/json";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useNow } from "@/hooks/use-now";
 import { formatRemaining, formatTime } from "@/lib/format";
 
-type ApprovalRequest = components["schemas"]["ApprovalRequest"];
+type ApprovalRequest = Schemas["ApprovalRequest"];
 
 // ApprovalCard shows a call waiting for approval, as a list item, and
 // answers it as the signed-in user, telling onOutcome how that went: the card
@@ -59,13 +59,7 @@ export function ApprovalCard({
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: approvalsQuery(api, workspace).queryKey }),
   });
-  // Not disabled, which would drop the focus.
   const blocked = expired || answer.isPending;
-  function send(approved: boolean) {
-    if (!blocked) {
-      answer.mutate(approved);
-    }
-  }
 
   return (
     <li className="grid gap-2 rounded-md border bg-background p-4 text-sm">
@@ -95,9 +89,9 @@ export function ApprovalCard({
       <Json value={request.args} />
       <div className="flex flex-wrap items-end gap-2">
         <div className="grid min-w-60 flex-1 gap-1">
-          <label htmlFor={`${id}-reason`} className="text-xs text-muted-foreground">
+          <Label htmlFor={`${id}-reason`} className="text-xs font-normal text-muted-foreground">
             Reason (optional)
-          </label>
+          </Label>
           <Input
             id={`${id}-reason`}
             value={reason}
@@ -105,14 +99,18 @@ export function ApprovalCard({
             readOnly={expired}
           />
         </div>
-        <Button aria-disabled={blocked} aria-describedby={`${id}-tool`} onClick={() => send(true)}>
+        <Button
+          aria-disabled={blocked}
+          aria-describedby={`${id}-tool`}
+          onClick={() => answer.mutate(true)}
+        >
           Approve
         </Button>
         <Button
           variant="destructive"
           aria-disabled={blocked}
           aria-describedby={`${id}-tool`}
-          onClick={() => send(false)}
+          onClick={() => answer.mutate(false)}
         >
           Reject
         </Button>

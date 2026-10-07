@@ -68,3 +68,14 @@ describe("editing a harness", () => {
     );
   });
 });
+
+test("a harness that does not exist is not found", async () => {
+  server.use(
+    http.get(`${base}/harnesses/gone`, () =>
+      HttpResponse.json({ error: "not found" }, { status: 404 }),
+    ),
+  );
+  renderApp("/w/notes/harnesses/gone/edit", TOKEN);
+
+  expect(await screen.findByRole("heading", { name: "Harness not found" })).toBeInTheDocument();
+});

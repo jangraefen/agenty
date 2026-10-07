@@ -1,9 +1,12 @@
 import createClient from "openapi-fetch";
 import type { Session } from "@/auth/session";
 import { apiUrl } from "@/config";
-import type { paths } from "./schema";
+import type { components, paths } from "./schema";
 
 export type Api = ReturnType<typeof makeClient>;
+
+/** The API's schemas, by name, such as Schemas["Run"]. */
+export type Schemas = components["schemas"];
 
 /** An API request that failed; status is undefined when no answer came. */
 export class ApiError extends Error {

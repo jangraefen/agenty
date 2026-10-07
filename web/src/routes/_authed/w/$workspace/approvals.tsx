@@ -6,13 +6,28 @@ import { AnswerNotice, type AnswerOutcome } from "@/components/answer-notice";
 import { ApprovalCard } from "@/components/approval-card";
 
 export const Route = createFileRoute("/_authed/w/$workspace/approvals")({
+  // Prefetched, not required: the page polls, so it recovers by itself when
+  // the approvals cannot be loaded for a while. Only when none are cached:
+  // the page refreshes cached ones itself, and preloading on intent fetches
+  // nothing.
+  loader: ({ context: { queryClient, api }, params }) =>
+    queryClient.prefetchQuery({
+      ...approvalsQuery(api, params.workspace),
+      staleTime: Number.POSITIVE_INFINITY,
+    }),
   component: Approvals,
 });
 
 function Approvals() {
   const { workspace } = Route.useParams();
   const { api } = Route.useRouteContext();
-  const approvals = useQuery({ ...approvalsQuery(api, workspace), refetchInterval: 5000 });
+  const approvals = useQuery({
+    ...approvalsQuery(api, workspace),
+    // What the loader just fetched counts as fresh for a second, as it would
+    // for a suspense query, so mounting does not fetch it again.
+    staleTime: 1000,
+    refetchInterval: 5000,
+  });
   const [outcome, setOutcome] = useState<AnswerOutcome | null>(null);
 
   return (

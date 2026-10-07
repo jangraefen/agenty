@@ -1,66 +1,56 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import {
+  type UseQueryResult,
+  useMutation,
+  useQuery,
+  useSuspenseQuery,
+} from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useId, useState } from "react";
-import { ApiError, unwrap } from "@/api/client";
+import { type Schemas, unwrap } from "@/api/client";
 import { approvalsQuery, runQuery, transcriptQuery } from "@/api/queries";
-import type { components } from "@/api/schema";
+import { runEventsQuery } from "@/api/run-events";
 import { AnswerNotice, type AnswerOutcome } from "@/components/answer-notice";
 import { ApprovalCard } from "@/components/approval-card";
 import { Json } from "@/components/json";
 import { RunStatusBadge } from "@/components/run-status";
 import { Button } from "@/components/ui/button";
-import { useRunEvents } from "@/hooks/use-run-events";
 import { formatDuration, formatTime } from "@/lib/format";
-
-type Schemas = components["schemas"];
+import { orNotFound } from "@/lib/not-found";
 
 export const Route = createFileRoute("/_authed/w/$workspace/runs/$runId")({
+  loader: ({ context: { queryClient, api }, params }) =>
+    orNotFound(queryClient.ensureQueryData(runQuery(api, params.workspace, params.runId))),
   component: RunPage,
+  notFoundComponent: RunNotFound,
 });
 
 function RunPage() {
   const { workspace, runId } = Route.useParams();
   const { api } = Route.useRouteContext();
-  const run = useQuery(runQuery(api, workspace, runId));
-  const events = useRunEvents(api, workspace, runId);
+  const run = useSuspenseQuery(runQuery(api, workspace, runId));
+  const events = useQuery(runEventsQuery(api, workspace, runId));
+  return (
+    <>
+      {run.isError && (
+        <p role="alert" className="mb-4 text-sm text-destructive">
+          The run could not be refreshed: {run.error.message}
+        </p>
+      )}
+      <RunDetails run={run.data} events={events} />
+    </>
+  );
+}
 
-  if (run.data !== undefined) {
-    return (
-      <>
-        {run.isError && (
-          <p role="alert" className="mb-4 text-sm text-destructive">
-            The run could not be refreshed: {run.error.message}
-          </p>
-        )}
-        <RunDetails run={run.data} events={events} />
-      </>
-    );
-  }
-  if (run.isPending) {
-    return <p className="text-muted-foreground">Loading the run…</p>;
-  }
-  if (run.isError) {
-    if (run.error instanceof ApiError && run.error.status === 404) {
-      return (
-        <section>
-          <h1 className="text-xl font-semibold">Run not found</h1>
-          <Link
-            to="/w/$workspace/runs"
-            params={{ workspace }}
-            className="mt-2 inline-block underline"
-          >
-            All runs
-          </Link>
-        </section>
-      );
-    }
-    return (
-      <p role="alert" className="text-destructive">
-        The run could not be loaded: {run.error.message}
-      </p>
-    );
-  }
-  return null;
+function RunNotFound() {
+  const { workspace } = Route.useParams();
+  return (
+    <section>
+      <h1 className="text-xl font-semibold">Run not found</h1>
+      <Link to="/w/$workspace/runs" params={{ workspace }} className="mt-2 inline-block underline">
+        All runs
+      </Link>
+    </section>
+  );
 }
 
 function RunDetails({
@@ -68,7 +58,7 @@ function RunDetails({
   events,
 }: {
   run: Schemas["Run"];
-  events: ReturnType<typeof useRunEvents>;
+  events: UseQueryResult<Schemas["AuditRecord"][]>;
 }) {
   const { workspace, runId } = Route.useParams();
   const { api } = Route.useRouteContext();
@@ -99,16 +89,11 @@ function RunDetails({
         <RunStatusBadge status={run.status} />
         {running && (
           <span className="ml-auto">
-            {/* Not disabled, which would drop the focus, until the run ends. */}
             <Button
               variant="destructive"
               size="sm"
               aria-disabled={!cancel.isIdle && !cancel.isError}
-              onClick={() => {
-                if (cancel.isIdle || cancel.isError) {
-                  cancel.mutate();
-                }
-              }}
+              onClick={() => cancel.mutate()}
             >
               {cancel.isSuccess ? "Cancelling…" : "Cancel run"}
             </Button>
@@ -149,15 +134,15 @@ function RunDetails({
       <AnswerNotice outcome={outcome} />
       {waiting.length > 0 && <WaitingApprovals waiting={waiting} onOutcome={setOutcome} />}
 
-      {events.error !== null && running && (
+      {events.isError && running && (
         <div role="alert" className="flex items-center gap-3 text-sm text-destructive">
-          Live updates stopped: {events.error}
-          <Button variant="outline" size="sm" onClick={events.reconnect}>
+          Live updates stopped: {events.error.message}
+          <Button variant="outline" size="sm" onClick={() => void events.refetch()}>
             Reconnect
           </Button>
         </div>
       )}
-      <Activity records={events.records} />
+      <Activity records={events.data ?? []} />
       <Transcript />
     </article>
   );

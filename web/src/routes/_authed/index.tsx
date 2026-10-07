@@ -1,9 +1,7 @@
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
-import { loadMe } from "@/auth/load-me";
 
 export const Route = createFileRoute("/_authed/")({
-  loader: async ({ context }) => {
-    const me = await loadMe(context);
+  loader: ({ context: { me } }) => {
     const [only, ...others] = me.workspaces;
     if (only !== undefined && others.length === 0) {
       throw redirect({ to: "/w/$workspace/runs", params: { workspace: only } });

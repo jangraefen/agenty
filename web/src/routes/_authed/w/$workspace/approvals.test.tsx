@@ -1,4 +1,5 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { focusManager } from "@tanstack/react-query";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { beforeEach, describe, expect, test } from "vitest";
 import { apiUrl } from "@/config";
@@ -177,6 +178,27 @@ describe("the approvals page", () => {
     await user.click(await screen.findByRole("button", { name: "Approve" }));
 
     expect(answers).toEqual([]);
+  });
+
+  test("recovers by itself once the approvals can be loaded", async () => {
+    let down = true;
+    server.use(
+      http.get(`${base}/approvals`, () =>
+        down
+          ? HttpResponse.json({ error: "unavailable" }, { status: 503 })
+          : HttpResponse.json([approvalRequest({ expires_at: inAnHour() })]),
+      ),
+    );
+    renderApp("/w/notes/approvals", TOKEN);
+    expect(await screen.findByRole("alert")).toHaveTextContent("unavailable");
+
+    down = false;
+    act(() => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
+
+    expect(await screen.findByRole("list", { name: "Waiting approvals" })).toBeInTheDocument();
   });
 
   test("says when nothing is waiting", async () => {

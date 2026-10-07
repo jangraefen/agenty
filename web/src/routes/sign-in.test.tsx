@@ -1,9 +1,13 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
-import { describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test } from "vitest";
 import { apiUrl } from "@/config";
 import { renderApp } from "@/test/render";
-import { meHandler, server, TOKEN } from "@/test/server";
+import { emptyWorkspaceHandlers, meHandler, server, TOKEN } from "@/test/server";
+
+beforeEach(() => {
+  server.use(...emptyWorkspaceHandlers("notes"), ...emptyWorkspaceHandlers("ops"));
+});
 
 describe("signing in", () => {
   test("without a token, every page asks to sign in", async () => {
@@ -34,9 +38,6 @@ describe("signing in", () => {
         asked += 1;
         return HttpResponse.json({ user: "demo", workspaces: ["notes"] });
       }),
-      http.get(`${apiUrl}/v1/workspaces/notes/runs`, () => HttpResponse.json({ runs: [] })),
-      http.get(`${apiUrl}/v1/workspaces/notes/harnesses`, () => HttpResponse.json([])),
-      http.get(`${apiUrl}/v1/workspaces/notes/approvals`, () => HttpResponse.json([])),
     );
     const { user } = renderApp("/sign-in", null);
 
@@ -51,6 +52,21 @@ describe("signing in", () => {
     renderApp("/sign-in", null);
 
     expect(await screen.findByLabelText("Token")).toHaveAttribute("type", "password");
+  });
+
+  test("the typed token never appears in the page's markup", async () => {
+    const { user } = renderApp("/sign-in", null);
+
+    const field = await screen.findByLabelText("Token");
+    await user.type(field, TOKEN);
+
+    // A style, which the policy allows inline, could match the value
+    // attribute character by character and request a URL for each.
+    expect(field).toHaveValue(TOKEN);
+    expect(field).not.toHaveAttribute("value");
+    expect(document.documentElement.outerHTML).not.toContain(TOKEN);
+    // Were the browser itself ever to send the form, not in the URL either.
+    expect(field.closest("form")).toHaveAttribute("method", "post");
   });
 
   test("an invalid token is refused and not stored", async () => {
@@ -161,47 +177,60 @@ describe("workspaces", () => {
     const { history, user } = renderApp("/w/notes/runs", TOKEN);
 
     expect(await screen.findByText("demo")).toBeInTheDocument();
-    const nav = screen.getByRole("navigation", { name: "Workspaces" });
-    expect(within(nav).getByRole("link", { name: "notes" })).toHaveAttribute("aria-current");
-    expect(within(nav).getByRole("link", { name: "ops" })).not.toHaveAttribute("aria-current");
+    await user.click(screen.getByRole("button", { name: "Workspace: notes" }));
+    const menu = await screen.findByRole("menu");
+    expect(within(menu).getByRole("menuitem", { name: "notes" })).toHaveAttribute("aria-current");
+    expect(within(menu).getByRole("menuitem", { name: "ops" })).not.toHaveAttribute("aria-current");
+    expect(within(menu).getByRole("menuitem", { name: "ops" })).toHaveAttribute(
+      "href",
+      "/w/ops/runs",
+    );
 
-    await user.click(within(nav).getByRole("link", { name: "ops" }));
+    await user.click(within(menu).getByRole("menuitem", { name: "ops" }));
 
     await waitFor(() => {
       expect(history.location.pathname).toBe("/w/ops/runs");
     });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
 
   test("Escape closes the workspace menu and returns to its button", async () => {
     server.use(meHandler({ user: "demo", workspaces: ["notes", "ops"] }));
     const { user } = renderApp("/w/notes/runs", TOKEN);
 
-    const summary = (await screen.findByText("Workspace:")).closest("summary");
-    if (summary === null) {
-      throw new Error("no menu button");
-    }
-    await user.click(summary);
-    const menu = summary.closest("details");
-    expect(menu).toHaveAttribute("open");
-    await user.tab();
+    const button = await screen.findByRole("button", { name: "Workspace: notes" });
+    await user.click(button);
+    await screen.findByRole("menu");
     await user.keyboard("{Escape}");
 
-    expect(menu).not.toHaveAttribute("open");
-    expect(summary).toHaveFocus();
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(button).toHaveFocus();
+  });
+
+  test("the workspace menu is worked with the arrow keys", async () => {
+    server.use(meHandler({ user: "demo", workspaces: ["notes", "ops"] }));
+    const { history, user } = renderApp("/w/notes/runs", TOKEN);
+
+    const button = await screen.findByRole("button", { name: "Workspace: notes" });
+    button.focus();
+    await user.keyboard("{Enter}");
+    await screen.findByRole("menu");
+    await user.keyboard("{ArrowDown}{Enter}");
+
+    await waitFor(() => {
+      expect(history.location.pathname).toBe("/w/ops/runs");
+    });
   });
 
   test("a click elsewhere closes the workspace menu", async () => {
     server.use(meHandler({ user: "demo", workspaces: ["notes", "ops"] }));
     const { user } = renderApp("/w/notes/runs", TOKEN);
 
-    const summary = (await screen.findByText("Workspace:")).closest("summary");
-    if (summary === null) {
-      throw new Error("no menu button");
-    }
-    await user.click(summary);
+    await user.click(await screen.findByRole("button", { name: "Workspace: notes" }));
+    await screen.findByRole("menu");
     await user.click(screen.getByRole("heading", { name: "Runs" }));
 
-    expect(summary.closest("details")).not.toHaveAttribute("open");
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
 
   test("a different user signing in in another tab replaces what this one shows", async () => {

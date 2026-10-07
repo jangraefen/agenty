@@ -10,6 +10,7 @@ import {
 } from "@/api/queries";
 import { RunStatusBadge } from "@/components/run-status";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { formatDuration, formatTime } from "@/lib/format";
 
 // The filters in a search, ignoring anything else: the router passes on the
@@ -24,6 +25,15 @@ function runFilters(search: Record<string, unknown>): RunFilters {
 
 export const Route = createFileRoute("/_authed/w/$workspace/runs/")({
   validateSearch: runFilters,
+  loaderDeps: ({ search }) => runFilters(search),
+  // Prefetched, not required: the page shows its filters, and polls, also
+  // when the runs cannot be loaded. Only when none are cached: the page
+  // refreshes cached ones itself, and preloading on intent fetches nothing.
+  loader: ({ context: { queryClient, api }, params, deps }) =>
+    queryClient.prefetchInfiniteQuery({
+      ...runsQuery(api, params.workspace, deps),
+      staleTime: Number.POSITIVE_INFINITY,
+    }),
   component: Runs,
 });
 
@@ -35,7 +45,9 @@ function Runs() {
   const { api } = Route.useRouteContext();
   const navigate = Route.useNavigate();
   const id = useId();
-  const runs = useInfiniteQuery(runsQuery(api, workspace, filters));
+  // What the loader just fetched counts as fresh for a second, as it would
+  // for a suspense query, so mounting does not fetch it again.
+  const runs = useInfiniteQuery({ ...runsQuery(api, workspace, filters), staleTime: 1000 });
   const harnesses = useQuery(harnessesQuery(api, workspace));
 
   const harnessNames = new Set(harnesses.data?.map((version) => version.harness.name));
@@ -67,9 +79,6 @@ function Runs() {
   }, [focusRun]);
 
   async function loadMore() {
-    if (runs.isFetchingNextPage) {
-      return;
-    }
     const result = await runs.fetchNextPage();
     if (result.isSuccess) {
       // An empty page has no run to focus, and the table takes the focus.
@@ -82,9 +91,9 @@ function Runs() {
     <section>
       <div className="flex flex-wrap items-center gap-4">
         <h1 className="mr-auto text-xl font-semibold">Runs</h1>
-        <label htmlFor={`${id}-harness`} className="text-sm">
+        <Label htmlFor={`${id}-harness`} className="font-normal">
           Harness
-        </label>
+        </Label>
         <select
           id={`${id}-harness`}
           value={filters.harness ?? ""}
@@ -103,9 +112,9 @@ function Runs() {
             </option>
           ))}
         </select>
-        <label htmlFor={`${id}-status`} className="text-sm">
+        <Label htmlFor={`${id}-status`} className="font-normal">
           Status
-        </label>
+        </Label>
         <select
           id={`${id}-status`}
           value={filters.status ?? ""}
@@ -204,7 +213,6 @@ function Runs() {
         <Button
           variant="outline"
           className="mt-4"
-          // Not disabled, which would drop the focus.
           aria-disabled={runs.isFetchingNextPage}
           onClick={() => void loadMore()}
         >

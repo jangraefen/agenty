@@ -1,9 +1,9 @@
 import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
-import type { components } from "@/api/schema";
+import type { Schemas } from "@/api/client";
 import { apiUrl } from "@/config";
 
-export type Schemas = components["schemas"];
+export type { Schemas };
 
 // The mocked API. Tests add their handlers with server.use; a request no
 // handler answers fails the test.
@@ -59,4 +59,15 @@ export function eventStream(events: { event: string; data: unknown }[]) {
   }
   live.close();
   return response;
+}
+
+// Answers what a workspace's pages load with nothing: no runs, harnesses or
+// waiting approvals.
+export function emptyWorkspaceHandlers(workspace: string) {
+  const base = `${apiUrl}/v1/workspaces/${workspace}`;
+  return [
+    http.get(`${base}/runs`, () => HttpResponse.json<Schemas["RunList"]>({ runs: [] })),
+    http.get(`${base}/harnesses`, () => HttpResponse.json([])),
+    http.get(`${base}/approvals`, () => HttpResponse.json([])),
+  ];
 }

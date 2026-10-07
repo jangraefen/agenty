@@ -98,6 +98,45 @@ func conversationHistory(redact *secret.Redactor, prior []priorRun, digest strin
 	return history
 }
 
+// interruptedCall is the result the model is told of a tool call whose
+// result was not recorded.
+const interruptedCall = "The run ended before this call's result was recorded: it may or may not have run. Check before repeating it."
+
+// ended returns the transcript of r completed so that a conversation can
+// continue from it, which needs it to end with the model's answer. A run that
+// failed or was cancelled may have stopped before: then the model is told,
+// as the result of each call it made without a recorded result, that the call
+// may or may not have run, as nothing tells whether it did, and, as the
+// answer, how the run ended. No call is run again: the tool may not be
+// idempotent. The completion depends only on what was stored of the finished
+// run, so every later follow-up sends the same.
+func ended(r store.Run, messages []store.TranscriptMessage) []store.TranscriptMessage {
+	if r.Status == store.RunSucceeded {
+		return messages
+	}
+	if len(messages) == 0 {
+		// Storing the input failed.
+		messages = []store.TranscriptMessage{{Message: model.Message{Role: model.RoleUser, Text: r.Input}}}
+	}
+	last := messages[len(messages)-1].Message
+	if last.Role == model.RoleAssistant && len(last.ToolCalls) == 0 {
+		return messages
+	}
+	if last.Role == model.RoleAssistant {
+		results := make([]model.ToolResult, len(last.ToolCalls))
+		for i, c := range last.ToolCalls {
+			results[i] = model.ToolResult{CallID: c.ID, Content: interruptedCall, IsError: true}
+		}
+		messages = append(messages, store.TranscriptMessage{Message: model.Message{Role: model.RoleUser, ToolResults: results}})
+	}
+	how := "the run failed: " + r.Error
+	if r.Status == store.RunCancelled {
+		how = "the run was " + r.Error
+	}
+	note := model.Message{Role: model.RoleAssistant, Text: "[This turn ended without an answer: " + how + "]"}
+	return append(messages, store.TranscriptMessage{Message: note})
+}
+
 // historyDigest identifies a history as it is sent to the model.
 func historyDigest(history []model.Message) string {
 	h := newHistoryHash()

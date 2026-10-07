@@ -197,7 +197,8 @@ function Chat({
 }
 
 // Composer replies to the conversation by following up its latest run, once
-// that run has answered and the conversation is known, so it is the latest.
+// that run has finished and the conversation is known, so it is the latest.
+// A run that failed or was cancelled is continued from where it stopped.
 // Enter sends, Shift+Enter starts a new line.
 function Composer({ runs, latest, ready }: { runs: Run[]; latest: Run; ready: boolean }) {
   const { workspace } = Route.useParams();
@@ -233,22 +234,6 @@ function Composer({ runs, latest, ready }: { runs: Run[]; latest: Run; ready: bo
     },
   });
 
-  if (latest.status === "failed" || latest.status === "cancelled") {
-    return (
-      <p className="rounded-md border bg-muted px-4 py-3 text-sm">
-        This conversation cannot continue: its last run{" "}
-        {latest.status === "failed" ? "failed" : "was cancelled"}.{" "}
-        <Link
-          to="/w/$workspace/harnesses/$name"
-          params={{ workspace, name: latest.harness }}
-          className="underline"
-        >
-          Start a new conversation
-        </Link>
-      </p>
-    );
-  }
-
   const waiting = latest.status === "running";
   const blocked = waiting || !ready || reply.isPending;
 
@@ -270,7 +255,12 @@ function Composer({ runs, latest, ready }: { runs: Run[]; latest: Run; ready: bo
     }
   }
 
-  const described = [waiting && `${id}-waiting`, reply.isError && `${id}-error`]
+  const ended = latest.status === "failed" || latest.status === "cancelled";
+  const described = [
+    waiting && `${id}-waiting`,
+    ended && `${id}-ended`,
+    reply.isError && `${id}-error`,
+  ]
     .filter(Boolean)
     .join(" ");
 
@@ -299,6 +289,12 @@ function Composer({ runs, latest, ready }: { runs: Run[]; latest: Run; ready: bo
       {waiting && (
         <p id={`${id}-waiting`} className="text-xs text-muted-foreground">
           You can reply once the agent has answered.
+        </p>
+      )}
+      {ended && (
+        <p id={`${id}-ended`} className="text-xs text-muted-foreground">
+          The last run {latest.status === "failed" ? "failed" : "was cancelled"}. A reply continues
+          from where it stopped.
         </p>
       )}
       {reply.isError && (

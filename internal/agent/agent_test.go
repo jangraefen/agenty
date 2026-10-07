@@ -397,3 +397,28 @@ func TestExecute_OnlyOnce(t *testing.T) {
 	require.ErrorContains(t, err, "run already executed", "a run's call counts and ID are not reused")
 	assert.Len(t, m.Requests(), 1)
 }
+
+// TestRun_RecordsTheCallsOfTheLastStepAsNotRun: a run that reaches its step
+// limit while the model asks for tools does not run them, and its
+// transcript says so, so a conversation can continue from it.
+func TestRun_RecordsTheCallsOfTheLastStepAsNotRun(t *testing.T) {
+	f := newFixture(1)
+	tr := &transcript{failAt: -1}
+	cfg := f.config(modeltest.NewScripted(modeltest.CallTools(call("c1", "tickets_read"), call("c2", "tickets_label"))))
+	cfg.Transcript = tr
+	a, err := agent.New(context.Background(), cfg)
+	require.NoError(t, err)
+
+	res, err := a.Run(context.Background(), "ticket 7")
+
+	require.ErrorIs(t, err, agent.ErrMaxSteps)
+	notRun := "Not run: the run reached its limit of 1 step."
+	want := model.Message{Role: model.RoleUser, ToolResults: []model.ToolResult{
+		{CallID: "c1", Content: notRun, IsError: true},
+		{CallID: "c2", Content: notRun, IsError: true},
+	}}
+	require.Len(t, res.Messages, 3)
+	assert.Equal(t, want, res.Messages[2])
+	assert.Equal(t, res.Messages, tr.messages)
+	assert.Zero(t, f.toolCalls())
+}

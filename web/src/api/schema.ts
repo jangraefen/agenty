@@ -123,8 +123,10 @@ export interface paths {
          * @description Starts a run of the harness's latest version that continues the
          *     conversation: the model sees the earlier runs' transcripts, with
          *     secrets redacted, before the new input. Only the conversation's
-         *     latest run can be followed up, once it has succeeded; any other is
-         *     a conflict.
+         *     latest run can be followed up, once it has finished; any other is a
+         *     conflict. A run that failed or was cancelled is continued from where
+         *     it stopped: the model is told so, and that a tool call whose result
+         *     was not recorded may or may not have run. No call is run again.
          */
         post: operations["followUpRun"];
         delete?: never;

@@ -635,17 +635,19 @@ describe("replying", () => {
     expect(box).toHaveValue("hurry");
   });
 
-  test("explains that a conversation ends with a run that did not succeed", async () => {
-    const failed = run({ status: "failed", output: "", error: "the model refused" });
-    server.use(...conversationHandlers([failed]), finishedEvents("run-1", failed));
+  test.each([
+    ["failed", "the model refused", "The last run failed."],
+    ["cancelled", "cancelled by ana", "The last run was cancelled."],
+  ] as const)("continues a conversation whose last run %s", async (status, error, hint) => {
+    const ended = run({ status, output: "", error });
+    server.use(...conversationHandlers([ended]), finishedEvents("run-1", ended));
     renderApp(path, TOKEN);
 
-    expect(await screen.findByText(/This conversation cannot continue/)).toBeInTheDocument();
-    expect(screen.queryByRole("textbox", { name: "Message" })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Start a new conversation" })).toHaveAttribute(
-      "href",
-      "/w/notes/harnesses/notes",
+    const box = await screen.findByRole("textbox", { name: "Message" });
+    await waitFor(() =>
+      expect(box).toHaveAccessibleDescription(`${hint} A reply continues from where it stopped.`),
     );
+    expect(screen.getByRole("button", { name: "Send" })).toHaveAttribute("aria-disabled", "false");
   });
 
   test("reports a reply the server refuses and keeps the message", async () => {

@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"slices"
 	"strings"
 	"sync"
@@ -194,27 +196,40 @@ type runTranscript struct {
 
 var _ agent.Transcript = runTranscript{}
 
-// Append stores msg even if the run is being cancelled, as Record does.
+// Append stores msg even if the run is being cancelled, as Record does. A
+// message redaction changed is stored as altered.
 func (t runTranscript) Append(ctx context.Context, runID string, index int, msg model.Message) error {
-	return t.store.AppendMessage(context.WithoutCancel(ctx), runID, index, redactMessage(t.redact, msg))
+	redacted, altered := redactMessage(t.redact, msg)
+	return t.store.AppendMessage(context.WithoutCancel(ctx), runID, store.NewMessage{Position: index, Message: redacted, Altered: altered})
 }
 
 // redactMessage returns a copy of msg with every secret redact knows of
-// redacted, wherever in the message it is.
-func redactMessage(redact *secret.Redactor, msg model.Message) model.Message {
-	msg.Text = redact.String(msg.Text)
+// redacted, wherever in the message it is, and whether that changed it.
+func redactMessage(redact *secret.Redactor, msg model.Message) (model.Message, bool) {
+	changed := false
+	text := func(s string) string {
+		r := redact.String(s)
+		changed = changed || r != s
+		return r
+	}
+	raw := func(j json.RawMessage) json.RawMessage {
+		r := redact.JSON(j)
+		changed = changed || !bytes.Equal(r, j)
+		return r
+	}
+	msg.Text = text(msg.Text)
 	msg.ToolCalls = slices.Clone(msg.ToolCalls)
 	for i := range msg.ToolCalls {
-		msg.ToolCalls[i].Args = redact.JSON(msg.ToolCalls[i].Args)
+		msg.ToolCalls[i].Args = raw(msg.ToolCalls[i].Args)
 	}
 	msg.ToolResults = slices.Clone(msg.ToolResults)
 	for i := range msg.ToolResults {
-		msg.ToolResults[i].Content = redact.String(msg.ToolResults[i].Content)
+		msg.ToolResults[i].Content = text(msg.ToolResults[i].Content)
 	}
 	if msg.Provider != nil {
 		p := *msg.Provider
-		p.Data = redact.JSON(p.Data)
+		p.Data = raw(p.Data)
 		msg.Provider = &p
 	}
-	return msg
+	return msg, changed
 }

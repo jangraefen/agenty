@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jangraefen/agenty/internal/model"
+	"github.com/jangraefen/agenty/internal/store"
 	"github.com/jangraefen/agenty/internal/store/storetest"
 )
 
@@ -27,7 +28,7 @@ func TestTranscript_StoresMessagesInOrder(t *testing.T) {
 		{Role: model.RoleAssistant, Text: "Done."},
 	}
 	for i, m := range messages {
-		require.NoError(t, s.AppendMessage(ctx, "r1", i, m))
+		require.NoError(t, s.AppendMessage(ctx, "r1", store.NewMessage{Position: i, Message: m}))
 	}
 
 	got, err := s.Transcript(ctx, "r1")
@@ -38,6 +39,7 @@ func TestTranscript_StoresMessagesInOrder(t *testing.T) {
 		assert.Equal(t, i, m.Position)
 		assert.False(t, m.CreatedAt.IsZero())
 		assert.Equal(t, messages[i], m.Message)
+		assert.False(t, m.Altered)
 	}
 	empty, err := s.Transcript(ctx, "ghost")
 	require.NoError(t, err)
@@ -48,12 +50,12 @@ func TestAppendMessage_Rejects(t *testing.T) {
 	ctx := context.Background()
 	s := storetest.New(t)
 	newRun(t, s, "r1")
-	require.NoError(t, s.AppendMessage(ctx, "r1", 0, model.Message{Role: model.RoleUser, Text: "x"}))
+	require.NoError(t, s.AppendMessage(ctx, "r1", store.NewMessage{Position: 0, Message: model.Message{Role: model.RoleUser, Text: "x"}}))
 
-	require.Error(t, s.AppendMessage(ctx, "r1", 0, model.Message{Role: model.RoleUser, Text: "again"}), "a position is written once")
-	require.Error(t, s.AppendMessage(ctx, "ghost", 0, model.Message{Role: model.RoleUser, Text: "x"}), "messages belong to a stored run")
-	require.Error(t, s.AppendMessage(ctx, "r1", 1, model.Message{Role: "system", Text: "x"}), "roles are user or assistant")
-	require.ErrorContains(t, s.AppendMessage(ctx, "r1", 1, model.Message{Role: model.RoleAssistant, Provider: &model.ProviderPart{Data: json.RawMessage(`{}`)}}), "provider part without a name",
+	require.Error(t, s.AppendMessage(ctx, "r1", store.NewMessage{Position: 0, Message: model.Message{Role: model.RoleUser, Text: "again"}}), "a position is written once")
+	require.Error(t, s.AppendMessage(ctx, "ghost", store.NewMessage{Position: 0, Message: model.Message{Role: model.RoleUser, Text: "x"}}), "messages belong to a stored run")
+	require.Error(t, s.AppendMessage(ctx, "r1", store.NewMessage{Position: 1, Message: model.Message{Role: "system", Text: "x"}}), "roles are user or assistant")
+	require.ErrorContains(t, s.AppendMessage(ctx, "r1", store.NewMessage{Position: 1, Message: model.Message{Role: model.RoleAssistant, Provider: &model.ProviderPart{Data: json.RawMessage(`{}`)}}}), "provider part without a name",
 		"a provider part names its provider, or it could not be read back")
 }
 
@@ -73,7 +75,7 @@ func TestAppendMessage_NeverFailsOnContent(t *testing.T) {
 	}
 
 	for i, m := range msgs {
-		require.NoError(t, s.AppendMessage(ctx, "r1", i, m))
+		require.NoError(t, s.AppendMessage(ctx, "r1", store.NewMessage{Position: i, Message: m}))
 	}
 
 	got, err := s.Transcript(ctx, "r1")
@@ -86,13 +88,42 @@ func TestAppendMessage_NeverFailsOnContent(t *testing.T) {
 	assert.Equal(t, "bin\x00ary �", got[1].ToolResults[0].Content, "inside JSON, a NUL is kept escaped")
 }
 
+// TestTranscript_RecordsAlteredMessages: a message stored other than as the
+// model saw or wrote it is marked, whether redaction changed it or the store
+// had to replace bytes of its text.
+func TestTranscript_RecordsAlteredMessages(t *testing.T) {
+	ctx := context.Background()
+	s := storetest.New(t)
+	newRun(t, s, "r1")
+	msgs := []store.NewMessage{
+		{Message: model.Message{Role: model.RoleUser, Text: "as is"}},
+		{Message: model.Message{Role: model.RoleAssistant, Text: "the token is [redacted]"}, Altered: true},
+		{Message: model.Message{Role: model.RoleUser, Text: "nul \x00"}},
+		{Message: model.Message{Role: model.RoleAssistant, Text: "invalid \xff"}},
+	}
+	for i, m := range msgs {
+		m.Position = i
+		require.NoError(t, s.AppendMessage(ctx, "r1", m))
+	}
+
+	got, err := s.Transcript(ctx, "r1")
+
+	require.NoError(t, err)
+	require.Len(t, got, len(msgs))
+	altered := make([]bool, len(got))
+	for i, m := range got {
+		altered[i] = m.Altered
+	}
+	assert.Equal(t, []bool{false, true, true, true}, altered)
+}
+
 func TestTranscript_StoreDown(t *testing.T) {
 	ctx := context.Background()
 	s := storetest.New(t)
 	newRun(t, s, "r1")
 	s.Close()
 
-	require.Error(t, s.AppendMessage(ctx, "r1", 0, model.Message{Role: model.RoleUser, Text: "x"}))
+	require.Error(t, s.AppendMessage(ctx, "r1", store.NewMessage{Position: 0, Message: model.Message{Role: model.RoleUser, Text: "x"}}))
 	_, err := s.Transcript(ctx, "r1")
 	require.Error(t, err)
 }

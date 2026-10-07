@@ -12,7 +12,7 @@ import (
 )
 
 const conversationRuns = `-- name: ConversationRuns :many
-SELECT runs.id, runs.harness_version_id, runs.input, runs.status, runs.output, runs.steps, runs.error, runs.created_at, runs.finished_at, runs.started_by, runs.conversation_id, runs.follows, harness_versions.name AS harness, harness_versions.version AS harness_version
+SELECT runs.id, runs.harness_version_id, runs.input, runs.status, runs.output, runs.steps, runs.error, runs.created_at, runs.finished_at, runs.started_by, runs.conversation_id, runs.follows, runs.prompt_digest, runs.history_digest, harness_versions.name AS harness, harness_versions.version AS harness_version
 FROM runs
 JOIN harness_versions ON harness_versions.id = runs.harness_version_id
 WHERE harness_versions.workspace = $1
@@ -55,6 +55,8 @@ func (q *Queries) ConversationRuns(ctx context.Context, arg ConversationRunsPara
 			&i.Run.StartedBy,
 			&i.Run.ConversationID,
 			&i.Run.Follows,
+			&i.Run.PromptDigest,
+			&i.Run.HistoryDigest,
 			&i.Harness,
 			&i.HarnessVersion,
 		); err != nil {
@@ -111,7 +113,7 @@ func (q *Queries) FinishRun(ctx context.Context, arg FinishRunParams) (int64, er
 }
 
 const getRun = `-- name: GetRun :one
-SELECT runs.id, runs.harness_version_id, runs.input, runs.status, runs.output, runs.steps, runs.error, runs.created_at, runs.finished_at, runs.started_by, runs.conversation_id, runs.follows, harness_versions.name AS harness, harness_versions.version AS harness_version
+SELECT runs.id, runs.harness_version_id, runs.input, runs.status, runs.output, runs.steps, runs.error, runs.created_at, runs.finished_at, runs.started_by, runs.conversation_id, runs.follows, runs.prompt_digest, runs.history_digest, harness_versions.name AS harness, harness_versions.version AS harness_version
 FROM runs
 JOIN harness_versions ON harness_versions.id = runs.harness_version_id
 WHERE runs.id = $1 AND harness_versions.workspace = $2
@@ -145,6 +147,8 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (GetRunRow, erro
 		&i.Run.StartedBy,
 		&i.Run.ConversationID,
 		&i.Run.Follows,
+		&i.Run.PromptDigest,
+		&i.Run.HistoryDigest,
 		&i.Harness,
 		&i.HarnessVersion,
 	)
@@ -152,11 +156,11 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (GetRunRow, erro
 }
 
 const insertRun = `-- name: InsertRun :exec
-INSERT INTO runs (id, harness_version_id, input, started_by, conversation_id, follows)
+INSERT INTO runs (id, harness_version_id, input, started_by, prompt_digest, history_digest, conversation_id, follows)
 VALUES (
-    $1, $2, $3, $4,
-    COALESCE((SELECT f.conversation_id FROM runs f WHERE f.id = $5), $1),
-    $5
+    $1, $2, $3, $4, $5, $6,
+    COALESCE((SELECT f.conversation_id FROM runs f WHERE f.id = $7), $1),
+    $7
 )
 `
 
@@ -165,6 +169,8 @@ type InsertRunParams struct {
 	HarnessVersionID int64
 	Input            string
 	StartedBy        string
+	PromptDigest     string
+	HistoryDigest    string
 	Follows          pgtype.Text
 }
 
@@ -176,13 +182,15 @@ func (q *Queries) InsertRun(ctx context.Context, arg InsertRunParams) error {
 		arg.HarnessVersionID,
 		arg.Input,
 		arg.StartedBy,
+		arg.PromptDigest,
+		arg.HistoryDigest,
 		arg.Follows,
 	)
 	return err
 }
 
 const listRuns = `-- name: ListRuns :many
-SELECT runs.id, runs.harness_version_id, runs.input, runs.status, runs.output, runs.steps, runs.error, runs.created_at, runs.finished_at, runs.started_by, runs.conversation_id, runs.follows, harness_versions.name AS harness, harness_versions.version AS harness_version
+SELECT runs.id, runs.harness_version_id, runs.input, runs.status, runs.output, runs.steps, runs.error, runs.created_at, runs.finished_at, runs.started_by, runs.conversation_id, runs.follows, runs.prompt_digest, runs.history_digest, harness_versions.name AS harness, harness_versions.version AS harness_version
 FROM runs
 JOIN harness_versions ON harness_versions.id = runs.harness_version_id
 WHERE harness_versions.workspace = $1
@@ -242,6 +250,8 @@ func (q *Queries) ListRuns(ctx context.Context, arg ListRunsParams) ([]ListRunsR
 			&i.Run.StartedBy,
 			&i.Run.ConversationID,
 			&i.Run.Follows,
+			&i.Run.PromptDigest,
+			&i.Run.HistoryDigest,
 			&i.Harness,
 			&i.HarnessVersion,
 		); err != nil {

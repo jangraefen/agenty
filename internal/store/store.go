@@ -17,6 +17,7 @@ import (
 	"math"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -223,6 +224,11 @@ type Run struct {
 	// Follows is the ID of the run this run continues the conversation of,
 	// if any.
 	Follows string
+	// PromptDigest identifies what the run sent the model before the
+	// conversation: its model, instructions and tools. HistoryDigest
+	// identifies the conversation of earlier runs it sent before its input.
+	// Runs stored before they were recorded have neither.
+	PromptDigest, HistoryDigest string
 }
 
 // NewRun is a run to store.
@@ -235,6 +241,9 @@ type NewRun struct {
 	// Follows, when set, is the ID of the run whose conversation the run
 	// continues.
 	Follows string
+	// PromptDigest and HistoryDigest identify what the run sends the model;
+	// see Run.
+	PromptDigest, HistoryDigest string
 }
 
 // uniqueViolation is PostgreSQL's error code for a violated unique constraint.
@@ -245,7 +254,7 @@ const uniqueViolation = "23505"
 // that another run already follows returns ErrConflict, so a conversation
 // never branches.
 func (s *Store) CreateRun(ctx context.Context, r NewRun) error {
-	err := s.queries.InsertRun(ctx, db.InsertRunParams{ID: r.ID, HarnessVersionID: r.HarnessVersionID, Input: r.Input, StartedBy: r.StartedBy, Follows: optional(r.Follows)})
+	err := s.queries.InsertRun(ctx, db.InsertRunParams{ID: r.ID, HarnessVersionID: r.HarnessVersionID, Input: r.Input, StartedBy: r.StartedBy, PromptDigest: r.PromptDigest, HistoryDigest: r.HistoryDigest, Follows: optional(r.Follows)})
 	var pgErr *pgconn.PgError
 	switch {
 	case errors.As(err, &pgErr) && pgErr.Code == uniqueViolation && pgErr.ConstraintName == "runs_follows_key":
@@ -356,6 +365,8 @@ func run(row db.Run, harness string, version int32) Run {
 		FinishedAt:       row.FinishedAt,
 		ConversationID:   row.ConversationID,
 		Follows:          row.Follows.String,
+		PromptDigest:     row.PromptDigest,
+		HistoryDigest:    row.HistoryDigest,
 	}
 }
 
@@ -470,19 +481,39 @@ type TranscriptMessage struct {
 	// Position is the message's index in the run's conversation.
 	Position int
 	model.Message
+	// Altered is set for a message stored other than as the model saw or
+	// wrote it.
+	Altered   bool
 	CreatedAt time.Time
 }
 
-// AppendMessage stores msg at position in the transcript of the run runID,
-// which must exist. A position is written once. As with Record, content never
-// makes storing fail: invalid UTF-8 and NUL bytes in the text are replaced,
-// and tool call arguments and provider parts that are not valid JSON are kept
-// as a JSON string. A provider part's JSON is kept as written, so the provider
-// can replay it exactly.
-func (s *Store) AppendMessage(ctx context.Context, runID string, position int, msg model.Message) error {
+// NewMessage is a message to append to a run's transcript.
+type NewMessage struct {
+	// Position is the message's index in the run's conversation.
+	Position int
+	Message  model.Message
+	// Altered says that Message is not as the model saw or wrote it, for
+	// example because secrets were redacted from it.
+	Altered bool
+}
+
+// AppendMessage stores m in the transcript of the run runID, which must
+// exist. A position is written once. As with Record, content never makes
+// storing fail: invalid UTF-8 and NUL bytes in the text are replaced, and
+// tool call arguments and provider parts that are not valid JSON are kept as
+// a JSON string; a message changed so is stored as altered. A provider
+// part's JSON is otherwise kept as written, so the provider can replay it
+// exactly.
+func (s *Store) AppendMessage(ctx context.Context, runID string, m NewMessage) error {
+	msg, position := m.Message, m.Position
+	altered := m.Altered || text(msg.Text) != msg.Text
+	for _, r := range msg.ToolResults {
+		altered = altered || !utf8.ValidString(r.Content)
+	}
 	calls := make([]model.ToolCall, len(msg.ToolCalls))
 	for i, c := range msg.ToolCalls {
 		c.Args = jsonText(c.Args)
+		altered = altered || !bytes.Equal(c.Args, msg.ToolCalls[i].Args)
 		calls[i] = c
 	}
 	var provider string
@@ -492,6 +523,7 @@ func (s *Store) AppendMessage(ctx context.Context, runID string, position int, m
 			return fmt.Errorf("store: run %s: message %d: provider part without a name", runID, position)
 		}
 		provider, providerData = text(p.Name), jsonText(p.Data)
+		altered = altered || !bytes.Equal(providerData, p.Data)
 	}
 	err := s.queries.InsertRunMessage(ctx, db.InsertRunMessageParams{
 		RunID:        text(runID),
@@ -502,6 +534,7 @@ func (s *Store) AppendMessage(ctx context.Context, runID string, position int, m
 		ToolResults:  jsonList(msg.ToolResults),
 		Provider:     provider,
 		ProviderData: providerData,
+		Altered:      altered,
 	})
 	if err != nil {
 		return fmt.Errorf("store: run %s: message %d: %w", runID, position, err)
@@ -541,7 +574,7 @@ func (s *Store) Transcript(ctx context.Context, runID string) ([]TranscriptMessa
 		if row.Provider != "" {
 			msg.Provider = &model.ProviderPart{Name: row.Provider, Data: row.ProviderData}
 		}
-		out[i] = TranscriptMessage{Position: int(row.Position), Message: msg, CreatedAt: row.CreatedAt}
+		out[i] = TranscriptMessage{Position: int(row.Position), Message: msg, Altered: row.Altered, CreatedAt: row.CreatedAt}
 	}
 	return out, nil
 }

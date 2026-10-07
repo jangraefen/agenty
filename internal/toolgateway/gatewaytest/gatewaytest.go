@@ -19,8 +19,9 @@ var _ toolgateway.Tool = (*Tool)(nil)
 // Tool is a fake tool that returns a fixed result and counts its calls.
 type Tool struct {
 	Name string
-	// Description, if set, replaces the generic one.
+	// Description and InputSchema, if set, replace the generic ones.
 	Description string
+	InputSchema json.RawMessage
 	Result      json.RawMessage
 	Err         error
 	// OnCall, if set, runs at the start of every call.
@@ -36,7 +37,7 @@ func (t *Tool) Definition() toolgateway.Definition {
 	return toolgateway.Definition{
 		Name:        t.Name,
 		Description: cmp.Or(t.Description, "fake "+t.Name),
-		InputSchema: json.RawMessage(`{"type":"object"}`),
+		InputSchema: json.RawMessage(cmp.Or(string(t.InputSchema), `{"type":"object"}`)),
 	}
 }
 

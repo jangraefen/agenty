@@ -48,6 +48,7 @@ type Run struct {
 	ConversationID   string
 	Follows          pgtype.Text
 	PromptDigest     string
+	HistoryDigest    string
 }
 
 type RunMessage struct {

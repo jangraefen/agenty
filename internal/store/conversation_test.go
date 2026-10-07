@@ -18,7 +18,7 @@ func TestRuns_Conversation(t *testing.T) {
 	require.NoError(t, s.FinishRun(ctx, "r1", store.RunSucceeded, "ok", 1, ""))
 	require.NoError(t, s.CreateRun(ctx, store.NewRun{ID: "r2", HarnessVersionID: v.ID, Input: "and then?", StartedBy: "bob", Follows: "r1"}))
 	require.NoError(t, s.FinishRun(ctx, "r2", store.RunSucceeded, "ok", 1, ""))
-	require.NoError(t, s.CreateRun(ctx, store.NewRun{ID: "r3", HarnessVersionID: v.ID, Input: "thanks", StartedBy: "alice", Follows: "r2", PromptDigest: "d3"}))
+	require.NoError(t, s.CreateRun(ctx, store.NewRun{ID: "r3", HarnessVersionID: v.ID, Input: "thanks", StartedBy: "alice", Follows: "r2", PromptDigest: "d3", HistoryDigest: "h3"}))
 	newRun(t, s, "other")
 
 	for _, id := range []string{"r1", "r2", "r3"} {
@@ -41,6 +41,7 @@ func TestRuns_Conversation(t *testing.T) {
 	assert.Equal(t, "r2", third.Follows)
 	assert.Equal(t, "thanks", third.Input)
 	assert.Equal(t, "d3", third.PromptDigest)
+	assert.Equal(t, "h3", third.HistoryDigest)
 	assert.Empty(t, first.PromptDigest, "a run stored without a prompt digest has none")
 
 	alone, err := s.Conversation(ctx, ws, "other")

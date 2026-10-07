@@ -248,8 +248,8 @@ func TestInvariant_FollowUpsRedactWithTodaysSecrets(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(sent), token)
 	assert.Contains(t, string(sent), "the token is [redacted]")
-	assert.Empty(t, replayed(m.Requests()[0].Messages),
-		"the second run may have seen the old message as it was, so no reply since is sent in its provider form")
+	assert.Equal(t, []string{"two"}, replayed(m.Requests()[0].Messages),
+		"the first run's messages are sent changed; the second run was sent them as they are now")
 }
 
 // TestFollowUp_RacingFollowUpsDoNotBranch follows up one run many times at

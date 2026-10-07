@@ -107,6 +107,7 @@ func TestAgent_PromptDigest(t *testing.T) {
 		"model":            func(f *fixture) { f.harness.Model.Name = "other" },
 		"grants":           func(f *fixture) { f.harness.Tools = []string{"tickets_read"} },
 		"tool description": func(f *fixture) { f.read.Description = "Reads a ticket." },
+		"tool schema":      func(f *fixture) { f.read.InputSchema = json.RawMessage(`{"type":"object","required":["id"]}`) },
 	}
 	for name, change := range changes {
 		assert.NotEqual(t, same, digest(change), "a change of %s changes the digest", name)
@@ -127,6 +128,8 @@ func TestRun_ShowsCallsOfAToollessHistoryAsText(t *testing.T) {
 	history[1].Text = "Let me look."
 	history[1].Provider = &model.ProviderPart{Name: "scripted", Data: json.RawMessage(`{"thinking":"look it up"}`)}
 	history[2].ToolResults[0].IsError = true
+	history[1].ToolCalls = append(history[1].ToolCalls, model.ToolCall{ID: "c2", Name: "tickets_label"})
+	history[2].ToolResults = append(history[2].ToolResults, model.ToolResult{CallID: "c9", Content: "lost"})
 
 	_, err = a.Start().Continue(context.Background(), history, "what was it?")
 
@@ -134,8 +137,8 @@ func TestRun_ShowsCallsOfAToollessHistoryAsText(t *testing.T) {
 	require.Len(t, m.Requests(), 1)
 	want := []model.Message{
 		history[0],
-		{Role: model.RoleAssistant, Text: "Let me look.\n\n[called tickets_read with {\"id\":7}]"},
-		{Role: model.RoleUser, Text: "[tickets_read failed: {\"title\":\"Printer on fire\"}]"},
+		{Role: model.RoleAssistant, Text: "Let me look.\n\n[called tickets_read with {\"id\":7}]\n\n[called tickets_label with {}]"},
+		{Role: model.RoleUser, Text: "[tickets_read failed: {\"title\":\"Printer on fire\"}]\n\n[a tool returned: lost]"},
 		history[3],
 		{Role: model.RoleUser, Text: "what was it?"},
 	}

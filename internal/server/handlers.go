@@ -160,7 +160,7 @@ func (s handlers) FollowUpRun(c *gin.Context, workspace, id string) {
 			s.failStore(c, err)
 			return
 		}
-		prior[i] = priorRun{digest: r.PromptDigest, messages: messages}
+		prior[i] = priorRun{digest: r.PromptDigest, historyDigest: r.HistoryDigest, messages: messages}
 	}
 	v, err := s.cfg.Store.Harness(ctx, workspace, last.Harness)
 	if err != nil {

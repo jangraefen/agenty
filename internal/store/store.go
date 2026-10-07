@@ -225,9 +225,10 @@ type Run struct {
 	// if any.
 	Follows string
 	// PromptDigest identifies what the run sent the model before the
-	// conversation: its model, instructions and tools. Runs stored before it
-	// was recorded have none.
-	PromptDigest string
+	// conversation: its model, instructions and tools. HistoryDigest
+	// identifies the conversation of earlier runs it sent before its input.
+	// Runs stored before they were recorded have neither.
+	PromptDigest, HistoryDigest string
 }
 
 // NewRun is a run to store.
@@ -240,9 +241,9 @@ type NewRun struct {
 	// Follows, when set, is the ID of the run whose conversation the run
 	// continues.
 	Follows string
-	// PromptDigest identifies what the run sends the model before the
-	// conversation; see Run.PromptDigest.
-	PromptDigest string
+	// PromptDigest and HistoryDigest identify what the run sends the model;
+	// see Run.
+	PromptDigest, HistoryDigest string
 }
 
 // uniqueViolation is PostgreSQL's error code for a violated unique constraint.
@@ -253,7 +254,7 @@ const uniqueViolation = "23505"
 // that another run already follows returns ErrConflict, so a conversation
 // never branches.
 func (s *Store) CreateRun(ctx context.Context, r NewRun) error {
-	err := s.queries.InsertRun(ctx, db.InsertRunParams{ID: r.ID, HarnessVersionID: r.HarnessVersionID, Input: r.Input, StartedBy: r.StartedBy, PromptDigest: r.PromptDigest, Follows: optional(r.Follows)})
+	err := s.queries.InsertRun(ctx, db.InsertRunParams{ID: r.ID, HarnessVersionID: r.HarnessVersionID, Input: r.Input, StartedBy: r.StartedBy, PromptDigest: r.PromptDigest, HistoryDigest: r.HistoryDigest, Follows: optional(r.Follows)})
 	var pgErr *pgconn.PgError
 	switch {
 	case errors.As(err, &pgErr) && pgErr.Code == uniqueViolation && pgErr.ConstraintName == "runs_follows_key":
@@ -365,6 +366,7 @@ func run(row db.Run, harness string, version int32) Run {
 		ConversationID:   row.ConversationID,
 		Follows:          row.Follows.String,
 		PromptDigest:     row.PromptDigest,
+		HistoryDigest:    row.HistoryDigest,
 	}
 }
 

@@ -321,7 +321,7 @@ func (s *Server) start(r newRun) (string, int, error) {
 	s.runs[run.ID()] = hub
 	s.wg.Add(1)
 	s.mu.Unlock()
-	if err := s.cfg.Store.CreateRun(s.ctx, store.NewRun{ID: run.ID(), HarnessVersionID: v.ID, Input: r.input, StartedBy: r.user, Follows: r.follows, PromptDigest: digest}); err != nil {
+	if err := s.cfg.Store.CreateRun(s.ctx, store.NewRun{ID: run.ID(), HarnessVersionID: v.ID, Input: r.input, StartedBy: r.user, Follows: r.follows, PromptDigest: digest, HistoryDigest: historyDigest(history)}); err != nil {
 		s.mu.Lock()
 		delete(s.runs, run.ID())
 		s.mu.Unlock()

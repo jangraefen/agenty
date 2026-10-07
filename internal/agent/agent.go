@@ -130,11 +130,16 @@ func (a *Agent) Tools() []toolgateway.Definition {
 // the conversation: the model, the instructions and the tools. Two agents
 // with the same digest send the same.
 func (a *Agent) PromptDigest() string {
+	type tool struct{ Name, Description, InputSchema string }
 	prompt := struct {
-		Model        harness.Model            `json:"model"`
-		Instructions string                   `json:"instructions"`
-		Tools        []toolgateway.Definition `json:"tools"`
-	}{a.harness.Model, a.harness.Instructions, a.gateway.Definitions()}
+		Model        harness.Model
+		Instructions string
+		Tools        []tool
+	}{Model: a.harness.Model, Instructions: a.harness.Instructions}
+	for _, def := range a.gateway.Definitions() {
+		prompt.Tools = append(prompt.Tools, tool{def.Name, def.Description, string(def.InputSchema)})
+	}
+	// Strings and structs of them always marshal.
 	sum := sha256.Sum256(must.Value(json.Marshal(prompt)))
 	return hex.EncodeToString(sum[:])
 }
@@ -281,7 +286,7 @@ func callsAsText(history []model.Message) []model.Message {
 		}
 		for _, c := range msg.ToolCalls {
 			names[c.ID] = c.Name
-			parts = append(parts, fmt.Sprintf("[called %s with %s]", c.Name, c.Args))
+			parts = append(parts, fmt.Sprintf("[called %s with %s]", c.Name, cmp.Or(string(c.Args), "{}")))
 		}
 		for _, r := range msg.ToolResults {
 			outcome := "returned"

@@ -120,11 +120,11 @@ export interface paths {
         put?: never;
         /**
          * Continue a run's conversation with a new run
-         * @description Starts a run of the same harness version that continues the
-         *     conversation: the model sees the earlier runs' transcripts, as
-         *     stored, with secrets redacted, before the new input. Only the
-         *     conversation's latest run can be followed up, once it has
-         *     succeeded; any other is a conflict.
+         * @description Starts a run of the harness's latest version that continues the
+         *     conversation: the model sees the earlier runs' transcripts, with
+         *     secrets redacted, before the new input. Only the conversation's
+         *     latest run can be followed up, once it has succeeded; any other is
+         *     a conflict.
          */
         post: operations["followUpRun"];
         delete?: never;

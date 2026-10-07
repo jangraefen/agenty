@@ -1,8 +1,10 @@
 package server_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -83,7 +85,7 @@ func TestFollowUp_ContinuesTheConversation(t *testing.T) {
 	}
 }
 
-func TestFollowUp_RunsTheConversationsHarnessVersion(t *testing.T) {
+func TestFollowUp_RunsTheHarnessLatestVersion(t *testing.T) {
 	f := newFixture(t, options{})
 	f.putNotes(t)
 	f.script(modeltest.Reply("ok"))
@@ -97,9 +99,43 @@ func TestFollowUp_RunsTheConversationsHarnessVersion(t *testing.T) {
 	second := f.followUp(t, aliceToken, first.ID, "again")
 	f.finish(t, second.ID)
 
-	assert.Equal(t, 1, second.HarnessVersion, "a conversation keeps the version it started with")
+	assert.Equal(t, 2, second.HarnessVersion, "a follow-up runs the harness as it is now")
 	require.Len(t, m.Requests(), 1)
-	assert.Equal(t, "Tidy the notes.", m.Requests()[0].System)
+	assert.Equal(t, "Shout.", m.Requests()[0].System)
+	assert.Len(t, m.Requests()[0].Messages, 3, "with the conversation so far")
+}
+
+// TestInvariant_FollowUpsCannotRevive guards a trust-model guarantee: a
+// follow-up runs the harness's latest version, so a grant or rule a builder
+// takes away no longer applies to any conversation, however old.
+func TestInvariant_FollowUpsCannotRevive(t *testing.T) {
+	f := newFixture(t, options{})
+	f.putNotes(t)
+	f.script(modeltest.CallTools(call("c1", "files_write", `{"path":"notes.md"}`)), modeltest.Reply("written"))
+	first := f.startRun(t, "write my notes")
+	require.Equal(t, api.RunStatusSucceeded, f.finish(t, first.ID).Status)
+	require.Equal(t, 1, f.write.Calls)
+	tightened := notes()
+	tightened.Tools = []string{"files_read"}
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodPut, home+"/harnesses/notes", tightened, nil))
+	m := f.script(modeltest.CallTools(call("c2", "files_write", `{"path":"notes.md"}`)), modeltest.Reply("could not"))
+
+	second := f.followUp(t, aliceToken, first.ID, "write them again")
+	f.finish(t, second.ID)
+
+	assert.Equal(t, 1, f.write.Calls, "the grant taken away in version 2 does not apply to the follow-up")
+	requests := m.Requests()
+	require.Len(t, requests, 2)
+	var offered []string
+	for _, def := range requests[0].Tools {
+		offered = append(offered, def.Name)
+	}
+	assert.NotContains(t, offered, "files_write")
+	var audit []api.AuditRecord
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+second.ID+"/audit", nil, &audit))
+	require.NotEmpty(t, audit)
+	assert.Equal(t, "files_write", audit[0].Tool)
+	assert.Equal(t, api.DecisionDeny, audit[0].Decision)
 }
 
 func TestFollowUp_Rejects(t *testing.T) {
@@ -119,6 +155,13 @@ func TestFollowUp_Rejects(t *testing.T) {
 	events := f.events(t, running.ID)
 	events.next()
 	events.next()
+	f.script(modeltest.CallTools(call("c2", "files_write", `{}`)))
+	cancelled := f.startRun(t, "five")
+	waiting := f.events(t, cancelled.ID)
+	waiting.next()
+	waiting.next()
+	require.Equal(t, http.StatusAccepted, f.do(t, http.MethodPost, home+"/runs/"+cancelled.ID+"/cancel", nil, nil))
+	require.Equal(t, api.RunStatusCancelled, f.finish(t, cancelled.ID).Status)
 
 	tests := []struct {
 		name, path string
@@ -132,6 +175,7 @@ func TestFollowUp_Rejects(t *testing.T) {
 		{"a run already followed up", home + "/runs/" + done.ID + "/follow-up", api.FollowUp{Input: "x"}, http.StatusConflict, "already followed"},
 		{"a failed run", home + "/runs/" + failed.ID + "/follow-up", api.FollowUp{Input: "x"}, http.StatusConflict, "only a run that succeeded"},
 		{"a running run", home + "/runs/" + running.ID + "/follow-up", api.FollowUp{Input: "x"}, http.StatusConflict, "only a run that succeeded"},
+		{"a cancelled run", home + "/runs/" + cancelled.ID + "/follow-up", api.FollowUp{Input: "x"}, http.StatusConflict, "only a run that succeeded"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -175,4 +219,73 @@ func TestInvariant_FollowUpsNeverShowTheModelACredential(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(sent), token)
 	assert.Contains(t, string(sent), "[redacted]")
+}
+
+// TestInvariant_FollowUpsRedactWithTodaysSecrets guards trust-model
+// guarantee 5 for transcripts stored before a secret was configured: a
+// follow-up redacts the history again, with the secrets known now.
+func TestInvariant_FollowUpsRedactWithTodaysSecrets(t *testing.T) {
+	f := newFixture(t, options{})
+	f.putNotes(t)
+	f.script(modeltest.Reply("ok"))
+	first := f.startRun(t, "remember it")
+	require.Equal(t, api.RunStatusSucceeded, f.finish(t, first.ID).Status)
+	// As a transcript stored before the token was a configured secret has it.
+	ctx := context.Background()
+	require.NoError(t, f.store.AppendMessage(ctx, first.ID, 2, model.Message{Role: model.RoleUser, Text: "the token is " + token}))
+	require.NoError(t, f.store.AppendMessage(ctx, first.ID, 3, model.Message{Role: model.RoleAssistant, Text: "noted: " + token}))
+	m := f.script(modeltest.Reply("ok"))
+
+	second := f.followUp(t, aliceToken, first.ID, "what was it?")
+	f.finish(t, second.ID)
+
+	require.Len(t, m.Requests(), 1)
+	sent, err := json.Marshal(m.Requests()[0].Messages)
+	require.NoError(t, err)
+	assert.NotContains(t, string(sent), token)
+	assert.Contains(t, string(sent), "the token is [redacted]")
+}
+
+// TestFollowUp_RacingFollowUpsDoNotBranch follows up one run many times at
+// once: exactly one follow-up starts, and the others are told to follow up
+// the conversation's latest run instead.
+func TestFollowUp_RacingFollowUpsDoNotBranch(t *testing.T) {
+	f := newFixture(t, options{})
+	f.putNotes(t)
+	f.script(modeltest.Reply("ok"))
+	first := f.startRun(t, "one")
+	f.finish(t, first.ID)
+	const racers = 8
+	steps := make([]modeltest.Step, racers)
+	for i := range steps {
+		steps[i] = modeltest.Reply("ok")
+	}
+	f.script(steps...)
+
+	statuses := make([]int, racers)
+	errs := make([]api.Error, racers)
+	var wg sync.WaitGroup
+	for i := range racers {
+		wg.Go(func() {
+			statuses[i] = f.do(t, http.MethodPost, home+"/runs/"+first.ID+"/follow-up", api.FollowUp{Input: "two"}, &errs[i])
+		})
+	}
+	wg.Wait()
+
+	var started int
+	for i, status := range statuses {
+		switch status {
+		case http.StatusCreated:
+			started++
+		case http.StatusConflict:
+			assert.Contains(t, errs[i].Error, "is already followed up")
+			assert.NotContains(t, errs[i].Error, "store:", "the store's own wording stays out of the answer")
+		default:
+			t.Errorf("follow-up %d: status %d", i, status)
+		}
+	}
+	assert.Equal(t, 1, started)
+	var conversation []api.Run
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+first.ID+"/conversation", nil, &conversation))
+	assert.Len(t, conversation, 2)
 }

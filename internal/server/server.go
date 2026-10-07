@@ -327,7 +327,9 @@ func (s *Server) start(r newRun) (string, int, error) {
 		cancel(nil)
 		status := http.StatusInternalServerError
 		if errors.Is(err, store.ErrConflict) {
+			// Another follow-up of the same run was stored first.
 			status = http.StatusConflict
+			err = fmt.Errorf("run %s is already followed up; follow up the conversation's latest run", r.follows)
 		}
 		return "", status, errors.Join(err, a.Close())
 	}

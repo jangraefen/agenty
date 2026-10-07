@@ -126,8 +126,9 @@ func (s handlers) startRun(c *gin.Context, workspace string, r newRun) {
 
 // FollowUpRun starts a run that continues the conversation of a run, the
 // conversation's latest, which must have succeeded. The new run runs the
-// same harness version, and the model sees the conversation as stored, so
-// with secrets redacted.
+// harness's latest version, so grants and rules taken away since apply to
+// no conversation. The model sees the conversation as stored, redacted
+// again with the secrets known now.
 func (s handlers) FollowUpRun(c *gin.Context, workspace, id string) {
 	var req api.FollowUp
 	if err := decode(c, &req); err != nil {
@@ -161,10 +162,10 @@ func (s handlers) FollowUpRun(c *gin.Context, workspace, id string) {
 			return
 		}
 		for _, m := range messages {
-			history = append(history, m.Message)
+			history = append(history, redactMessage(s.cfg.Resolved.Redactor, m.Message))
 		}
 	}
-	v, err := s.cfg.Store.HarnessVersionByID(ctx, last.HarnessVersionID)
+	v, err := s.cfg.Store.Harness(ctx, workspace, last.Harness)
 	if err != nil {
 		s.failStore(c, err)
 		return
@@ -172,6 +173,8 @@ func (s handlers) FollowUpRun(c *gin.Context, workspace, id string) {
 	s.startRun(c, workspace, newRun{version: v, input: req.Input, user: c.GetString(userKey), follows: last.ID, history: history})
 }
 
+// GetRunConversation lists the runs of the conversation a run belongs to,
+// oldest first.
 func (s handlers) GetRunConversation(c *gin.Context, workspace, id string) {
 	runs, err := s.cfg.Store.Conversation(c.Request.Context(), workspace, id)
 	if err != nil {

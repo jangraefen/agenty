@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 
 	"github.com/jangraefen/agenty/internal/must"
 	"github.com/jangraefen/agenty/internal/secret"
@@ -140,11 +141,17 @@ type Server struct {
 	// StartedAs holds the name of every start.
 	StartedAs []string
 	Closed    int
+
+	// mu guards StartedAs and Closed while runs start and stop concurrently;
+	// tests read them once the runs are over.
+	mu sync.Mutex
 }
 
 // Start records the start and returns a session, or StartErr.
 func (s *Server) Start(ctx context.Context, name string) (toolgateway.ToolSession, error) {
+	s.mu.Lock()
 	s.StartedAs = append(s.StartedAs, name)
+	s.mu.Unlock()
 	if s.OnStart != nil {
 		if err := s.OnStart(ctx); err != nil {
 			return nil, err
@@ -170,7 +177,9 @@ func (s *session) Close() error {
 	if s.server.OnClose != nil {
 		s.server.OnClose()
 	}
+	s.server.mu.Lock()
 	s.server.Closed++
+	s.server.mu.Unlock()
 	return s.server.CloseErr
 }
 

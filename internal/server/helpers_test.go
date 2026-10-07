@@ -72,6 +72,9 @@ type options struct {
 	// models.
 	configuredModel bool
 	approvalTimeout time.Duration
+	// serverIdleTimeout is the files server's idle timeout; unset means the
+	// default.
+	serverIdleTimeout *time.Duration
 }
 
 func newFixture(t *testing.T, opts options) *fixture {
@@ -95,7 +98,7 @@ func newFixture(t *testing.T, opts options) *fixture {
 	f.server, err = server.New(context.Background(), server.Config{
 		Store: f.store,
 		Operator: &config.Config{
-			MCPServers: map[string]config.MCPServer{"files": {Command: "unused"}},
+			MCPServers: map[string]config.MCPServer{"files": {Command: "unused", IdleTimeout: opts.serverIdleTimeout}},
 			Policy:     opts.policy,
 			Workspaces: map[string]config.Workspace{
 				"home": {Members: []string{"alice", "bob"}},

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -460,7 +461,7 @@ func TestInvariant_InterruptedCallsAreNotRepeated(t *testing.T) {
 		{Role: model.RoleAssistant, ToolCalls: calls},
 		{Role: model.RoleUser, ToolResults: []model.ToolResult{{CallID: "c1", Content: interrupted, IsError: true}, {CallID: "c2", Content: interrupted, IsError: true}}},
 		{Role: model.RoleAssistant, Text: "[This turn ended without an answer: the run failed.]"},
-		{Role: model.RoleUser, Text: "did it work?"},
+		{Role: model.RoleUser, Text: "[The tool server files was started anew since this conversation last used it: what it held from earlier, such as open files or pages, is gone.]\n\ndid it work?"},
 	}
 	assert.Equal(t, want, m.Requests()[0].Messages)
 }
@@ -469,73 +470,54 @@ func TestInvariant_InterruptedCallsAreNotRepeated(t *testing.T) {
 // recorded.
 const interrupted = "The run ended before this call's result was recorded: it may or may not have run. Check before repeating it."
 
-// TestInvariant_FollowUpsOfEndedRunsNeverShowTheModelACredential extends
-// trust-model guarantee 5 to the runs a follow-up completes: a run that
-// failed before even its input was stored is sent as its input, which a
-// user may have pasted a secret into, redacted like the rest.
-func TestInvariant_FollowUpsOfEndedRunsNeverShowTheModelACredential(t *testing.T) {
+func TestFollowUp_UsesTheConversationsServers(t *testing.T) {
 	f := newFixture(t, options{})
 	f.putNotes(t)
-	ctx := context.Background()
-	v, err := f.store.Harness(ctx, "home", "notes")
-	require.NoError(t, err)
-	require.NoError(t, f.store.CreateRun(ctx, store.NewRun{ID: "lost", HarnessVersionID: v.ID, Input: "use " + token, StartedBy: "alice"}))
-	require.NoError(t, f.store.FinishRun(ctx, "lost", store.RunFailed, "", 0, "transcript down: "+token))
-	m := f.script(modeltest.Reply("ok"))
-
-	second := f.followUp(t, aliceToken, "lost", "again")
-	f.finish(t, second.ID)
-
-	require.Len(t, m.Requests(), 1)
-	want := []model.Message{
-		{Role: model.RoleUser, Text: "use [redacted]"},
-		{Role: model.RoleAssistant, Text: "[This turn ended without an answer: the run failed.]"},
-		{Role: model.RoleUser, Text: "again"},
-	}
-	assert.Equal(t, want, m.Requests()[0].Messages)
-}
-
-func TestFollowUp_ContinuesAfterTheStepLimit(t *testing.T) {
-	f := newFixture(t, options{})
-	limited := notes()
-	limited.Limits.MaxSteps = 1
-	require.Equal(t, http.StatusOK, f.do(t, http.MethodPut, home+"/harnesses/notes", limited, nil))
-	f.script(modeltest.CallTools(call("c1", "files_read", `{"path":"notes.md"}`)))
+	f.script(modeltest.CallTools(call("c1", "files_read", `{"path":"notes.md"}`)), modeltest.Reply("- milk"))
 	first := f.startRun(t, "tidy my notes")
-	require.Equal(t, api.RunStatusFailed, f.finish(t, first.ID).Status)
-	m := f.script(modeltest.Reply("ok"))
+	f.finish(t, first.ID)
+	m := f.script(modeltest.Reply("sorted"))
 
-	second := f.followUp(t, aliceToken, first.ID, "go on")
+	second := f.followUp(t, aliceToken, first.ID, "and sort them")
 	f.finish(t, second.ID)
 
-	assert.Zero(t, f.read.Calls)
+	assert.Equal(t, []string{"files"}, f.files.StartedAs, "the follow-up uses the server the conversation started")
 	require.Len(t, m.Requests(), 1)
-	sent := m.Requests()[0].Messages
-	require.Len(t, sent, 5)
-	assert.Equal(t, []model.ToolResult{{CallID: "c1", Content: "Not run: the run reached its limit of 1 step.", IsError: true}}, sent[2].ToolResults)
-	assert.Equal(t, "[This turn ended without an answer: the run failed.]", sent[3].Text)
+	assert.Equal(t, model.Message{Role: model.RoleUser, Text: "and sort them"}, m.Requests()[0].Messages[4], "nothing was lost")
+	f.script(modeltest.Reply("ok"))
+	other := f.startRun(t, "something else")
+	f.finish(t, other.ID)
+	assert.Len(t, f.files.StartedAs, 2, "another conversation has a server of its own")
+
+	f.server.Close()
+	assert.Equal(t, 2, f.files.ClosedCount(), "a stopping server stops the kept servers")
 }
 
-// TestFollowUp_KeepsProviderFormsAcrossAnEndedRun: the completion of an
-// ended run is the same for every follow-up, so the replies since it keep
-// their provider forms.
-func TestFollowUp_KeepsProviderFormsAcrossAnEndedRun(t *testing.T) {
-	f := newFixture(t, options{})
+// TestFollowUp_TellsTheModelWhatAServerLost: a conversation's server that
+// was stopped, here at the end of each run, starts anew for the next run,
+// without what it held, and the model is told so with the input, if the
+// conversation used it.
+func TestFollowUp_TellsTheModelWhatAServerLost(t *testing.T) {
+	f := newFixture(t, options{serverIdleTimeout: new(time.Duration(0))})
 	f.putNotes(t)
-	f.script(modeltest.Step{Response: model.Message{
-		Role: model.RoleAssistant, ToolCalls: []model.ToolCall{call("c1", "files_read", `{}`)},
-		Provider: &model.ProviderPart{Name: "scripted", Data: json.RawMessage(`{"thinking":"one"}`)},
-	}}, modeltest.Fail(errors.New("overloaded")))
-	first := f.startRun(t, "one")
-	require.Equal(t, api.RunStatusFailed, f.finish(t, first.ID).Status)
-	f.script(thought("two"))
-	second := f.followUp(t, aliceToken, first.ID, "two")
+	f.script(modeltest.Reply("hello"))
+	first := f.startRun(t, "hi")
+	f.finish(t, first.ID)
+	f.script(modeltest.CallTools(call("c1", "files_read", `{"path":"notes.md"}`)), modeltest.Reply("- milk"))
+	second := f.followUp(t, aliceToken, first.ID, "read my notes")
 	f.finish(t, second.ID)
-	m := f.script(modeltest.Reply("ok"))
+	m := f.script(modeltest.Reply("sorted"))
 
-	third := f.followUp(t, aliceToken, second.ID, "three")
+	third := f.followUp(t, aliceToken, second.ID, "and sort them")
 	f.finish(t, third.ID)
 
+	assert.Len(t, f.files.StartedAs, 3)
 	require.Len(t, m.Requests(), 1)
-	assert.Equal(t, []string{"", "two"}, replayed(m.Requests()[0].Messages))
+	sent := m.Requests()[0].Messages
+	assert.Equal(t, "read my notes", sent[2].Text, "the conversation had not used the server before")
+	want := "[The tool server files was started anew since this conversation last used it: what it held from earlier, such as open files or pages, is gone.]\n\nand sort them"
+	assert.Equal(t, want, sent[len(sent)-1].Text)
+	var stored api.Run
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+third.ID, nil, &stored))
+	assert.Equal(t, "and sort them", stored.Input, "the run's input is the user's")
 }

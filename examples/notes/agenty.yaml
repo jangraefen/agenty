@@ -17,6 +17,9 @@ mcp_servers:
   files:
     command: npx
     args: [-y, "@modelcontextprotocol/server-filesystem@2026.8.31", ./sandbox]
+    # A conversation's server keeps running this long after its last run, so
+    # the next one finds what it held; 0s stops it with each run.
+    idle_timeout: 15m
 # Who may use the API. Each user signs in with a bearer token of at least 32
 # characters, read from the environment, such as one from: openssl rand -hex 32
 users:

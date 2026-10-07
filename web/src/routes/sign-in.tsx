@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
-import { type FormEvent, useId, useState } from "react";
+import { type FormEvent, useId } from "react";
 import { ApiError, unwrap } from "@/api/client";
 import { meQuery } from "@/api/queries";
 import { Button } from "@/components/ui/button";
@@ -20,7 +20,6 @@ function SignIn() {
   const { api, session } = Route.useRouteContext();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const [token, setToken] = useState("");
   const id = useId();
 
   const signIn = useMutation({
@@ -42,7 +41,8 @@ function SignIn() {
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    signIn.mutate(token.trim());
+    const token = new FormData(event.currentTarget).get("token");
+    signIn.mutate(typeof token === "string" ? token.trim() : "");
   }
 
   const error = signIn.isError ? signInError(signIn.error) : null;
@@ -60,8 +60,9 @@ function SignIn() {
           type="password"
           autoComplete="off"
           required
-          value={token}
-          onChange={(event) => setToken(event.target.value)}
+          // Uncontrolled, so the token never becomes the field's value
+          // attribute, which a style could match character by character.
+          name="token"
           aria-invalid={signIn.isError}
           aria-describedby={signIn.isError ? `${id}-error` : undefined}
         />

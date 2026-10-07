@@ -54,6 +54,19 @@ describe("signing in", () => {
     expect(await screen.findByLabelText("Token")).toHaveAttribute("type", "password");
   });
 
+  test("the typed token never appears in the page's markup", async () => {
+    const { user } = renderApp("/sign-in", null);
+
+    const field = await screen.findByLabelText("Token");
+    await user.type(field, TOKEN);
+
+    // A style, which the policy allows inline, could match the value
+    // attribute character by character and request a URL for each.
+    expect(field).toHaveValue(TOKEN);
+    expect(field).not.toHaveAttribute("value");
+    expect(document.documentElement.outerHTML).not.toContain(TOKEN);
+  });
+
   test("an invalid token is refused and not stored", async () => {
     server.use(meHandler({ user: "demo", workspaces: ["notes"] }));
     const { session, user } = renderApp("/sign-in", null);

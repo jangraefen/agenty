@@ -43,13 +43,16 @@ const configYAML = `provider:
     max_tokens: 1024
     base_url: %s
 mcp_servers:
+  # Servers that stop with each run, as these tests check.
   files:
     command: files-mcp
     args: [--root, sandbox]
     env:
       FILES_TOKEN: {env: FILES_TOKEN}
+    idle_timeout: 0s
   mail:
     command: mail-mcp
+    idle_timeout: 0s
 users:
   alice:
     token: {env: ALICE_TOKEN}

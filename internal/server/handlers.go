@@ -168,7 +168,7 @@ func (s handlers) FollowUpRun(c *gin.Context, workspace, id string) {
 		s.failStore(c, err)
 		return
 	}
-	s.startRun(c, workspace, newRun{version: v, input: req.Input, user: c.GetString(userKey), follows: last.ID, prior: prior})
+	s.startRun(c, workspace, newRun{version: v, input: req.Input, user: c.GetString(userKey), follows: last.ID, conversation: last.ConversationID, prior: prior})
 }
 
 // GetRunConversation lists the runs of the conversation a run belongs to,

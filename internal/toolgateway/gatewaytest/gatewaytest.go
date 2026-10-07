@@ -151,6 +151,13 @@ type Server struct {
 	mu sync.Mutex
 }
 
+// ClosedCount returns Closed, for reading while sessions may still close.
+func (s *Server) ClosedCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Closed
+}
+
 // Start records the start and returns a session, or StartErr.
 func (s *Server) Start(ctx context.Context, name string) (toolgateway.ToolSession, error) {
 	s.mu.Lock()

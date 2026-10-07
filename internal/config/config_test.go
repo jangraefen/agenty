@@ -32,8 +32,12 @@ func TestLoad_Valid(t *testing.T) {
 				"TICKETS_TOKEN": {Env: "TICKETS_TOKEN"},
 				"LOG_LEVEL":     {Value: "info"},
 			},
+			IdleTimeout: new(5 * time.Minute),
 		},
 	}, got.MCPServers)
+	assert.Equal(t, 5*time.Minute, got.MCPServers["tickets"].IdleTimeoutOrDefault())
+	assert.Equal(t, config.DefaultMCPIdleTimeout, config.MCPServer{}.IdleTimeoutOrDefault())
+	assert.Zero(t, config.MCPServer{IdleTimeout: new(time.Duration(0))}.IdleTimeoutOrDefault(), "zero stops a server with each run")
 	assert.Equal(t, map[string]config.User{
 		"alice": {Token: config.Value{Env: "ALICE_TOKEN"}},
 		"bob":   {Token: config.Value{Env: "BOB_TOKEN"}},
@@ -94,6 +98,7 @@ func TestLoad_InvalidFields(t *testing.T) {
 		{"api key with neither", "provider: {anthropic: {api_key: {}, max_tokens: 1}}", []string{"provider.anthropic.api_key"}},
 		{"mcp server without command", "provider: {anthropic: {api_key: {env: K}, max_tokens: 1}}\nmcp_servers: {tickets: {}}", []string{"mcp_servers.tickets.command"}},
 		{"mcp server env value with neither", "provider: {anthropic: {api_key: {env: K}, max_tokens: 1}}\nmcp_servers: {tickets: {command: x, env: {TOKEN: {}}}}", []string{"mcp_servers.tickets.env.TOKEN"}},
+		{"negative mcp server idle timeout", provider + "mcp_servers: {tickets: {command: x, idle_timeout: -1m}}", []string{"mcp_servers.tickets.idle_timeout"}},
 		{"database url with neither", "provider: {anthropic: {api_key: {env: K}, max_tokens: 1}}\ndatabase: {url: {}}", []string{"database.url"}},
 		{"empty policy file name", "provider: {anthropic: {api_key: {env: K}, max_tokens: 1}}\npolicy: {files: [\"\"]}", []string{"policy.files[0]"}},
 		{"missing policy file", "provider: {anthropic: {api_key: {env: K}, max_tokens: 1}}\npolicy: {files: [nope.rego]}", []string{"policy.files[0]"}},

@@ -160,7 +160,7 @@ func TestRun_SucceedsAndStreamsItsEvents(t *testing.T) {
 	require.Len(t, audit, 2)
 	assert.Equal(t, decision, audit[0])
 	assert.Equal(t, []string{"files"}, f.files.StartedAs)
-	assert.Equal(t, 1, f.files.Closed, "the run's MCP servers stop when it ends")
+	assert.Zero(t, f.files.ClosedCount(), "the run's MCP servers are kept for its conversation")
 
 	replay := f.events(t, run.ID).rest()
 	assert.Equal(t, events, replay, "a finished run's events are replayed from the store")
@@ -436,7 +436,8 @@ func TestRun_WithTheConfiguredAnthropicProvider(t *testing.T) {
 }
 
 func TestRun_GatewayStopsAToolServerThatDoesNotStop(t *testing.T) {
-	f := newFixture(t, options{})
+	// A server that is not kept stops with its run.
+	f := newFixture(t, options{serverIdleTimeout: new(time.Duration(0))})
 	f.files.CloseErr = errors.New("still running")
 	f.putNotes(t)
 	f.script(modeltest.Reply("done"))

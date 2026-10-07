@@ -86,6 +86,22 @@ type MCPServer struct {
 	Command string           `yaml:"command"`
 	Args    []string         `yaml:"args"`
 	Env     map[string]Value `yaml:"env"`
+	// IdleTimeout is how long a conversation's server keeps running after
+	// the conversation's last run, so the next run finds what it held. Unset
+	// means DefaultMCPIdleTimeout; zero stops it with each run.
+	IdleTimeout *time.Duration `yaml:"idle_timeout"`
+}
+
+// DefaultMCPIdleTimeout is an MCP server's idle timeout when none is
+// configured.
+const DefaultMCPIdleTimeout = 15 * time.Minute
+
+// IdleTimeoutOrDefault returns the server's idle timeout.
+func (s MCPServer) IdleTimeoutOrDefault() time.Duration {
+	if s.IdleTimeout == nil {
+		return DefaultMCPIdleTimeout
+	}
+	return *s.IdleTimeout
 }
 
 // User is a person who may use the API.
@@ -219,6 +235,9 @@ func (f *file) validate() error {
 	}
 	for _, name := range slices.Sorted(maps.Keys(f.MCPServers)) {
 		srv := f.MCPServers[name]
+		if srv.IdleTimeout != nil && *srv.IdleTimeout < 0 {
+			add("mcp_servers."+name+".idle_timeout", "must not be negative")
+		}
 		if srv.Command == "" {
 			add("mcp_servers."+name+".command", "is required")
 		}

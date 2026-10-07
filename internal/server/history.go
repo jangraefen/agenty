@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"hash"
 	"slices"
+	"strings"
 
 	"github.com/jangraefen/agenty/internal/model"
 	"github.com/jangraefen/agenty/internal/must"
@@ -145,6 +146,31 @@ func ended(r store.Run, messages []store.TranscriptMessage) []store.TranscriptMe
 		note.Text = endedCancelled
 	}
 	return append(messages, store.TranscriptMessage{Message: note})
+}
+
+// withLostState returns input, for the model, after a note naming the tool
+// servers that were started anew for the run although the conversation used
+// them before, from history: what they held, which the earlier turns may
+// describe, is gone. The note is part of the input the run's transcript
+// records, not of the run's input as users see it; a run whose transcript
+// was lost is continued with the latter.
+func withLostState(input string, fresh []string, history []model.Message) string {
+	var lost []string
+	for _, server := range fresh {
+		used := slices.ContainsFunc(history, func(m model.Message) bool {
+			return slices.ContainsFunc(m.ToolCalls, func(c model.ToolCall) bool { return strings.HasPrefix(c.Name, server+"_") })
+		})
+		if used {
+			lost = append(lost, server)
+		}
+	}
+	switch len(lost) {
+	case 0:
+		return input
+	case 1:
+		return "[The tool server " + lost[0] + " was started anew since this conversation last used it: what it held from earlier, such as open files or pages, is gone.]\n\n" + input
+	}
+	return "[The tool servers " + strings.Join(lost, ", ") + " were started anew since this conversation last used them: what they held from earlier, such as open files or pages, is gone.]\n\n" + input
 }
 
 // historyDigest identifies a history as it is sent to the model.

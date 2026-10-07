@@ -10,6 +10,7 @@ mcp_servers:
   tickets:
     command: tickets-mcp
     args: [--stdio]
+    idle_timeout: 5m
     env:
       TICKETS_TOKEN: {env: TICKETS_TOKEN}
       LOG_LEVEL: {value: info}

@@ -7,6 +7,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -63,6 +64,8 @@ type Server struct {
 
 	// tokens maps each user's token, as a SHA-256 hash, to the user.
 	tokens []userToken
+	// pool keeps the MCP servers of each conversation between its runs.
+	pool *toolgateway.Pool
 
 	mu sync.Mutex
 	// closed is set by Close; no run starts after it.
@@ -114,8 +117,15 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		cfg.Logger.Warn("marked runs of an earlier server as failed", "runs", n)
 	}
 
+	idleTimeout := make(map[string]time.Duration, len(cfg.Operator.MCPServers))
+	for name, srv := range cfg.Operator.MCPServers {
+		idleTimeout[name] = srv.IdleTimeoutOrDefault()
+	}
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	s := &Server{cfg: cfg, ctx: runCtx, cancel: cancel, runs: map[string]*hub{}, tokens: hashTokens(cfg.Resolved.UserTokens)}
+	s := &Server{
+		cfg: cfg, ctx: runCtx, cancel: cancel, runs: map[string]*hub{}, tokens: hashTokens(cfg.Resolved.UserTokens),
+		pool: toolgateway.NewPool(idleTimeout, cfg.Logger),
+	}
 	s.engine = s.routes()
 	return s, nil
 }
@@ -125,14 +135,18 @@ func (s *Server) Handler() http.Handler {
 	return s.engine
 }
 
-// Close cancels every run and waits until each has been recorded as finished.
-// Event streams end with it, and no run starts after it.
+// Close cancels every run and waits until each has been recorded as finished,
+// then stops the MCP servers kept for conversations. Event streams end with
+// it, and no run starts after it.
 func (s *Server) Close() {
 	s.mu.Lock()
 	s.closed = true
 	s.mu.Unlock()
 	s.cancel()
 	s.wg.Wait()
+	if err := s.pool.Close(); err != nil {
+		s.cfg.Logger.Error("cannot stop the MCP servers of conversations", "error", s.cfg.Resolved.Redactor.String(err.Error()))
+	}
 }
 
 func (s *Server) routes() *gin.Engine {
@@ -265,16 +279,19 @@ type newRun struct {
 	// user is who starts the run.
 	user string
 	// follows, if set, is the ID of the run whose conversation the run
-	// continues, and prior are that conversation's runs so far.
-	follows string
-	prior   []priorRun
+	// continues, conversation names that conversation, and prior are its
+	// runs so far.
+	follows, conversation string
+	prior                 []priorRun
 }
 
 // start builds an agent for the run's harness version, which starts the MCP
-// servers it needs, stores the run, and executes it in the background. On
-// error it also returns the status to respond with: 422 for a harness that
-// cannot run, 409 for a run that another run already follows, 503 when the
-// server is stopping, 500 otherwise.
+// servers it needs or takes those its conversation keeps, stores the run,
+// and executes it in the background. A run that does not go ahead gives
+// the conversation back the servers it took. On error it also returns the
+// status to respond with: 422 for a harness that cannot run, 409 for a run
+// that another run already follows, 503 when the server is stopping, 500
+// otherwise.
 func (s *Server) start(r newRun) (string, int, error) {
 	v := r.version
 	h := v.Harness
@@ -291,10 +308,11 @@ func (s *Server) start(r newRun) (string, int, error) {
 		timeout = config.DefaultApprovalTimeout
 	}
 	hub := newHub(v.Workspace, h.Name, timeout)
+	lease := s.pool.Lease(r.conversation, servers)
 	a, err := agent.New(s.ctx, agent.Config{
 		Harness:    &h,
 		Model:      m,
-		Servers:    servers,
+		Servers:    lease.Servers(),
 		Policy:     s.cfg.Operator.Policy,
 		Approver:   hub,
 		Audit:      runAudit{store: s.cfg.Store, hub: hub},
@@ -302,7 +320,7 @@ func (s *Server) start(r newRun) (string, int, error) {
 		Transcript: runTranscript{store: s.cfg.Store, redact: s.cfg.Resolved.Redactor},
 	})
 	if err != nil {
-		return "", http.StatusUnprocessableEntity, err
+		return "", http.StatusUnprocessableEntity, errors.Join(err, lease.Return())
 	}
 	digest := a.PromptDigest()
 	history := conversationHistory(s.cfg.Resolved.Redactor, r.prior, digest)
@@ -317,7 +335,7 @@ func (s *Server) start(r newRun) (string, int, error) {
 	if s.closed {
 		s.mu.Unlock()
 		cancel(nil)
-		return "", http.StatusServiceUnavailable, errors.Join(errClosed, a.Close())
+		return "", http.StatusServiceUnavailable, errors.Join(errClosed, a.Close(), lease.Return())
 	}
 	s.runs[run.ID()] = hub
 	s.wg.Add(1)
@@ -334,14 +352,25 @@ func (s *Server) start(r newRun) (string, int, error) {
 			status = http.StatusConflict
 			err = fmt.Errorf("run %s is already followed up; follow up the conversation's latest run", r.follows)
 		}
-		return "", status, errors.Join(err, a.Close())
+		return "", status, errors.Join(err, a.Close(), lease.Return())
 	}
+	conversation := cmp.Or(r.conversation, run.ID())
 	go func() {
 		defer s.wg.Done()
 		defer cancel(nil)
-		s.execute(runCtx, a, run, hub, history, r.input)
+		s.execute(runCtx, a, lease, conversation, run, hub, history, withLostState(r.input, lease.Fresh(), history))
 	}()
 	return run.ID(), 0, nil
+}
+
+// keep keeps the run's servers for its conversation, unless the run was
+// cancelled: a call may still be running in a server then, which stopping
+// the server ends.
+func keep(ctx context.Context, lease *toolgateway.Lease, conversation string) error {
+	if ctx.Err() != nil {
+		return lease.Close()
+	}
+	return lease.Keep(conversation)
 }
 
 // cancelledBy is the cause of a run's cancellation by a user: the user.
@@ -349,10 +378,12 @@ type cancelledBy string
 
 func (u cancelledBy) Error() string { return "cancelled by " + string(u) }
 
-// execute runs the agent on ctx, after history, stops its MCP servers,
-// records how the run ended, and publishes that as the run's last event. A
-// run that fails after a user cancelled it ended as cancelled.
-func (s *Server) execute(ctx context.Context, a *agent.Agent, run *agent.Run, hub *hub, history []model.Message, input string) {
+// execute runs the agent on ctx, after history, keeps its MCP servers for
+// the conversation, records how the run ended, and publishes that as the
+// run's last event. The servers are kept before, so a follow-up the end
+// allows finds them. A run that fails after a user cancelled it ended as
+// cancelled.
+func (s *Server) execute(ctx context.Context, a *agent.Agent, lease *toolgateway.Lease, conversation string, run *agent.Run, hub *hub, history []model.Message, input string) {
 	defer func() {
 		s.mu.Lock()
 		delete(s.runs, run.ID())
@@ -360,7 +391,7 @@ func (s *Server) execute(ctx context.Context, a *agent.Agent, run *agent.Run, hu
 	}()
 	redact := s.cfg.Resolved.Redactor
 	res, runErr := run.Continue(ctx, history, input)
-	err := errors.Join(runErr, a.Close())
+	err := errors.Join(runErr, a.Close(), keep(ctx, lease, conversation))
 	status, errMsg := store.RunSucceeded, ""
 	var by cancelledBy
 	switch {

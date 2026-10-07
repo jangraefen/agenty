@@ -2,18 +2,15 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, notFound, Outlet, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { approvalsQuery } from "@/api/queries";
-import { loadMe } from "@/auth/load-me";
 import { Button } from "@/components/ui/button";
 
 // A workspace's pages, under a header to switch workspaces and sign out. The
 // membership check runs before any of the pages loads its data.
 export const Route = createFileRoute("/_authed/w/$workspace")({
-  beforeLoad: async ({ context, params }) => {
-    const me = await loadMe(context);
-    if (!me.workspaces.includes(params.workspace)) {
+  beforeLoad: ({ context, params }) => {
+    if (!context.me.workspaces.includes(params.workspace)) {
       throw notFound();
     }
-    return { me };
   },
   component: WorkspaceLayout,
   notFoundComponent: WorkspaceNotFound,

@@ -27,9 +27,13 @@ export const Route = createFileRoute("/_authed/w/$workspace/runs/")({
   validateSearch: runFilters,
   loaderDeps: ({ search }) => runFilters(search),
   // Prefetched, not required: the page shows its filters, and polls, also
-  // when the runs cannot be loaded.
+  // when the runs cannot be loaded. Only when none are cached: the page
+  // refreshes cached ones itself, and preloading on intent fetches nothing.
   loader: ({ context: { queryClient, api }, params, deps }) =>
-    queryClient.prefetchInfiniteQuery(runsQuery(api, params.workspace, deps)),
+    queryClient.prefetchInfiniteQuery({
+      ...runsQuery(api, params.workspace, deps),
+      staleTime: Number.POSITIVE_INFINITY,
+    }),
   component: Runs,
 });
 

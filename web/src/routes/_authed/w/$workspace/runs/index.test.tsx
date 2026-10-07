@@ -117,6 +117,37 @@ describe("the runs page", () => {
     expect(history.location.search).toContain("status=failed");
   });
 
+  test("pointing at the header's links fetches nothing already loaded", async () => {
+    const queries: URLSearchParams[] = [];
+    let approvals = 0;
+    server.use(
+      runsHandler({ "": { runs: [run()] } }, queries),
+      http.get(`${apiUrl}/v1/workspaces/notes/approvals`, () => {
+        approvals += 1;
+        return HttpResponse.json([]);
+      }),
+    );
+    const { user } = renderApp("/w/notes/runs", TOKEN);
+    await screen.findByRole("table", { name: "Runs" });
+    const pages = screen.getByRole("navigation", { name: "Pages" });
+    await user.click(within(pages).getByRole("link", { name: "Approvals" }));
+    await screen.findByText("Nothing is waiting for approval.");
+    await user.click(within(pages).getByRole("link", { name: "Harnesses" }));
+    await screen.findByRole("heading", { name: "Harnesses" });
+    const [runsBefore, approvalsBefore] = [queries.length, approvals];
+
+    for (const name of ["Runs", "Approvals", "Runs", "Approvals"]) {
+      await user.hover(within(pages).getByRole("link", { name }));
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      await user.unhover(within(pages).getByRole("link", { name }));
+    }
+
+    expect({ runs: queries.length, approvals }).toEqual({
+      runs: runsBefore,
+      approvals: approvalsBefore,
+    });
+  });
+
   test("a filter whose runs cannot be loaded says so under the filters", async () => {
     server.use(
       http.get(runsUrl, ({ request }) =>

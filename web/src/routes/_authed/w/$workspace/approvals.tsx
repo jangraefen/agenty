@@ -7,9 +7,14 @@ import { ApprovalCard } from "@/components/approval-card";
 
 export const Route = createFileRoute("/_authed/w/$workspace/approvals")({
   // Prefetched, not required: the page polls, so it recovers by itself when
-  // the approvals cannot be loaded for a while.
+  // the approvals cannot be loaded for a while. Only when none are cached:
+  // the page refreshes cached ones itself, and preloading on intent fetches
+  // nothing.
   loader: ({ context: { queryClient, api }, params }) =>
-    queryClient.prefetchQuery(approvalsQuery(api, params.workspace)),
+    queryClient.prefetchQuery({
+      ...approvalsQuery(api, params.workspace),
+      staleTime: Number.POSITIVE_INFINITY,
+    }),
   component: Approvals,
 });
 

@@ -1,97 +1,33 @@
+import { EventSourceParserStream } from "eventsource-parser/stream";
+
 export interface ServerSentEvent {
   event: string;
   data: string;
 }
 
-// parseEventStream reads server-sent events from a response body, as the
-// HTML standard's event stream format defines them. Browsers' EventSource
-// cannot send an Authorization header, so the frontend reads streams with
-// fetch and this. It ignores ids and retry times: a run's stream replays
-// from its start, so a client reconnects by reading it again. Stopping the
-// iteration cancels the body.
+// parseEventStream reads server-sent events from a response body. Browsers'
+// EventSource cannot send an Authorization header, so the frontend reads
+// streams with fetch and this. It ignores ids and retry times: a run's
+// stream replays from its start, so a client reconnects by reading it again.
+// Stopping the iteration cancels the body. It reads the stream itself, as
+// not every browser iterates a ReadableStream.
 export async function* parseEventStream(
-  body: ReadableStream<Uint8Array>,
+  body: ReadableStream<Uint8Array<ArrayBuffer>>,
 ): AsyncGenerator<ServerSentEvent> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  const parser = new Parser();
-  // Whether the body ended or failed; otherwise the consumer stopped early,
-  // and the body is cancelled.
-  let settled = false;
+  const reader = body
+    .pipeThrough(new TextDecoderStream())
+    .pipeThrough(new EventSourceParserStream())
+    .getReader();
   try {
     for (;;) {
-      let chunk: ReadableStreamReadResult<Uint8Array>;
-      try {
-        chunk = await reader.read();
-      } catch (error) {
-        settled = true;
-        throw error;
-      }
-      const { done, value } = chunk;
-      settled = done;
-      const text = done ? decoder.decode() : decoder.decode(value, { stream: true });
-      yield* parser.push(text, done);
+      const { done, value } = await reader.read();
       if (done) {
         return;
       }
+      yield { event: value.event ?? "message", data: value.data };
     }
   } finally {
-    if (!settled) {
-      await reader.cancel();
-    }
-    reader.releaseLock();
-  }
-}
-
-class Parser {
-  #buffer = "";
-  #event = "";
-  #data: string[] = [];
-
-  *push(text: string, end: boolean): Generator<ServerSentEvent> {
-    this.#buffer += text;
-    for (;;) {
-      const lineEnd = /\r\n|\r|\n/.exec(this.#buffer);
-      if (lineEnd === null) {
-        return;
-      }
-      // A CR that ends the text so far may be the first half of a CRLF.
-      if (lineEnd[0] === "\r" && lineEnd.index === this.#buffer.length - 1 && !end) {
-        return;
-      }
-      const line = this.#buffer.slice(0, lineEnd.index);
-      this.#buffer = this.#buffer.slice(lineEnd.index + lineEnd[0].length);
-      const event = this.#line(line);
-      if (event !== null) {
-        yield event;
-      }
-    }
-  }
-
-  #line(line: string): ServerSentEvent | null {
-    if (line === "") {
-      const event =
-        this.#data.length === 0
-          ? null
-          : { event: this.#event === "" ? "message" : this.#event, data: this.#data.join("\n") };
-      this.#event = "";
-      this.#data = [];
-      return event;
-    }
-    const colon = line.indexOf(":");
-    if (colon === 0) {
-      return null; // a comment
-    }
-    const field = colon === -1 ? line : line.slice(0, colon);
-    let value = colon === -1 ? "" : line.slice(colon + 1);
-    if (value.startsWith(" ")) {
-      value = value.slice(1);
-    }
-    if (field === "event") {
-      this.#event = value;
-    } else if (field === "data") {
-      this.#data.push(value);
-    }
-    return null;
+    // Ends the body if the consumer stopped early; a no-op if it ended.
+    await reader.cancel();
   }
 }

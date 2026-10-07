@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { parseEventStream, type ServerSentEvent } from "./sse";
 
-function streamOf(...chunks: string[]): ReadableStream<Uint8Array> {
+function streamOf(...chunks: string[]): ReadableStream<Uint8Array<ArrayBuffer>> {
   const encoder = new TextEncoder();
   return new ReadableStream({
     start(controller) {
@@ -13,7 +13,9 @@ function streamOf(...chunks: string[]): ReadableStream<Uint8Array> {
   });
 }
 
-async function collect(stream: ReadableStream<Uint8Array>): Promise<ServerSentEvent[]> {
+async function collect(
+  stream: ReadableStream<Uint8Array<ArrayBuffer>>,
+): Promise<ServerSentEvent[]> {
   const events: ServerSentEvent[] = [];
   for await (const event of parseEventStream(stream)) {
     events.push(event);
@@ -63,7 +65,7 @@ describe("parseEventStream", () => {
 
   test("decodes UTF-8 split across chunks", async () => {
     const bytes = new TextEncoder().encode("data:é\n\n");
-    const stream = new ReadableStream<Uint8Array>({
+    const stream = new ReadableStream<Uint8Array<ArrayBuffer>>({
       start(controller) {
         controller.enqueue(bytes.slice(0, 6));
         controller.enqueue(bytes.slice(6));
@@ -74,12 +76,30 @@ describe("parseEventStream", () => {
     expect(await collect(stream)).toEqual([{ event: "message", data: "é" }]);
   });
 
-  test("releases the stream when the consumer stops early", async () => {
-    const stream = streamOf("data:1\n\ndata:2\n\n");
+  test("cancels the stream when the consumer stops early", async () => {
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array<ArrayBuffer>>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("data:1\n\n"));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
     for await (const _ of parseEventStream(stream)) {
       break;
     }
 
-    expect(stream.locked).toBe(false);
+    expect(cancelled).toBe(true);
+  });
+
+  test("passes on the stream's error", async () => {
+    const stream = new ReadableStream<Uint8Array<ArrayBuffer>>({
+      start(controller) {
+        controller.error(new TypeError("network error"));
+      },
+    });
+
+    await expect(collect(stream)).rejects.toThrow("network error");
   });
 });

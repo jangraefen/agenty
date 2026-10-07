@@ -65,6 +65,8 @@ describe("signing in", () => {
     expect(field).toHaveValue(TOKEN);
     expect(field).not.toHaveAttribute("value");
     expect(document.documentElement.outerHTML).not.toContain(TOKEN);
+    // Were the browser itself ever to send the form, not in the URL either.
+    expect(field.closest("form")).toHaveAttribute("method", "post");
   });
 
   test("an invalid token is refused and not stored", async () => {

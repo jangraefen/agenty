@@ -53,7 +53,7 @@ function SignIn() {
       <p className="mt-2 text-sm text-muted-foreground">
         Paste the API token your operator gave you.
       </p>
-      <form onSubmit={submit} className="mt-6 grid gap-3">
+      <form method="post" onSubmit={submit} className="mt-6 grid gap-3">
         <Label htmlFor={`${id}-token`}>Token</Label>
         <Input
           id={`${id}-token`}

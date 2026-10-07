@@ -11,7 +11,9 @@ import { approvalsQuery, runQuery, runsKey, transcriptQuery } from "./queries";
 // read; a refetch reads the stream again from the run's start.
 export function runEventsQuery(api: Api, workspace: string, id: string) {
   return queryOptions({
-    queryKey: ["workspaces", workspace, "run", id, "events"],
+    // Not under the run's key, whose cancelling and invalidating would stop
+    // or replay the stream.
+    queryKey: ["workspaces", workspace, "run-events", id],
     queryFn: streamedQuery({
       streamFn: async function* ({ client, signal }) {
         const invalidate = (queryKey: readonly unknown[]) =>

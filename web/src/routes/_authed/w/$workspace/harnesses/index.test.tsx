@@ -68,3 +68,21 @@ test("says why the harnesses cannot be loaded, under the workspace's header", as
   expect(await screen.findByRole("alert")).toHaveTextContent("boom");
   expect(screen.getByRole("navigation", { name: "Pages" })).toBeInTheDocument();
 });
+
+test("a page that could not be loaded can be tried again", async () => {
+  let down = true;
+  server.use(
+    http.get(`${base}/harnesses`, () =>
+      down
+        ? HttpResponse.json({ error: "boom" }, { status: 500 })
+        : HttpResponse.json([storedHarness({ name: "notes" })]),
+    ),
+  );
+  const { user } = renderApp("/w/notes/harnesses", TOKEN);
+  await screen.findByRole("alert");
+
+  down = false;
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+
+  expect(await screen.findByRole("link", { name: "notes" })).toBeInTheDocument();
+});

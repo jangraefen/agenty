@@ -117,6 +117,23 @@ describe("the runs page", () => {
     expect(history.location.search).toContain("status=failed");
   });
 
+  test("a filter whose runs cannot be loaded says so under the filters", async () => {
+    server.use(
+      http.get(runsUrl, ({ request }) =>
+        new URL(request.url).searchParams.get("status") === "failed"
+          ? HttpResponse.json({ error: "boom" }, { status: 500 })
+          : HttpResponse.json({ runs: [run({ input: "all of them" })] }),
+      ),
+    );
+    const { user } = renderApp("/w/notes/runs", TOKEN);
+
+    await user.selectOptions(await screen.findByLabelText("Status"), "failed");
+    expect(await screen.findByRole("alert")).toHaveTextContent("boom");
+
+    await user.selectOptions(screen.getByLabelText("Status"), "");
+    expect(await screen.findByText("all of them")).toBeInTheDocument();
+  });
+
   test("filters by harness, offering the workspace's harnesses", async () => {
     const queries: URLSearchParams[] = [];
     server.use(runsHandler({ "": { runs: [run()] } }, queries));

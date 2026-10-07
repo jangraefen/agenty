@@ -519,6 +519,71 @@ describe("replying", () => {
     expect(screen.getByRole("textbox", { name: "Message" })).toHaveValue("");
   });
 
+  test("keeps the conversation in view while the new run loads, and the focus in the box", async () => {
+    const third = run({
+      id: "run-3",
+      follows: "run-2",
+      input: "and file them",
+      status: "running",
+      output: "",
+    });
+    server.use(
+      ...conversationHandlers([run(), second]),
+      finishedEvents("run-2", second),
+      http.post(`${base}/runs/:id/follow-up`, () => {
+        server.use(
+          ...conversationHandlers([run(), second, third]),
+          // The new run's conversation is slow to come.
+          http.get(`${base}/runs/run-3/conversation`, () => new Promise<never>(() => undefined)),
+          http.get(`${base}/runs/run-3/events`, () => liveEventStream().response()),
+        );
+        return HttpResponse.json(third, { status: 201 });
+      }),
+    );
+    const { user, history } = renderApp(path, TOKEN);
+
+    const box = await screen.findByRole("textbox", { name: "Message" });
+    await screen.findByText("Sorted.");
+    await user.type(box, "and file them");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(history.location.pathname).toBe("/w/notes/runs/run-3");
+    });
+    expect(screen.getByText("Sorted.")).toBeInTheDocument();
+    expect(screen.getByText("and sort them")).toBeInTheDocument();
+    expect(await screen.findByText("and file them")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Message" })).toHaveFocus();
+  });
+
+  test("after someone else replied first, shows their run", async () => {
+    const { finished_at: _f, ...answering } = run({ ...second, status: "running", output: "" });
+    server.use(
+      ...conversationHandlers([run()]),
+      finishedEvents("run-1", run()),
+      http.post(`${base}/runs/run-1/follow-up`, () => {
+        server.use(
+          ...conversationHandlers([run(), answering]),
+          http.get(`${base}/runs/run-2/events`, () => liveEventStream().response()),
+        );
+        return HttpResponse.json(
+          { error: "run run-1 is already followed up; follow up the conversation's latest run" },
+          { status: 409 },
+        );
+      }),
+    );
+    const { user } = renderApp(path, TOKEN);
+
+    const box = await screen.findByRole("textbox", { name: "Message" });
+    await user.type(box, "again{Enter}");
+
+    expect(await screen.findByText("and sort them")).toBeInTheDocument();
+    expect(
+      await screen.findByText(/You can reply once the agent has answered/),
+    ).toBeInTheDocument();
+    expect(box).toHaveValue("again");
+  });
+
   test("sends nothing but whitespace", async () => {
     server.use(...conversationHandlers([run()]), finishedEvents("run-1", run()));
     const { user } = renderApp(path, TOKEN);

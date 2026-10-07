@@ -6,8 +6,8 @@ import {
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { type FormEvent, type KeyboardEvent, useEffect, useId, useState } from "react";
-import { type Schemas, unwrap } from "@/api/client";
+import { type FormEvent, type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
+import { ApiError, type Schemas, unwrap } from "@/api/client";
 import {
   approvalsQuery,
   conversationQuery,
@@ -73,7 +73,7 @@ function RunPage() {
       )}
       <Header run={run.data} latest={current} key={current.id} />
       <Chat runs={runs} latest={current} events={events} />
-      <Composer latest={current} />
+      <Composer runs={runs} latest={current} ready={!conversation.isPending} />
     </article>
   );
 }
@@ -197,13 +197,15 @@ function Chat({
 }
 
 // Composer replies to the conversation by following up its latest run, once
-// that run has answered. Enter sends, Shift+Enter starts a new line.
-function Composer({ latest }: { latest: Run }) {
+// that run has answered and the conversation is known, so it is the latest.
+// Enter sends, Shift+Enter starts a new line.
+function Composer({ runs, latest, ready }: { runs: Run[]; latest: Run; ready: boolean }) {
   const { workspace } = Route.useParams();
   const { api } = Route.useRouteContext();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [text, setText] = useState("");
+  const box = useRef<HTMLTextAreaElement>(null);
   const id = useId();
   const reply = useMutation({
     mutationFn: (input: string) =>
@@ -216,9 +218,18 @@ function Composer({ latest }: { latest: Run }) {
     onSuccess: async (run) => {
       setText("");
       queryClient.setQueryData(runQuery(api, workspace, run.id).queryKey, run);
+      // The new run's page shows the conversation so far at once.
+      queryClient.setQueryData(conversationQuery(api, workspace, run.id).queryKey, [...runs, run]);
       void queryClient.invalidateQueries({ queryKey: conversationsKey(workspace) });
       void queryClient.invalidateQueries({ queryKey: runsKey(workspace) });
       await navigate({ to: "/w/$workspace/runs/$runId", params: { workspace, runId: run.id } });
+      box.current?.focus();
+    },
+    onError: (error) => {
+      // Someone replied first: show their run, which is now the latest.
+      if (error instanceof ApiError && error.status === 409) {
+        void queryClient.invalidateQueries({ queryKey: conversationsKey(workspace) });
+      }
     },
   });
 
@@ -239,7 +250,7 @@ function Composer({ latest }: { latest: Run }) {
   }
 
   const waiting = latest.status === "running";
-  const blocked = waiting || reply.isPending;
+  const blocked = waiting || !ready || reply.isPending;
 
   function send() {
     if (!blocked && text.trim() !== "") {
@@ -270,6 +281,7 @@ function Composer({ latest }: { latest: Run }) {
       </Label>
       <div className="flex items-end gap-2">
         <Textarea
+          ref={box}
           id={`${id}-message`}
           rows={2}
           placeholder={`Reply to ${latest.harness}…`}

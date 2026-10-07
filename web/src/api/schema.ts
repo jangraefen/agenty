@@ -106,6 +106,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{workspace}/runs/{id}/follow-up": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace: components["parameters"]["Workspace"];
+                id: components["parameters"]["RunID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Continue a run's conversation with a new run
+         * @description Starts a run of the same harness version that continues the
+         *     conversation: the model sees the earlier runs' transcripts, as
+         *     stored, with secrets redacted, before the new input. Only the
+         *     conversation's latest run can be followed up, once it has
+         *     succeeded; any other is a conflict.
+         */
+        post: operations["followUpRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{workspace}/runs/{id}/conversation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace: components["parameters"]["Workspace"];
+                id: components["parameters"]["RunID"];
+            };
+            cookie?: never;
+        };
+        /** The runs of the conversation a run belongs to, oldest first */
+        get: operations["getRunConversation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{workspace}/runs/{id}/cancel": {
         parameters: {
             query?: never;
@@ -298,10 +345,20 @@ export interface components {
             harness: string;
             input: string;
         };
+        FollowUp: {
+            input: string;
+        };
         /** @enum {string} */
         RunStatus: "running" | "succeeded" | "failed" | "cancelled";
         Run: {
             id: string;
+            /**
+             * @description The conversation the run belongs to, named by the ID of its
+             *     first run, which may be this one.
+             */
+            conversation_id: string;
+            /** @description The run whose conversation this run continues, if any. */
+            follows?: string;
             /** Format: int64 */
             harness_version_id: number;
             harness: string;
@@ -607,6 +664,58 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Run"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    followUpRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace: components["parameters"]["Workspace"];
+                id: components["parameters"]["RunID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FollowUp"];
+            };
+        };
+        responses: {
+            /** @description The started run. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Run"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getRunConversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace: components["parameters"]["Workspace"];
+                id: components["parameters"]["RunID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The runs. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Run"][];
                 };
             };
             default: components["responses"]["Error"];

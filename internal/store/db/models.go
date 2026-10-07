@@ -6,6 +6,8 @@ package db
 
 import (
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type AuditRecord struct {
@@ -43,6 +45,8 @@ type Run struct {
 	CreatedAt        time.Time
 	FinishedAt       *time.Time
 	StartedBy        string
+	ConversationID   string
+	Follows          pgtype.Text
 }
 
 type RunMessage struct {

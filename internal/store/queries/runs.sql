@@ -1,6 +1,12 @@
 -- name: InsertRun :exec
-INSERT INTO runs (id, harness_version_id, input, started_by)
-VALUES ($1, $2, $3, $4);
+-- A run that follows another joins its conversation; any other run starts
+-- one of its own.
+INSERT INTO runs (id, harness_version_id, input, started_by, conversation_id, follows)
+VALUES (
+    sqlc.arg(id), sqlc.arg(harness_version_id), sqlc.arg(input), sqlc.arg(started_by),
+    COALESCE((SELECT f.conversation_id FROM runs f WHERE f.id = sqlc.narg(follows)), sqlc.arg(id)),
+    sqlc.narg(follows)
+);
 
 -- name: FinishRun :execrows
 UPDATE runs
@@ -36,3 +42,13 @@ LIMIT sqlc.arg(max_rows);
 UPDATE runs
 SET status = 'failed', error = $1, finished_at = now()
 WHERE status = 'running';
+
+-- name: ConversationRuns :many
+-- The runs of the conversation the run named by id belongs to, oldest first,
+-- if that run is one of the workspace's.
+SELECT sqlc.embed(runs), harness_versions.name AS harness, harness_versions.version AS harness_version
+FROM runs
+JOIN harness_versions ON harness_versions.id = runs.harness_version_id
+WHERE harness_versions.workspace = sqlc.arg(workspace)
+  AND runs.conversation_id = (SELECT c.conversation_id FROM runs c WHERE c.id = sqlc.arg(id))
+ORDER BY runs.created_at, runs.id;

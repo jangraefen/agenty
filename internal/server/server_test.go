@@ -574,6 +574,8 @@ func TestInvariant_ServerRequiresSignIn(t *testing.T) {
 		{http.MethodPost, home + "/runs/r1/approvals/a1", `{"approved":true}`},
 		{http.MethodGet, home + "/runs", ""},
 		{http.MethodPost, home + "/runs/r1/cancel", ""},
+		{http.MethodPost, home + "/runs/r1/follow-up", `{"input":"x"}`},
+		{http.MethodGet, home + "/runs/r1/conversation", ""},
 		{http.MethodGet, home + "/approvals", ""},
 		{http.MethodGet, "/v1/workspaces/ghost/harnesses", ""},
 		{http.MethodGet, "/v1/no-such-route", ""},
@@ -672,6 +674,8 @@ func TestInvariant_WorkspacesAreSeparate(t *testing.T) {
 			{carolToken, http.MethodPost, home + "/runs/" + run.ID + "/approvals/" + req.ID, api.Answer{Approved: true}},
 			{carolToken, http.MethodGet, home + "/runs", nil},
 			{carolToken, http.MethodPost, home + "/runs/" + run.ID + "/cancel", nil},
+			{carolToken, http.MethodPost, home + "/runs/" + run.ID + "/follow-up", api.FollowUp{Input: "x"}},
+			{carolToken, http.MethodGet, home + "/runs/" + run.ID + "/conversation", nil},
 			{carolToken, http.MethodGet, home + "/approvals", nil},
 			{aliceToken, http.MethodGet, work + "/harnesses", nil},
 			{aliceToken, http.MethodPut, work + "/harnesses/notes", notes()},
@@ -683,13 +687,14 @@ func TestInvariant_WorkspacesAreSeparate(t *testing.T) {
 		}
 	})
 	t.Run("a member of another workspace", func(t *testing.T) {
-		for _, path := range []string{"/runs/" + run.ID, "/runs/" + run.ID + "/audit", "/runs/" + run.ID + "/transcript", "/runs/" + run.ID + "/events", "/harnesses/notes"} {
+		for _, path := range []string{"/runs/" + run.ID, "/runs/" + run.ID + "/audit", "/runs/" + run.ID + "/transcript", "/runs/" + run.ID + "/events", "/runs/" + run.ID + "/conversation", "/harnesses/notes"} {
 			var e api.Error
 			assert.Equal(t, http.StatusNotFound, f.doAs(t, bobToken, http.MethodGet, work+path, nil, &e), path)
 		}
 		assert.Equal(t, http.StatusNotFound, f.doAs(t, bobToken, http.MethodPost, work+"/runs/"+run.ID+"/approvals/"+req.ID, api.Answer{Approved: true}, nil))
 		assert.Equal(t, http.StatusNotFound, f.doAs(t, bobToken, http.MethodPost, work+"/runs", api.CreateRun{Harness: "notes", Input: "x"}, nil))
 		assert.Equal(t, http.StatusNotFound, f.doAs(t, bobToken, http.MethodPost, work+"/runs/"+run.ID+"/cancel", nil, nil))
+		assert.Equal(t, http.StatusNotFound, f.doAs(t, bobToken, http.MethodPost, work+"/runs/"+run.ID+"/follow-up", api.FollowUp{Input: "x"}, nil))
 		var all []api.HarnessVersion
 		require.Equal(t, http.StatusOK, f.doAs(t, bobToken, http.MethodGet, work+"/harnesses", nil, &all))
 		assert.Empty(t, all)

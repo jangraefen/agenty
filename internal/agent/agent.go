@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync/atomic"
 
 	"github.com/jangraefen/agenty/internal/harness"
@@ -157,8 +158,21 @@ func (r *Run) ID() string {
 // cancellation end the run. If the model still asks for tools on the last
 // allowed step, those calls are not executed and Execute returns ErrMaxSteps.
 func (r *Run) Execute(ctx context.Context, input string) (Result, error) {
+	return r.Continue(ctx, nil, input)
+}
+
+// Continue executes the run as the next turn of a conversation: the model
+// sees history, the messages of the earlier runs, before input. The history
+// must start with an input and end with the model's answer, a reply without
+// tool calls. Only this run's messages are recorded and returned, and the
+// harness's limits count this run's steps and tool calls alone. Otherwise it
+// is Execute.
+func (r *Run) Continue(ctx context.Context, history []model.Message, input string) (Result, error) {
 	if input == "" {
 		return Result{}, errors.New("agent: input is required")
+	}
+	if err := checkHistory(history); err != nil {
+		return Result{}, err
 	}
 	if r.executed.Swap(true) {
 		return Result{}, errors.New("agent: run already executed")
@@ -185,7 +199,7 @@ func (r *Run) Execute(ctx context.Context, input string) (Result, error) {
 	for step := 1; step <= maxSteps; step++ {
 		msg, err := a.model.Generate(ctx, model.Request{
 			System:   a.harness.Instructions,
-			Messages: res.Messages,
+			Messages: append(slices.Clip(history), res.Messages...),
 			Tools:    tools,
 		})
 		if err != nil {
@@ -213,6 +227,22 @@ func (r *Run) Execute(ctx context.Context, input string) (Result, error) {
 		}
 	}
 	return res, fmt.Errorf("agent: %w (%d)", ErrMaxSteps, maxSteps)
+}
+
+// checkHistory checks that history, if any, is a conversation a run can
+// continue: one that starts with an input and ends with the model's answer.
+func checkHistory(history []model.Message) error {
+	if len(history) == 0 {
+		return nil
+	}
+	first, last := history[0], history[len(history)-1]
+	switch {
+	case first.Role != model.RoleUser || len(first.ToolResults) > 0:
+		return errors.New("agent: the conversation to continue does not start with an input")
+	case last.Role != model.RoleAssistant || len(last.ToolCalls) > 0:
+		return errors.New("agent: the conversation to continue does not end with an answer")
+	}
+	return nil
 }
 
 // callTools runs calls in order through the gateway. Denials and tool errors

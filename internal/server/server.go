@@ -257,11 +257,25 @@ func decode(c *gin.Context, v any) error {
 	return nil
 }
 
-// start builds an agent for the harness version, which starts the MCP servers
-// it needs, stores the run as started by user, and executes it in the
-// background. On error it also returns the status to respond with: 422 for a
-// harness that cannot run, 503 when the server is stopping, 500 otherwise.
-func (s *Server) start(v store.HarnessVersion, input, user string) (string, int, error) {
+// newRun is a run to start.
+type newRun struct {
+	version store.HarnessVersion
+	input   string
+	// user is who starts the run.
+	user string
+	// follows, if set, is the ID of the run whose conversation the run
+	// continues, and history is that conversation so far.
+	follows string
+	history []model.Message
+}
+
+// start builds an agent for the run's harness version, which starts the MCP
+// servers it needs, stores the run, and executes it in the background. On
+// error it also returns the status to respond with: 422 for a harness that
+// cannot run, 409 for a run that another run already follows, 503 when the
+// server is stopping, 500 otherwise.
+func (s *Server) start(r newRun) (string, int, error) {
+	v := r.version
 	h := v.Harness
 	m, err := s.cfg.NewModel(h.Model)
 	if err != nil {
@@ -305,18 +319,22 @@ func (s *Server) start(v store.HarnessVersion, input, user string) (string, int,
 	s.runs[run.ID()] = hub
 	s.wg.Add(1)
 	s.mu.Unlock()
-	if err := s.cfg.Store.CreateRun(s.ctx, store.NewRun{ID: run.ID(), HarnessVersionID: v.ID, Input: input, StartedBy: user}); err != nil {
+	if err := s.cfg.Store.CreateRun(s.ctx, store.NewRun{ID: run.ID(), HarnessVersionID: v.ID, Input: r.input, StartedBy: r.user, Follows: r.follows}); err != nil {
 		s.mu.Lock()
 		delete(s.runs, run.ID())
 		s.mu.Unlock()
 		s.wg.Done()
 		cancel(nil)
-		return "", http.StatusInternalServerError, errors.Join(err, a.Close())
+		status := http.StatusInternalServerError
+		if errors.Is(err, store.ErrConflict) {
+			status = http.StatusConflict
+		}
+		return "", status, errors.Join(err, a.Close())
 	}
 	go func() {
 		defer s.wg.Done()
 		defer cancel(nil)
-		s.execute(runCtx, a, run, hub, input)
+		s.execute(runCtx, a, run, hub, r.history, r.input)
 	}()
 	return run.ID(), 0, nil
 }
@@ -326,17 +344,17 @@ type cancelledBy string
 
 func (u cancelledBy) Error() string { return "cancelled by " + string(u) }
 
-// execute runs the agent on ctx, stops its MCP servers, records how the run
-// ended, and publishes that as the run's last event. A run that fails after
-// a user cancelled it ended as cancelled.
-func (s *Server) execute(ctx context.Context, a *agent.Agent, run *agent.Run, hub *hub, input string) {
+// execute runs the agent on ctx, after history, stops its MCP servers,
+// records how the run ended, and publishes that as the run's last event. A
+// run that fails after a user cancelled it ended as cancelled.
+func (s *Server) execute(ctx context.Context, a *agent.Agent, run *agent.Run, hub *hub, history []model.Message, input string) {
 	defer func() {
 		s.mu.Lock()
 		delete(s.runs, run.ID())
 		s.mu.Unlock()
 	}()
 	redact := s.cfg.Resolved.Redactor
-	res, runErr := run.Execute(ctx, input)
+	res, runErr := run.Continue(ctx, history, input)
 	err := errors.Join(runErr, a.Close())
 	status, errMsg := store.RunSucceeded, ""
 	var by cancelledBy

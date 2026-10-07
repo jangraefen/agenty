@@ -154,6 +154,11 @@ type Error struct {
 	Error string `json:"error"`
 }
 
+// FollowUp defines model for FollowUp.
+type FollowUp struct {
+	Input string `json:"input"`
+}
+
 // Harness A declarative definition of an agent.
 type Harness struct {
 	Instructions string       `json:"instructions"`
@@ -226,19 +231,25 @@ type Role string
 
 // Run defines model for Run.
 type Run struct {
-	CreatedAt time.Time `json:"created_at"`
+	// ConversationID The conversation the run belongs to, named by the ID of its
+	// first run, which may be this one.
+	ConversationID string    `json:"conversation_id"`
+	CreatedAt      time.Time `json:"created_at"`
 
 	// Error Why the run failed, or who cancelled it.
 	Error string `json:"error,omitempty"`
 
 	// FinishedAt Unset while the run is running.
-	FinishedAt       time.Time `json:"finished_at,omitempty,omitzero"`
-	Harness          string    `json:"harness"`
-	HarnessVersion   int       `json:"harness_version"`
-	HarnessVersionID int64     `json:"harness_version_id"`
-	ID               string    `json:"id"`
-	Input            string    `json:"input"`
-	Output           string    `json:"output"`
+	FinishedAt time.Time `json:"finished_at,omitempty,omitzero"`
+
+	// Follows The run whose conversation this run continues, if any.
+	Follows          string `json:"follows,omitempty"`
+	Harness          string `json:"harness"`
+	HarnessVersion   int    `json:"harness_version"`
+	HarnessVersionID int64  `json:"harness_version_id"`
+	ID               string `json:"id"`
+	Input            string `json:"input"`
+	Output           string `json:"output"`
 
 	// StartedBy The user who started the run.
 	StartedBy string    `json:"started_by"`
@@ -315,3 +326,6 @@ type CreateRunJSONRequestBody = CreateRun
 
 // AnswerApprovalJSONRequestBody defines body for AnswerApproval for application/json ContentType.
 type AnswerApprovalJSONRequestBody = Answer
+
+// FollowUpRunJSONRequestBody defines body for FollowUpRun for application/json ContentType.
+type FollowUpRunJSONRequestBody = FollowUp

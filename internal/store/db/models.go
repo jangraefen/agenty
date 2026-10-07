@@ -49,17 +49,25 @@ type Run struct {
 	Follows          pgtype.Text
 	PromptDigest     string
 	HistoryDigest    string
+	InputTokens      int64
+	OutputTokens     int64
+	CacheWriteTokens int64
+	CacheReadTokens  int64
 }
 
 type RunMessage struct {
-	RunID        string
-	Position     int32
-	Role         string
-	Text         string
-	ToolCalls    []byte
-	ToolResults  []byte
-	CreatedAt    time.Time
-	Provider     string
-	ProviderData []byte
-	Altered      bool
+	RunID            string
+	Position         int32
+	Role             string
+	Text             string
+	ToolCalls        []byte
+	ToolResults      []byte
+	CreatedAt        time.Time
+	Provider         string
+	ProviderData     []byte
+	Altered          bool
+	InputTokens      int64
+	OutputTokens     int64
+	CacheWriteTokens int64
+	CacheReadTokens  int64
 }

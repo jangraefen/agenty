@@ -369,6 +369,12 @@ export interface components {
             status: components["schemas"]["RunStatus"];
             output: string;
             steps: number;
+            /**
+             * @description The tokens of the model calls that wrote the run's replies so
+             *     far. A call that failed, such as one whose reply was cut off, is
+             *     not counted.
+             */
+            usage: components["schemas"]["Usage"];
             /** @description Why the run failed, or who cancelled it. */
             error?: string;
             /** Format: date-time */
@@ -378,6 +384,29 @@ export interface components {
              * @description Unset while the run is running.
              */
             finished_at?: string;
+        };
+        /**
+         * @description The tokens of model calls. Input the provider read from its prompt
+         *     cache, or wrote to it, is counted apart from the rest of the input.
+         */
+        Usage: {
+            /**
+             * Format: int64
+             * @description Input tokens neither read from nor written to the cache.
+             */
+            input_tokens: number;
+            /** Format: int64 */
+            output_tokens: number;
+            /**
+             * Format: int64
+             * @description Input tokens written to the prompt cache.
+             */
+            cache_write_tokens: number;
+            /**
+             * Format: int64
+             * @description Input tokens read from the prompt cache.
+             */
+            cache_read_tokens: number;
         };
         RunList: {
             runs: components["schemas"]["Run"][];
@@ -436,6 +465,8 @@ export interface components {
             tool_calls?: components["schemas"]["ToolCall"][];
             tool_results?: components["schemas"]["ToolResult"][];
             provider?: components["schemas"]["ProviderPart"];
+            /** @description The tokens of the model call that wrote a reply. */
+            usage?: components["schemas"]["Usage"];
             /** Format: date-time */
             created_at: string;
         };

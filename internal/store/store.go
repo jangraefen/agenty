@@ -229,6 +229,8 @@ type Run struct {
 	// identifies the conversation of earlier runs it sent before its input.
 	// Runs stored before they were recorded have neither.
 	PromptDigest, HistoryDigest string
+	// Usage sums the usage of the run's stored replies.
+	Usage model.Usage
 }
 
 // NewRun is a run to store.
@@ -367,6 +369,12 @@ func run(row db.Run, harness string, version int32) Run {
 		Follows:          row.Follows.String,
 		PromptDigest:     row.PromptDigest,
 		HistoryDigest:    row.HistoryDigest,
+		Usage: model.Usage{
+			InputTokens:      row.InputTokens,
+			OutputTokens:     row.OutputTokens,
+			CacheWriteTokens: row.CacheWriteTokens,
+			CacheReadTokens:  row.CacheReadTokens,
+		},
 	}
 }
 
@@ -498,12 +506,13 @@ type NewMessage struct {
 }
 
 // AppendMessage stores m in the transcript of the run runID, which must
-// exist. A position is written once. As with Record, content never makes
-// storing fail: invalid UTF-8 and NUL bytes in the text are replaced, and
-// tool call arguments and provider parts that are not valid JSON are kept as
-// a JSON string; a message changed so is stored as altered. A provider
-// part's JSON is otherwise kept as written, so the provider can replay it
-// exactly.
+// exist, and adds its usage to the run's. A position is written once. As
+// with Record, content never makes storing fail: invalid UTF-8 and NUL bytes
+// in the text are replaced, and tool call arguments and provider parts that
+// are not valid JSON are kept as a JSON string; a message changed so is
+// stored as altered. A provider part's JSON is otherwise kept as written, so
+// the provider can replay it exactly. A usage of all zeros is read back as
+// none.
 func (s *Store) AppendMessage(ctx context.Context, runID string, m NewMessage) error {
 	msg, position := m.Message, m.Position
 	altered := m.Altered || text(msg.Text) != msg.Text
@@ -525,7 +534,7 @@ func (s *Store) AppendMessage(ctx context.Context, runID string, m NewMessage) e
 		provider, providerData = text(p.Name), jsonText(p.Data)
 		altered = altered || !bytes.Equal(providerData, p.Data)
 	}
-	err := s.queries.InsertRunMessage(ctx, db.InsertRunMessageParams{
+	params := db.InsertRunMessageParams{
 		RunID:        text(runID),
 		Position:     int32(position), //nolint:gosec // G115: a position is bounded by the harness's max_steps.
 		Role:         text(string(msg.Role)),
@@ -535,7 +544,12 @@ func (s *Store) AppendMessage(ctx context.Context, runID string, m NewMessage) e
 		Provider:     provider,
 		ProviderData: providerData,
 		Altered:      altered,
-	})
+	}
+	if u := msg.Usage; u != nil {
+		params.InputTokens, params.OutputTokens = u.InputTokens, u.OutputTokens
+		params.CacheWriteTokens, params.CacheReadTokens = u.CacheWriteTokens, u.CacheReadTokens
+	}
+	err := s.queries.InsertRunMessage(ctx, params)
 	if err != nil {
 		return fmt.Errorf("store: run %s: message %d: %w", runID, position, err)
 	}
@@ -573,6 +587,9 @@ func (s *Store) Transcript(ctx context.Context, runID string) ([]TranscriptMessa
 		}
 		if row.Provider != "" {
 			msg.Provider = &model.ProviderPart{Name: row.Provider, Data: row.ProviderData}
+		}
+		if u := (model.Usage{InputTokens: row.InputTokens, OutputTokens: row.OutputTokens, CacheWriteTokens: row.CacheWriteTokens, CacheReadTokens: row.CacheReadTokens}); u != (model.Usage{}) {
+			msg.Usage = &u
 		}
 		out[i] = TranscriptMessage{Position: int(row.Position), Message: msg, Altered: row.Altered, CreatedAt: row.CreatedAt}
 	}

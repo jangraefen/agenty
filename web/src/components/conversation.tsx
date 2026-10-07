@@ -8,7 +8,7 @@ import { ApprovalCard } from "@/components/approval-card";
 import { CodeBlock } from "@/components/code-block";
 import { Json } from "@/components/json";
 import { RunStatusBadge } from "@/components/run-status";
-import { formatDuration, formatTime } from "@/lib/format";
+import { formatDuration, formatTime, formatUsage, formatUsageExactly } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 type Run = Schemas["Run"];
@@ -110,6 +110,9 @@ export function Turn({
           </span>
           {run.finished_at !== undefined && (
             <span>took {formatDuration(run.created_at, run.finished_at)}</span>
+          )}
+          {Object.values(run.usage).some((n) => n > 0) && (
+            <span title={formatUsageExactly(run.usage)}>{formatUsage(run.usage)}</span>
           )}
         </div>
         <AuditLog run={run} workspace={workspace} live={live} />

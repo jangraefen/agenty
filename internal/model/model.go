@@ -42,6 +42,21 @@ type Message struct {
 	// which some APIs require, for example for thinking blocks. Other code
 	// treats it as opaque data that is stored with the message.
 	Provider *ProviderPart `json:"provider,omitempty"`
+	// Usage is the tokens of the model call that wrote a reply, if the
+	// provider reports them. A model call that fails, such as one whose
+	// reply was cut off, writes no reply, and its tokens are not counted.
+	Usage *Usage `json:"usage,omitempty"`
+}
+
+// Usage counts the tokens of a model call. Input the provider read from its
+// prompt cache, or wrote to it, is counted apart from the rest of the input.
+type Usage struct {
+	// InputTokens are the input tokens neither read from nor written to the
+	// cache.
+	InputTokens      int64 `json:"input_tokens"`
+	OutputTokens     int64 `json:"output_tokens"`
+	CacheWriteTokens int64 `json:"cache_write_tokens"`
+	CacheReadTokens  int64 `json:"cache_read_tokens"`
 }
 
 // ProviderPart is a message in a provider's own form, as JSON, so it can be

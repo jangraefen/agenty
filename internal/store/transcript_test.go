@@ -117,6 +117,35 @@ func TestTranscript_RecordsAlteredMessages(t *testing.T) {
 	assert.Equal(t, []bool{false, true, true, true}, altered)
 }
 
+func TestTranscript_KeepsUsage(t *testing.T) {
+	ctx := context.Background()
+	s := storetest.New(t)
+	newRun(t, s, "r1")
+	newRun(t, s, "r2")
+	msgs := []model.Message{
+		{Role: model.RoleUser, Text: "tidy"},
+		{Role: model.RoleAssistant, Text: "looking", Usage: &model.Usage{InputTokens: 10, OutputTokens: 2, CacheWriteTokens: 100}},
+		{Role: model.RoleUser, Text: "more"},
+		{Role: model.RoleAssistant, Text: "done", Usage: &model.Usage{InputTokens: 3, OutputTokens: 4, CacheReadTokens: 100}},
+	}
+	for i, m := range msgs {
+		require.NoError(t, s.AppendMessage(ctx, "r1", store.NewMessage{Position: i, Message: m}))
+	}
+
+	got, err := s.Transcript(ctx, "r1")
+	require.NoError(t, err)
+	require.Len(t, got, len(msgs))
+	for i, m := range got {
+		assert.Equal(t, msgs[i].Usage, m.Usage)
+	}
+	r1, err := s.Run(ctx, ws, "r1")
+	require.NoError(t, err)
+	assert.Equal(t, model.Usage{InputTokens: 13, OutputTokens: 6, CacheWriteTokens: 100, CacheReadTokens: 100}, r1.Usage, "a run sums the usage of its messages")
+	r2, err := s.Run(ctx, ws, "r2")
+	require.NoError(t, err)
+	assert.Zero(t, r2.Usage)
+}
+
 func TestTranscript_StoreDown(t *testing.T) {
 	ctx := context.Background()
 	s := storetest.New(t)

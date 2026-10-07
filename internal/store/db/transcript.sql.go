@@ -10,22 +10,40 @@ import (
 )
 
 const insertRunMessage = `-- name: InsertRunMessage :exec
-INSERT INTO run_messages (run_id, position, role, text, tool_calls, tool_results, provider, provider_data, altered)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+WITH message AS (
+    INSERT INTO run_messages (
+        run_id, position, role, text, tool_calls, tool_results, provider, provider_data, altered,
+        input_tokens, output_tokens, cache_write_tokens, cache_read_tokens
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+    RETURNING run_id, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens
+)
+UPDATE runs
+SET input_tokens       = runs.input_tokens + message.input_tokens,
+    output_tokens      = runs.output_tokens + message.output_tokens,
+    cache_write_tokens = runs.cache_write_tokens + message.cache_write_tokens,
+    cache_read_tokens  = runs.cache_read_tokens + message.cache_read_tokens
+FROM message
+WHERE runs.id = message.run_id
 `
 
 type InsertRunMessageParams struct {
-	RunID        string
-	Position     int32
-	Role         string
-	Text         string
-	ToolCalls    []byte
-	ToolResults  []byte
-	Provider     string
-	ProviderData []byte
-	Altered      bool
+	RunID            string
+	Position         int32
+	Role             string
+	Text             string
+	ToolCalls        []byte
+	ToolResults      []byte
+	Provider         string
+	ProviderData     []byte
+	Altered          bool
+	InputTokens      int64
+	OutputTokens     int64
+	CacheWriteTokens int64
+	CacheReadTokens  int64
 }
 
+// Stores a message and adds its tokens to its run's.
 func (q *Queries) InsertRunMessage(ctx context.Context, arg InsertRunMessageParams) error {
 	_, err := q.db.Exec(ctx, insertRunMessage,
 		arg.RunID,
@@ -37,12 +55,16 @@ func (q *Queries) InsertRunMessage(ctx context.Context, arg InsertRunMessagePara
 		arg.Provider,
 		arg.ProviderData,
 		arg.Altered,
+		arg.InputTokens,
+		arg.OutputTokens,
+		arg.CacheWriteTokens,
+		arg.CacheReadTokens,
 	)
 	return err
 }
 
 const runMessages = `-- name: RunMessages :many
-SELECT run_id, position, role, text, tool_calls, tool_results, created_at, provider, provider_data, altered FROM run_messages
+SELECT run_id, position, role, text, tool_calls, tool_results, created_at, provider, provider_data, altered, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens FROM run_messages
 WHERE run_id = $1
 ORDER BY position
 `
@@ -67,6 +89,10 @@ func (q *Queries) RunMessages(ctx context.Context, runID string) ([]RunMessage, 
 			&i.Provider,
 			&i.ProviderData,
 			&i.Altered,
+			&i.InputTokens,
+			&i.OutputTokens,
+			&i.CacheWriteTokens,
+			&i.CacheReadTokens,
 		); err != nil {
 			return nil, err
 		}

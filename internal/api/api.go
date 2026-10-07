@@ -91,5 +91,13 @@ func FromMessage(position int, msg model.Message, createdAt time.Time) Transcrip
 	if p := msg.Provider; p != nil {
 		out.Provider = ProviderPart{Name: p.Name, Data: p.Data}
 	}
+	if u := msg.Usage; u != nil {
+		out.Usage = FromUsage(*u)
+	}
 	return out
+}
+
+// FromUsage maps a model call's usage.
+func FromUsage(u model.Usage) Usage {
+	return Usage{InputTokens: u.InputTokens, OutputTokens: u.OutputTokens, CacheWriteTokens: u.CacheWriteTokens, CacheReadTokens: u.CacheReadTokens}
 }

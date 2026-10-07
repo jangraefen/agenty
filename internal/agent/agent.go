@@ -231,6 +231,7 @@ func (r *Run) Continue(ctx context.Context, history []model.Message, input strin
 			System:   a.harness.Instructions,
 			Messages: append(slices.Clip(history), res.Messages...),
 			Tools:    tools,
+			History:  len(history),
 		})
 		if err != nil {
 			return res, fmt.Errorf("agent: step %d: model: %w", step, err)

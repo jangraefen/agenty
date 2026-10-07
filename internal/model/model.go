@@ -20,6 +20,9 @@ type Request struct {
 	Messages []Message
 	// Tools are the tools the model may call, as offered by the gateway.
 	Tools []toolgateway.Definition
+	// History is how many of the Messages are those of earlier runs of the
+	// conversation, which a provider may cache for longer.
+	History int
 }
 
 // Role says who wrote a message.

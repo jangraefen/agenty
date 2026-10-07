@@ -68,6 +68,10 @@ type Anthropic struct {
 	MaxTokens int   `yaml:"max_tokens"`
 	// BaseURL overrides the API endpoint. Empty means Anthropic's.
 	BaseURL string `yaml:"base_url"`
+	// HistoryCacheTTL is how long the prompt cache keeps a conversation's
+	// earlier runs: "5m", the default, or "1h", which costs more to write
+	// but outlasts a user who takes a while to reply.
+	HistoryCacheTTL string `yaml:"history_cache_ttl"`
 }
 
 // Database configures the server's PostgreSQL database.
@@ -205,6 +209,9 @@ func (f *file) validate() error {
 		checkValue("provider.anthropic.api_key", a.APIKey)
 		if a.MaxTokens <= 0 {
 			add("provider.anthropic.max_tokens", "must be greater than 0")
+		}
+		if !slices.Contains([]string{"", "5m", "1h"}, a.HistoryCacheTTL) {
+			add("provider.anthropic.history_cache_ttl", `must be "5m" or "1h"`)
 		}
 	}
 	if d := f.Database; d != nil {

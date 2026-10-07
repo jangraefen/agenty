@@ -90,10 +90,11 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 				return nil, fmt.Errorf("model provider %q is not supported; use anthropic", m.Provider)
 			}
 			return anthropic.New(anthropic.Config{
-				APIKey:    cfg.Resolved.AnthropicAPIKey,
-				Model:     m.Name,
-				MaxTokens: cfg.Operator.Provider.Anthropic.MaxTokens,
-				BaseURL:   cfg.Operator.Provider.Anthropic.BaseURL,
+				APIKey:          cfg.Resolved.AnthropicAPIKey,
+				Model:           m.Name,
+				MaxTokens:       cfg.Operator.Provider.Anthropic.MaxTokens,
+				BaseURL:         cfg.Operator.Provider.Anthropic.BaseURL,
+				HistoryCacheTTL: cfg.Operator.Provider.Anthropic.HistoryCacheTTL,
 			})
 		}
 	}

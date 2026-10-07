@@ -43,6 +43,10 @@ type Config struct {
 	MaxTokens int
 	// BaseURL overrides the API endpoint. Empty means Anthropic's.
 	BaseURL string
+	// HistoryCacheTTL, if "1h", caches the conversation of earlier runs for
+	// an hour; see Model.params. Empty or "5m" leaves it to the automatic
+	// breakpoint and its five minutes.
+	HistoryCacheTTL string
 }
 
 var _ model.Model = (*Model)(nil)
@@ -52,6 +56,9 @@ type Model struct {
 	client    sdk.Client
 	model     sdk.Model
 	maxTokens int64
+	// historyCache is the breakpoint at the end of the earlier runs'
+	// conversation, if any.
+	historyCache *sdk.CacheControlEphemeralParam
 }
 
 // New validates cfg and returns a Model.
@@ -64,12 +71,20 @@ func New(cfg Config) (*Model, error) {
 	case cfg.MaxTokens <= 0:
 		return nil, errors.New("anthropic: max tokens must be greater than 0")
 	}
+	var historyCache *sdk.CacheControlEphemeralParam
+	switch cfg.HistoryCacheTTL {
+	case "", "5m":
+	case "1h":
+		historyCache = &sdk.CacheControlEphemeralParam{TTL: sdk.CacheControlEphemeralTTLTTL1h}
+	default:
+		return nil, errors.New(`anthropic: history cache TTL must be "5m" or "1h"`)
+	}
 	client := sdk.NewClient(
 		option.WithoutEnvironmentDefaults(),
 		option.WithBaseURL(cmp.Or(cfg.BaseURL, defaultBaseURL)),
 		option.WithAPIKey(cfg.APIKey),
 	)
-	return &Model{client: client, model: cfg.Model, maxTokens: int64(cfg.MaxTokens)}, nil
+	return &Model{client: client, model: cfg.Model, maxTokens: int64(cfg.MaxTokens), historyCache: historyCache}, nil
 }
 
 // Generate sends the conversation and returns the model's reply. A reply cut
@@ -92,7 +107,10 @@ func (m *Model) Generate(ctx context.Context, req model.Request) (model.Message,
 
 // params maps a request. The top-level cache_control marks the end of the
 // request for prompt caching, so instructions, tools and earlier turns are
-// reused from the cache on the next step.
+// reused from the cache on the next step. A history cache adds a breakpoint
+// at the end of the earlier runs' conversation, which a follow-up reads
+// although the user took longer to reply than the automatic breakpoint's
+// five minutes; it comes first, as the API requires of the longer TTL.
 func (m *Model) params(req model.Request) (sdk.MessageNewParams, error) {
 	params := sdk.MessageNewParams{
 		Model:        m.model,
@@ -114,9 +132,25 @@ func (m *Model) params(req model.Request) (sdk.MessageNewParams, error) {
 		if err != nil {
 			return params, err
 		}
+		// Never the request's last block: the API refuses a TTL there that
+		// differs from the automatic breakpoint's.
+		if m.historyCache != nil && i == req.History-1 && i < len(req.Messages)-1 {
+			markCache(param, *m.historyCache)
+		}
 		params.Messages = append(params.Messages, param)
 	}
 	return params, nil
+}
+
+// markCache makes the last block of msg that can be a cache breakpoint one.
+// Thinking blocks cannot.
+func markCache(msg sdk.MessageParam, cache sdk.CacheControlEphemeralParam) {
+	for _, block := range slices.Backward(msg.Content) {
+		if cc := block.GetCacheControl(); cc != nil {
+			*cc = cache
+			return
+		}
+	}
 }
 
 func toolParam(def toolgateway.Definition) (*sdk.ToolParam, error) {

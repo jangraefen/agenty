@@ -5,6 +5,10 @@ provider:
     # Read from the environment (or a .env file); never written here.
     api_key: {env: ANTHROPIC_API_KEY}
     max_tokens: 4096
+    # From the second follow-up on, keep a conversation's earlier runs in the
+    # prompt cache for an hour, not five minutes, for users who take a while
+    # to reply, at twice the price of writing them: 1h or 5m.
+    history_cache_ttl: 5m
 database:
   # A PostgreSQL URL, such as postgres://agenty:PASSWORD@localhost/agenty.
   url: {env: DATABASE_URL}

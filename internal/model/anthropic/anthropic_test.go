@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -34,6 +35,7 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 		{"no API key", anthropic.Config{Model: "m", MaxTokens: 1}, "api key is required"},
 		{"no model", anthropic.Config{APIKey: testKey, MaxTokens: 1}, "model is required"},
 		{"no max tokens", anthropic.Config{APIKey: testKey, Model: "m"}, "max tokens must be greater than 0"},
+		{"history cache TTL", anthropic.Config{APIKey: testKey, Model: "m", MaxTokens: 1, HistoryCacheTTL: "10m"}, `history cache TTL must be "5m" or "1h"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -440,6 +442,85 @@ func TestGenerate_ProviderParts(t *testing.T) {
 			}
 			require.NoError(t, json.Unmarshal(api.Requests()[0].Body, &body))
 			assert.JSONEq(t, tt.wantContent, string(body.Messages[1].Content))
+		})
+	}
+}
+
+// TestGenerate_CachesTheHistory: with a history cache TTL, the end of the
+// earlier runs' conversation is a cache breakpoint of its own, written for
+// that long, before the automatic one at the end of the request. Thinking
+// blocks cannot be breakpoints, so a reply ending in one is marked at the
+// block before it.
+func TestGenerate_CachesTheHistory(t *testing.T) {
+	answer := anthropictest.Reply(t, "end_turn",
+		map[string]any{"type": "thinking", "thinking": "", "signature": "sig-1"},
+		anthropictest.TextBlock("It is on fire."),
+		map[string]any{"type": "thinking", "thinking": "", "signature": "sig-2"},
+	)
+	thoughtOnly := anthropictest.Reply(t, "end_turn", map[string]any{"type": "thinking", "thinking": "", "signature": "sig-3"})
+	replies := map[string]model.Message{
+		"replayed": {Role: model.RoleAssistant, Text: "It is on fire.", Provider: &model.ProviderPart{Name: "anthropic", Data: json.RawMessage(answer.Body)}},
+		"rebuilt":  {Role: model.RoleAssistant, Text: "It is on fire."},
+		// Nothing in it can be a breakpoint, so there is none.
+		"thinking only": {Role: model.RoleAssistant, Provider: &model.ProviderPart{Name: "anthropic", Data: json.RawMessage(thoughtOnly.Body)}},
+	}
+	marked := []string{"", `{"type":"ephemeral","ttl":"1h"}`, ""}
+	none := []string{"", "", ""}
+	tests := []struct {
+		name, ttl, reply string
+		history          int
+		want             []string
+	}{
+		{"an hour", "1h", "replayed", 2, marked},
+		{"a rebuilt reply", "1h", "rebuilt", 2, marked},
+		{"a reply of thinking only", "1h", "thinking only", 2, none},
+		{"no history", "1h", "replayed", 0, none},
+		{"nothing after the history", "1h", "replayed", 3, none},
+		{"no history cache", "", "replayed", 2, none},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := anthropictest.New(t, anthropictest.Reply(t, "end_turn", anthropictest.TextBlock("done")))
+			m, err := anthropic.New(anthropic.Config{APIKey: testKey, Model: "claude-test", MaxTokens: 1024, BaseURL: api.URL, HistoryCacheTTL: tt.ttl})
+			require.NoError(t, err)
+			history := []model.Message{{Role: model.RoleUser, Text: "ticket 7"}, replies[tt.reply]}
+			messages := append(slices.Clone(history), model.Message{Role: model.RoleUser, Text: "and now?"})
+
+			_, err = m.Generate(context.Background(), model.Request{Messages: messages, History: tt.history})
+
+			require.NoError(t, err)
+			require.Len(t, api.Requests(), 1)
+			var body struct {
+				CacheControl json.RawMessage `json:"cache_control"`
+				Messages     []struct {
+					Content []struct {
+						Type         string          `json:"type"`
+						CacheControl json.RawMessage `json:"cache_control"`
+					} `json:"content"`
+				} `json:"messages"`
+			}
+			require.NoError(t, json.Unmarshal(api.Requests()[0].Body, &body))
+			assert.JSONEq(t, `{"type":"ephemeral"}`, string(body.CacheControl), "the rest is cached automatically, for the default time")
+			require.Len(t, body.Messages, 3)
+			var marks []string
+			for _, msg := range body.Messages {
+				mark := ""
+				for _, block := range msg.Content {
+					if len(block.CacheControl) > 0 {
+						require.Empty(t, mark, "one breakpoint per message at most")
+						require.Equal(t, "text", block.Type)
+						mark = string(block.CacheControl)
+					}
+				}
+				marks = append(marks, mark)
+			}
+			for i := range tt.want {
+				if tt.want[i] == "" {
+					assert.Empty(t, marks[i], "message %d", i)
+				} else {
+					assert.JSONEq(t, tt.want[i], marks[i], "message %d", i)
+				}
+			}
 		})
 	}
 }

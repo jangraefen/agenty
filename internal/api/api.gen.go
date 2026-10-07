@@ -255,6 +255,9 @@ type Run struct {
 	StartedBy string    `json:"started_by"`
 	Status    RunStatus `json:"status"`
 	Steps     int       `json:"steps"`
+
+	// Usage The tokens of all the run's model calls so far.
+	Usage Usage `json:"usage"`
 }
 
 // RunList defines model for RunList.
@@ -294,6 +297,23 @@ type TranscriptMessage struct {
 	Text        string       `json:"text,omitempty"`
 	ToolCalls   []ToolCall   `json:"tool_calls,omitempty"`
 	ToolResults []ToolResult `json:"tool_results,omitempty"`
+
+	// Usage The tokens of the model call that wrote a reply.
+	Usage Usage `json:"usage,omitempty,omitzero"`
+}
+
+// Usage The tokens of model calls. Input the provider read from its prompt
+// cache, or wrote to it, is counted apart from the rest of the input.
+type Usage struct {
+	// CacheReadTokens Input tokens read from the prompt cache.
+	CacheReadTokens int64 `json:"cache_read_tokens"`
+
+	// CacheWriteTokens Input tokens written to the prompt cache.
+	CacheWriteTokens int64 `json:"cache_write_tokens"`
+
+	// InputTokens Input tokens neither read from nor written to the cache.
+	InputTokens  int64 `json:"input_tokens"`
+	OutputTokens int64 `json:"output_tokens"`
 }
 
 // RunID defines model for RunID.

@@ -210,6 +210,12 @@ func reply(resp *sdk.Message) (model.Message, error) {
 		}
 	}
 	msg.Text = strings.Join(texts, "\n")
+	msg.Usage = &model.Usage{
+		InputTokens:      resp.Usage.InputTokens,
+		OutputTokens:     resp.Usage.OutputTokens,
+		CacheWriteTokens: resp.Usage.CacheCreationInputTokens,
+		CacheReadTokens:  resp.Usage.CacheReadInputTokens,
+	}
 	// The reply exactly as the API sent it, to replay later. A reply the SDK
 	// did not decode from JSON has none and is rebuilt from text and calls.
 	if raw := resp.RawJSON(); raw != "" {

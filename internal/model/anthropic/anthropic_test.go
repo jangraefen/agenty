@@ -165,6 +165,22 @@ func TestGenerate_Replies(t *testing.T) {
 	}
 }
 
+func TestGenerate_ReportsUsage(t *testing.T) {
+	resp := anthropictest.Reply(t, "end_turn", anthropictest.TextBlock("ok"))
+	var body map[string]any
+	require.NoError(t, json.Unmarshal([]byte(resp.Body), &body))
+	body["usage"] = map[string]any{"input_tokens": 12, "output_tokens": 34, "cache_creation_input_tokens": 56, "cache_read_input_tokens": 78}
+	raw, err := json.Marshal(body)
+	require.NoError(t, err)
+	resp.Body = string(raw)
+	api := anthropictest.New(t, resp)
+
+	got, err := newModel(t, api).Generate(context.Background(), model.Request{Messages: []model.Message{{Role: model.RoleUser, Text: "hi"}}})
+
+	require.NoError(t, err)
+	assert.Equal(t, &model.Usage{InputTokens: 12, OutputTokens: 34, CacheWriteTokens: 56, CacheReadTokens: 78}, got.Usage)
+}
+
 // TestGenerate_UnusableRepliesAreErrors checks that the adapter fails closed:
 // a reply the agent cannot use ends the run instead of passing as an answer.
 func TestGenerate_UnusableRepliesAreErrors(t *testing.T) {

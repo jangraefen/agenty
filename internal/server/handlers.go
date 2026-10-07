@@ -239,6 +239,7 @@ func apiRun(r store.Run) api.Run {
 		Status:           api.RunStatus(r.Status),
 		Output:           r.Output,
 		Steps:            r.Steps,
+		Usage:            api.FromUsage(r.Usage),
 		Error:            r.Error,
 		CreatedAt:        r.CreatedAt,
 		ConversationID:   r.ConversationID,

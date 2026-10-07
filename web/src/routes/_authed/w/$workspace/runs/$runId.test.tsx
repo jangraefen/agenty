@@ -120,6 +120,31 @@ describe("the conversation page", () => {
     expect(within(chat).getAllByText("succeeded")).toHaveLength(2);
   });
 
+  test("shows each run's token usage, once it has any", async () => {
+    const first = run({
+      usage: {
+        input_tokens: 500,
+        output_tokens: 200,
+        cache_write_tokens: 1_500,
+        cache_read_tokens: 8_000,
+      },
+    });
+    server.use(
+      ...conversationHandlers([first, second], {
+        "run-1": [message(0, { text: "tidy my notes" })],
+        "run-2": [message(0, { text: "and sort them" })],
+      }),
+      finishedEvents("run-2", second),
+    );
+    renderApp(path, TOKEN);
+
+    const chat = await screen.findByRole("list", { name: "Conversation" });
+    expect(
+      await within(chat).findByText("10k tokens in, 200 out, 80% from the cache"),
+    ).toBeInTheDocument();
+    expect(within(chat).queryAllByText(/tokens in/)).toHaveLength(1);
+  });
+
   test("shows a run's tool calls with their results in the agent's reply", async () => {
     server.use(
       ...conversationHandlers([run()], {

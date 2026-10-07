@@ -12,6 +12,7 @@ export function run(overrides: Partial<Schemas["Run"]> = {}): Schemas["Run"] {
     status: "succeeded",
     output: "Done.",
     steps: 2,
+    usage: { input_tokens: 0, output_tokens: 0, cache_write_tokens: 0, cache_read_tokens: 0 },
     created_at: "2026-10-06T10:00:00Z",
     finished_at: "2026-10-06T10:01:30Z",
     ...overrides,

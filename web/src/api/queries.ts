@@ -1,8 +1,7 @@
 import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
-import { type Api, unwrap } from "./client";
-import type { components } from "./schema";
+import { type Api, type Schemas, unwrap } from "./client";
 
-export type RunStatus = components["schemas"]["RunStatus"];
+export type RunStatus = Schemas["RunStatus"];
 
 export const runStatuses: readonly RunStatus[] = ["running", "succeeded", "failed", "cancelled"];
 

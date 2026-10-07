@@ -1,9 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouteContext } from "@tanstack/react-router";
 import { useId, useState } from "react";
-import { ApiError, unwrap } from "@/api/client";
+import { ApiError, type Schemas, unwrap } from "@/api/client";
 import { approvalsQuery } from "@/api/queries";
-import type { components } from "@/api/schema";
 import type { AnswerOutcome } from "@/components/answer-notice";
 import { Json } from "@/components/json";
 import { Button } from "@/components/ui/button";
@@ -12,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { useNow } from "@/hooks/use-now";
 import { formatRemaining, formatTime } from "@/lib/format";
 
-type ApprovalRequest = components["schemas"]["ApprovalRequest"];
+type ApprovalRequest = Schemas["ApprovalRequest"];
 
 // ApprovalCard shows a call waiting for approval, as a list item, and
 // answers it as the signed-in user, telling onOutcome how that went: the card

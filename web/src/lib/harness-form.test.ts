@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { components } from "@/api/schema";
+import type { Schemas } from "@/api/client";
 import {
   emptyHarnessValues,
   fromHarness,
@@ -12,7 +12,7 @@ import {
   validateTools,
 } from "./harness-form";
 
-type Harness = components["schemas"]["Harness"];
+type Harness = Schemas["Harness"];
 
 const stored: Harness = {
   name: "notes",

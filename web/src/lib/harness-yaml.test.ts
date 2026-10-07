@@ -1,9 +1,9 @@
 import { expect, test } from "vitest";
 import { parse } from "yaml";
-import type { components } from "@/api/schema";
+import type { Schemas } from "@/api/client";
 import { harnessYaml } from "./harness-yaml";
 
-const harness: components["schemas"]["Harness"] = {
+const harness: Schemas["Harness"] = {
   name: "notes",
   instructions: "Keep the notes tidy.\nSort them.\n",
   model: { provider: "anthropic", name: "a-model" },

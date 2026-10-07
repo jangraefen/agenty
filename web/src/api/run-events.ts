@@ -1,11 +1,8 @@
 // Experimental in TanStack Query 5: an upgrade may change it, which the tests show.
 import { queryOptions, experimental_streamedQuery as streamedQuery } from "@tanstack/react-query";
 import { parseEventStream } from "@/lib/sse";
-import { type Api, unwrap } from "./client";
+import { type Api, type Schemas, unwrap } from "./client";
 import { approvalsQuery, runQuery, runsKey, transcriptQuery } from "./queries";
-import type { components } from "./schema";
-
-type AuditRecord = components["schemas"]["AuditRecord"];
 
 // A run's event stream, as its audit records so far, oldest first. The other
 // events update the queries they change: an approval request the waiting
@@ -34,7 +31,7 @@ export function runEventsQuery(api: Api, workspace: string, id: string) {
         for await (const { event, data } of parseEventStream(body)) {
           switch (event) {
             case "audit": {
-              const record: AuditRecord = JSON.parse(data);
+              const record: Schemas["AuditRecord"] = JSON.parse(data);
               if (record.event === "approval") {
                 invalidate(approvals);
               }

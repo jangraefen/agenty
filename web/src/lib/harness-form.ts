@@ -1,7 +1,7 @@
-import type { components } from "@/api/schema";
+import type { Schemas } from "@/api/client";
 
-type Harness = components["schemas"]["Harness"];
-type PolicyModule = components["schemas"]["PolicyModule"];
+type Harness = Schemas["Harness"];
+type PolicyModule = Schemas["PolicyModule"];
 
 /** What the harness form edits: a harness, with its tools one per line. */
 export interface HarnessValues {

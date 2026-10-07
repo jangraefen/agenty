@@ -1,12 +1,12 @@
 import { stringify } from "yaml";
-import type { components } from "@/api/schema";
+import type { Schemas } from "@/api/client";
 
 // harnessYaml writes a stored harness as a harness file would hold it. Its
 // policy is left out: the server stores the modules resolved, with package
 // lines and file contents, so they cannot be written back as the file's
 // policy section; the harness page shows them as Rego instead. A comment
 // says so, so a copy applied as it is does not quietly drop the rules.
-export function harnessYaml(harness: components["schemas"]["Harness"]): string {
+export function harnessYaml(harness: Schemas["Harness"]): string {
   const { name, instructions, model, tools, limits, policy = [] } = harness;
   const warning =
     policy.length === 0

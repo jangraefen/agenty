@@ -1,9 +1,9 @@
 import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
-import type { components } from "@/api/schema";
+import type { Schemas } from "@/api/client";
 import { apiUrl } from "@/config";
 
-export type Schemas = components["schemas"];
+export type { Schemas };
 
 // The mocked API. Tests add their handlers with server.use; a request no
 // handler answers fails the test.

@@ -6,10 +6,9 @@ import {
 } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useId, useState } from "react";
-import { unwrap } from "@/api/client";
+import { type Schemas, unwrap } from "@/api/client";
 import { approvalsQuery, runQuery, transcriptQuery } from "@/api/queries";
 import { runEventsQuery } from "@/api/run-events";
-import type { components } from "@/api/schema";
 import { AnswerNotice, type AnswerOutcome } from "@/components/answer-notice";
 import { ApprovalCard } from "@/components/approval-card";
 import { Json } from "@/components/json";
@@ -17,8 +16,6 @@ import { RunStatusBadge } from "@/components/run-status";
 import { Button } from "@/components/ui/button";
 import { formatDuration, formatTime } from "@/lib/format";
 import { orNotFound } from "@/lib/not-found";
-
-type Schemas = components["schemas"];
 
 export const Route = createFileRoute("/_authed/w/$workspace/runs/$runId")({
   loader: ({ context: { queryClient, api }, params }) =>

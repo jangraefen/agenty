@@ -37,7 +37,7 @@ export const Route = createFileRoute("/_authed/w/$workspace/runs/")({
   component: Runs,
 });
 
-const selectClass = "h-8 rounded-md border bg-background px-2 text-sm";
+const selectClass = "h-8 max-w-full min-w-0 rounded-md border bg-background px-2 text-sm";
 
 function Runs() {
   const { workspace } = Route.useParams();
@@ -91,47 +91,52 @@ function Runs() {
     <section>
       <div className="flex flex-wrap items-center gap-4">
         <h1 className="mr-auto text-xl font-semibold">Runs</h1>
-        <Label htmlFor={`${id}-harness`} className="font-normal">
-          Harness
-        </Label>
-        <select
-          id={`${id}-harness`}
-          value={filters.harness ?? ""}
-          onChange={(event) => {
-            const { harness: _, ...rest } = filters;
-            const harness = event.target.value;
-            setFilters(harness === "" ? rest : { ...rest, harness });
-          }}
-          className={selectClass}
-        >
-          <option value="">All</option>
-          {harnesses.isError && <option disabled>Harnesses could not be loaded</option>}
-          {[...harnessNames].sort().map((name) => (
-            <option key={name} value={name}>
-              {name}
-            </option>
-          ))}
-        </select>
-        <Label htmlFor={`${id}-status`} className="font-normal">
-          Status
-        </Label>
-        <select
-          id={`${id}-status`}
-          value={filters.status ?? ""}
-          onChange={(event) => {
-            const { status: _, ...rest } = filters;
-            const status = event.target.value;
-            setFilters(isRunStatus(status) ? { ...rest, status } : rest);
-          }}
-          className={selectClass}
-        >
-          <option value="">All</option>
-          {runStatuses.map((status) => (
-            <option key={status} value={status}>
-              {status}
-            </option>
-          ))}
-        </select>
+        {/* Each filter keeps its label beside it when the row wraps. */}
+        <div className="flex max-w-full min-w-0 items-center gap-2">
+          <Label htmlFor={`${id}-harness`} className="font-normal">
+            Harness
+          </Label>
+          <select
+            id={`${id}-harness`}
+            value={filters.harness ?? ""}
+            onChange={(event) => {
+              const { harness: _, ...rest } = filters;
+              const harness = event.target.value;
+              setFilters(harness === "" ? rest : { ...rest, harness });
+            }}
+            className={selectClass}
+          >
+            <option value="">All</option>
+            {harnesses.isError && <option disabled>Harnesses could not be loaded</option>}
+            {[...harnessNames].sort().map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="flex max-w-full min-w-0 items-center gap-2">
+          <Label htmlFor={`${id}-status`} className="font-normal">
+            Status
+          </Label>
+          <select
+            id={`${id}-status`}
+            value={filters.status ?? ""}
+            onChange={(event) => {
+              const { status: _, ...rest } = filters;
+              const status = event.target.value;
+              setFilters(isRunStatus(status) ? { ...rest, status } : rest);
+            }}
+            className={selectClass}
+          >
+            <option value="">All</option>
+            {runStatuses.map((status) => (
+              <option key={status} value={status}>
+                {status}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {runs.isPending && <p className="mt-6 text-muted-foreground">Loading runs…</p>}
@@ -153,61 +158,65 @@ function Runs() {
         </p>
       )}
       {shown > 0 && (
-        <table
-          ref={table}
-          tabIndex={-1}
-          className="mt-6 w-full text-left text-sm outline-offset-4 focus-visible:outline-2 focus-visible:outline-ring"
-          aria-busy={runs.isFetching}
-        >
-          <caption className="sr-only">Runs</caption>
-          <thead className="border-b text-muted-foreground">
-            <tr>
-              <th className="py-2 pr-4 font-medium">Harness</th>
-              <th className="py-2 pr-4 font-medium">Status</th>
-              <th className="py-2 pr-4 font-medium">Input</th>
-              <th className="py-2 pr-4 font-medium">Started by</th>
-              <th className="py-2 pr-4 font-medium">Started</th>
-              <th className="py-2 font-medium">Took</th>
-            </tr>
-          </thead>
-          <tbody>
-            {pages.flatMap((page) =>
-              page.runs.map((run) => (
-                <tr key={run.id} data-run={run.id} className="border-b last:border-0">
-                  <td className="py-2 pr-4 whitespace-nowrap">
-                    <Link
-                      to="/w/$workspace/runs/$runId"
-                      params={{ workspace, runId: run.id }}
-                      className="underline-offset-4 hover:underline"
-                    >
-                      {run.harness} v{run.harness_version}
-                    </Link>
-                  </td>
-                  <td className="py-2 pr-4">
-                    <RunStatusBadge status={run.status} />
-                  </td>
-                  <td className="max-w-md truncate py-2 pr-4" title={run.input}>
-                    {run.input}
-                  </td>
-                  <td className="py-2 pr-4">{run.started_by}</td>
-                  <td className="py-2 pr-4 whitespace-nowrap">
-                    <time dateTime={run.created_at}>{formatTime(run.created_at)}</time>
-                  </td>
-                  <td className="py-2 whitespace-nowrap">
-                    {run.finished_at === undefined ? (
-                      <>
-                        <span aria-hidden="true">—</span>
-                        <span className="sr-only">still running</span>
-                      </>
-                    ) : (
-                      formatDuration(run.created_at, run.finished_at)
-                    )}
-                  </td>
-                </tr>
-              )),
-            )}
-          </tbody>
-        </table>
+        // Scrolls sideways where the page is narrower than the table, its
+        // hidden labels included; the table's focus outline is drawn inside.
+        <div className="relative mt-6 overflow-x-auto">
+          <table
+            ref={table}
+            tabIndex={-1}
+            className="w-full text-left text-sm -outline-offset-2 focus-visible:outline-2 focus-visible:outline-ring"
+            aria-busy={runs.isFetching}
+          >
+            <caption className="sr-only">Runs</caption>
+            <thead className="border-b text-muted-foreground">
+              <tr>
+                <th className="py-2 pr-4 font-medium">Harness</th>
+                <th className="py-2 pr-4 font-medium">Status</th>
+                <th className="py-2 pr-4 font-medium">Input</th>
+                <th className="py-2 pr-4 font-medium">Started by</th>
+                <th className="py-2 pr-4 font-medium">Started</th>
+                <th className="py-2 font-medium">Took</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pages.flatMap((page) =>
+                page.runs.map((run) => (
+                  <tr key={run.id} data-run={run.id} className="border-b last:border-0">
+                    <td className="py-2 pr-4 whitespace-nowrap">
+                      <Link
+                        to="/w/$workspace/runs/$runId"
+                        params={{ workspace, runId: run.id }}
+                        className="underline-offset-4 hover:underline"
+                      >
+                        {run.harness} v{run.harness_version}
+                      </Link>
+                    </td>
+                    <td className="py-2 pr-4">
+                      <RunStatusBadge status={run.status} />
+                    </td>
+                    <td className="max-w-md truncate py-2 pr-4" title={run.input}>
+                      {run.input}
+                    </td>
+                    <td className="py-2 pr-4">{run.started_by}</td>
+                    <td className="py-2 pr-4 whitespace-nowrap">
+                      <time dateTime={run.created_at}>{formatTime(run.created_at)}</time>
+                    </td>
+                    <td className="py-2 whitespace-nowrap">
+                      {run.finished_at === undefined ? (
+                        <>
+                          <span aria-hidden="true">—</span>
+                          <span className="sr-only">still running</span>
+                        </>
+                      ) : (
+                        formatDuration(run.created_at, run.finished_at)
+                      )}
+                    </td>
+                  </tr>
+                )),
+              )}
+            </tbody>
+          </table>
+        </div>
       )}
       {runs.hasNextPage && (
         <Button

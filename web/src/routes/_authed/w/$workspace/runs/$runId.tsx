@@ -2,21 +2,31 @@ import {
   type UseQueryResult,
   useMutation,
   useQuery,
+  useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useId, useState } from "react";
-import { type Schemas, unwrap } from "@/api/client";
-import { approvalsQuery, runQuery, transcriptQuery } from "@/api/queries";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { type FormEvent, type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
+import { ApiError, type Schemas, unwrap } from "@/api/client";
+import {
+  approvalsQuery,
+  conversationQuery,
+  conversationsKey,
+  runQuery,
+  runsKey,
+} from "@/api/queries";
 import { runEventsQuery } from "@/api/run-events";
 import { AnswerNotice, type AnswerOutcome } from "@/components/answer-notice";
-import { ApprovalCard } from "@/components/approval-card";
-import { Json } from "@/components/json";
-import { RunStatusBadge } from "@/components/run-status";
+import { Turn } from "@/components/conversation";
 import { Button } from "@/components/ui/button";
-import { formatDuration, formatTime } from "@/lib/format";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { orNotFound } from "@/lib/not-found";
 
+// A run's page shows the conversation the run belongs to as a chat: every
+// run of it, oldest first, each a message from its user and the agent's
+// replies. The conversation's latest run is followed live, and a reply
+// follows it up with a new run.
 export const Route = createFileRoute("/_authed/w/$workspace/runs/$runId")({
   loader: ({ context: { queryClient, api }, params }) =>
     orNotFound(queryClient.ensureQueryData(runQuery(api, params.workspace, params.runId))),
@@ -24,20 +34,47 @@ export const Route = createFileRoute("/_authed/w/$workspace/runs/$runId")({
   notFoundComponent: RunNotFound,
 });
 
+type Run = Schemas["Run"];
+
 function RunPage() {
   const { workspace, runId } = Route.useParams();
   const { api } = Route.useRouteContext();
   const run = useSuspenseQuery(runQuery(api, workspace, runId));
-  const events = useQuery(runEventsQuery(api, workspace, runId));
+  const conversation = useQuery(conversationQuery(api, workspace, runId));
+  const listed = conversation.data ?? [run.data];
+  const last = listed.at(-1) ?? run.data;
+  // The latest run as its own query, which its events keep current.
+  const latest = useQuery({ ...runQuery(api, workspace, last.id), placeholderData: last });
+  const current = latest.data ?? last;
+  const runs = listed.map((r) => (r.id === current.id ? current : r));
+  // Until the conversation is known, its latest run is not: following the
+  // page's run before then could follow the wrong one.
+  const events = useQuery({
+    ...runEventsQuery(api, workspace, current.id),
+    enabled: !conversation.isPending,
+  });
+
+  useEffect(() => {
+    // jsdom does not scroll.
+    document.getElementById(`run-${runId}`)?.scrollIntoView?.({ block: "start" });
+  }, [runId]);
+
   return (
-    <>
+    <article className="mx-auto grid max-w-3xl gap-4">
       {run.isError && (
-        <p role="alert" className="mb-4 text-sm text-destructive">
+        <p role="alert" className="text-sm text-destructive">
           The run could not be refreshed: {run.error.message}
         </p>
       )}
-      <RunDetails run={run.data} events={events} />
-    </>
+      {conversation.isError && (
+        <p role="alert" className="text-sm text-destructive">
+          The rest of the conversation could not be loaded: {conversation.error.message}
+        </p>
+      )}
+      <Header run={run.data} latest={current} key={current.id} />
+      <Chat runs={runs} latest={current} events={events} />
+      <Composer runs={runs} latest={current} ready={!conversation.isPending} />
+    </article>
   );
 }
 
@@ -53,40 +90,34 @@ function RunNotFound() {
   );
 }
 
-function RunDetails({
-  run,
-  events,
-}: {
-  run: Schemas["Run"];
-  events: UseQueryResult<Schemas["AuditRecord"][]>;
-}) {
-  const { workspace, runId } = Route.useParams();
+function Header({ run, latest }: { run: Run; latest: Run }) {
+  const { workspace } = Route.useParams();
   const { api } = Route.useRouteContext();
-  const running = run.status === "running";
-  const approvals = useQuery({ ...approvalsQuery(api, workspace), enabled: running });
-  const waiting = running
-    ? (approvals.data?.filter((request) => request.run_id === runId) ?? [])
-    : [];
-  const [outcome, setOutcome] = useState<AnswerOutcome | null>(null);
+  const running = latest.status === "running";
   const cancel = useMutation({
     mutationFn: () =>
       unwrap(
         api.POST("/v1/workspaces/{workspace}/runs/{id}/cancel", {
-          params: { path: { workspace, id: runId } },
+          params: { path: { workspace, id: latest.id } },
         }),
       ),
   });
-
   return (
-    <article className="grid max-w-4xl gap-6">
+    <>
       <Link to="/w/$workspace/runs" params={{ workspace }} className="text-sm underline">
         All runs
       </Link>
-      <header className="flex flex-wrap items-center gap-3">
+      <header className="flex flex-wrap items-center gap-3 border-b pb-3">
         <h1 className="text-xl font-semibold">
           {run.harness} v{run.harness_version}
         </h1>
-        <RunStatusBadge status={run.status} />
+        <Link
+          to="/w/$workspace/harnesses/$name"
+          params={{ workspace, name: run.harness }}
+          className="text-sm text-muted-foreground underline"
+        >
+          Harness
+        </Link>
         {running && (
           <span className="ml-auto">
             <Button
@@ -100,40 +131,59 @@ function RunDetails({
           </span>
         )}
       </header>
-      <p role="status" className="sr-only">
-        The run is {run.status}.
-        {waiting.length > 0 &&
-          ` ${waiting.length} ${waiting.length === 1 ? "call waits" : "calls wait"} for approval.`}
-      </p>
       {cancel.isError && (
         <p role="alert" className="text-sm text-destructive">
           The run could not be cancelled: {cancel.error.message}
         </p>
       )}
-      <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1 text-sm">
-        <dt className="text-muted-foreground">Started by</dt>
-        <dd>{run.started_by}</dd>
-        <dt className="text-muted-foreground">Started</dt>
-        <dd>
-          <time dateTime={run.created_at}>{formatTime(run.created_at)}</time>
-        </dd>
-        <dt className="text-muted-foreground">Took</dt>
-        <dd>
-          {run.finished_at === undefined
-            ? "still running"
-            : formatDuration(run.created_at, run.finished_at)}
-        </dd>
-        <dt className="text-muted-foreground">Steps</dt>
-        <dd>{run.steps}</dd>
-      </dl>
+    </>
+  );
+}
 
-      <Text title="Input" text={run.input} />
-      {run.output !== "" && <Text title="Output" text={run.output} />}
-      {run.error !== undefined && run.error !== "" && <Text title="Error" text={run.error} />}
+function Chat({
+  runs,
+  latest,
+  events,
+}: {
+  runs: Run[];
+  latest: Run;
+  events: UseQueryResult<Schemas["AuditRecord"][]>;
+}) {
+  const { workspace } = Route.useParams();
+  const { api } = Route.useRouteContext();
+  const running = latest.status === "running";
+  const approvals = useQuery({ ...approvalsQuery(api, workspace), enabled: running });
+  const waiting = running
+    ? (approvals.data?.filter((request) => request.run_id === latest.id) ?? [])
+    : [];
+  const [outcome, setOutcome] = useState<AnswerOutcome | null>(null);
+  // An answer is news about the run it was given in, not a later one.
+  const [answered, setAnswered] = useState(latest.id);
+  if (answered !== latest.id) {
+    setAnswered(latest.id);
+    setOutcome(null);
+  }
 
+  return (
+    <>
+      <p role="status" className="sr-only">
+        The latest run is {latest.status}.
+        {waiting.length > 0 &&
+          ` ${waiting.length} ${waiting.length === 1 ? "call waits" : "calls wait"} for approval.`}
+      </p>
+      <ol aria-label="Conversation" className="grid gap-4">
+        {runs.map((run) => (
+          <Turn
+            key={run.id}
+            run={run}
+            workspace={workspace}
+            live={run.id === latest.id ? events.data : undefined}
+            waiting={run.id === latest.id ? waiting : []}
+            onOutcome={setOutcome}
+          />
+        ))}
+      </ol>
       <AnswerNotice outcome={outcome} />
-      {waiting.length > 0 && <WaitingApprovals waiting={waiting} onOutcome={setOutcome} />}
-
       {events.isError && running && (
         <div role="alert" className="flex items-center gap-3 text-sm text-destructive">
           Live updates stopped: {events.error.message}
@@ -142,147 +192,120 @@ function RunDetails({
           </Button>
         </div>
       )}
-      <Activity records={events.data ?? []} />
-      <Transcript />
-    </article>
+    </>
   );
 }
 
-function Text({ title, text }: { title: string; text: string }) {
-  return (
-    <section>
-      <h2 className="text-sm font-semibold">{title}</h2>
-      <p className="mt-1 whitespace-pre-wrap break-words">{text}</p>
-    </section>
-  );
-}
-
-function WaitingApprovals({
-  waiting,
-  onOutcome,
-}: {
-  waiting: Schemas["ApprovalRequest"][];
-  onOutcome: (outcome: AnswerOutcome) => void;
-}) {
+// Composer replies to the conversation by following up its latest run, once
+// that run has answered and the conversation is known, so it is the latest.
+// Enter sends, Shift+Enter starts a new line.
+function Composer({ runs, latest, ready }: { runs: Run[]; latest: Run; ready: boolean }) {
   const { workspace } = Route.useParams();
-  const heading = useId();
-  return (
-    <section
-      aria-labelledby={heading}
-      className="rounded-md border border-amber-300 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950"
-    >
-      <h2 id={heading} className="font-semibold">
-        Waiting for approval
-      </h2>
-      <ul className="mt-2 grid gap-3">
-        {waiting.map((request) => (
-          <ApprovalCard
-            key={request.id}
-            request={request}
-            workspace={workspace}
-            showRun={false}
-            onOutcome={onOutcome}
-          />
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-const eventLabels: Record<Schemas["AuditEvent"], string> = {
-  decision: "Policy decision",
-  approval: "Approval",
-  result: "Result",
-};
-
-function Activity({ records }: { records: Schemas["AuditRecord"][] }) {
-  return (
-    <section>
-      <h2 className="font-semibold">Activity</h2>
-      {records.length === 0 && (
-        <p className="mt-1 text-sm text-muted-foreground">No tool calls yet.</p>
-      )}
-      <ol aria-label="Activity" className="mt-2 grid gap-3">
-        {records.map((record, index) => (
-          // Records have no id of their own; their order never changes.
-          // biome-ignore lint/suspicious/noArrayIndexKey: see above.
-          <li key={index} className="grid gap-1 border-l-2 pl-3 text-sm">
-            <div className="flex flex-wrap items-baseline gap-2">
-              <time dateTime={record.recorded_at} className="text-muted-foreground">
-                {formatTime(record.recorded_at)}
-              </time>
-              <span>{eventLabels[record.event]}</span>
-              <code className="font-semibold">{record.tool}</code>
-              <span className="rounded bg-muted px-1.5 text-xs">{record.decision}</span>
-              {record.approver !== undefined && <span>by {record.approver}</span>}
-            </div>
-            {record.reason !== undefined && record.reason !== "" && <p>{record.reason}</p>}
-            {record.event === "decision" && record.args !== undefined && (
-              <Json value={record.args} />
-            )}
-            {record.result !== undefined && <Json value={record.result} />}
-            {record.error !== undefined && record.error !== "" && (
-              <p className="text-destructive">{record.error}</p>
-            )}
-          </li>
-        ))}
-      </ol>
-    </section>
-  );
-}
-
-function Transcript() {
-  const { workspace, runId } = Route.useParams();
   const { api } = Route.useRouteContext();
-  const transcript = useQuery(transcriptQuery(api, workspace, runId));
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const [text, setText] = useState("");
+  const box = useRef<HTMLTextAreaElement>(null);
+  const id = useId();
+  const reply = useMutation({
+    mutationFn: (input: string) =>
+      unwrap(
+        api.POST("/v1/workspaces/{workspace}/runs/{id}/follow-up", {
+          params: { path: { workspace, id: latest.id } },
+          body: { input },
+        }),
+      ),
+    onSuccess: async (run) => {
+      setText("");
+      queryClient.setQueryData(runQuery(api, workspace, run.id).queryKey, run);
+      // The new run's page shows the conversation so far at once.
+      queryClient.setQueryData(conversationQuery(api, workspace, run.id).queryKey, [...runs, run]);
+      void queryClient.invalidateQueries({ queryKey: conversationsKey(workspace) });
+      void queryClient.invalidateQueries({ queryKey: runsKey(workspace) });
+      await navigate({ to: "/w/$workspace/runs/$runId", params: { workspace, runId: run.id } });
+      box.current?.focus();
+    },
+    onError: (error) => {
+      // Someone replied first: show their run, which is now the latest.
+      if (error instanceof ApiError && error.status === 409) {
+        void queryClient.invalidateQueries({ queryKey: conversationsKey(workspace) });
+      }
+    },
+  });
+
+  if (latest.status === "failed" || latest.status === "cancelled") {
+    return (
+      <p className="rounded-md border bg-muted px-4 py-3 text-sm">
+        This conversation cannot continue: its last run{" "}
+        {latest.status === "failed" ? "failed" : "was cancelled"}.{" "}
+        <Link
+          to="/w/$workspace/harnesses/$name"
+          params={{ workspace, name: latest.harness }}
+          className="underline"
+        >
+          Start a new conversation
+        </Link>
+      </p>
+    );
+  }
+
+  const waiting = latest.status === "running";
+  const blocked = waiting || !ready || reply.isPending;
+
+  function send() {
+    if (!blocked && text.trim() !== "") {
+      reply.mutate(text);
+    }
+  }
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    send();
+  }
+
+  function keyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      send();
+    }
+  }
+
+  const described = [waiting && `${id}-waiting`, reply.isError && `${id}-error`]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <section>
-      <h2 className="font-semibold">Transcript</h2>
-      {transcript.isError && (
-        <p className="mt-1 text-sm text-destructive">
-          The transcript could not be loaded: {transcript.error.message}
+    <form onSubmit={submit} className="sticky bottom-0 grid gap-2 border-t bg-background pt-3 pb-4">
+      <Label htmlFor={`${id}-message`} className="sr-only">
+        Message
+      </Label>
+      <div className="flex items-end gap-2">
+        <Textarea
+          ref={box}
+          id={`${id}-message`}
+          rows={2}
+          placeholder="Write a reply…"
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          onKeyDown={keyDown}
+          aria-invalid={reply.isError}
+          aria-describedby={described === "" ? undefined : described}
+          className="min-w-0 flex-1 resize-none rounded-xl"
+        />
+        <Button type="submit" className="shrink-0" aria-disabled={blocked}>
+          Send
+        </Button>
+      </div>
+      {waiting && (
+        <p id={`${id}-waiting`} className="text-xs text-muted-foreground">
+          You can reply once the agent has answered.
         </p>
       )}
-      <ol aria-label="Transcript" className="mt-2 grid gap-3">
-        {transcript.data?.map((message) => (
-          <li key={message.position} className="grid gap-1 rounded-md border p-3 text-sm">
-            <h3 className="text-xs font-semibold text-muted-foreground uppercase">
-              {messageTitle(message)}
-            </h3>
-            {message.text !== undefined && message.text !== "" && (
-              <p className="whitespace-pre-wrap break-words">{message.text}</p>
-            )}
-            {message.tool_calls?.map((call) => (
-              <div key={call.id} className="grid gap-1">
-                <span>
-                  Calls <code className="font-semibold">{call.name}</code>
-                </span>
-                {call.args !== undefined && <Json value={call.args} />}
-              </div>
-            ))}
-            {message.tool_results?.map((result) => (
-              <div key={result.call_id} className="grid gap-1">
-                {result.is_error === true && (
-                  <span className="text-xs font-medium text-destructive">error</span>
-                )}
-                <p className="whitespace-pre-wrap break-words font-mono text-xs">
-                  {result.content}
-                </p>
-              </div>
-            ))}
-          </li>
-        ))}
-      </ol>
-    </section>
+      {reply.isError && (
+        <p id={`${id}-error`} role="alert" className="text-sm text-destructive">
+          The reply could not be sent: {reply.error.message}
+        </p>
+      )}
+    </form>
   );
-}
-
-function messageTitle(message: Schemas["TranscriptMessage"]): string {
-  if (message.role === "assistant") {
-    return "Model";
-  }
-  if (message.tool_results !== undefined && message.tool_results.length > 0) {
-    return "Tool results";
-  }
-  return message.position === 0 ? "Input" : "User";
 }

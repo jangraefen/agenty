@@ -3,6 +3,7 @@ import type { Schemas } from "./server";
 export function run(overrides: Partial<Schemas["Run"]> = {}): Schemas["Run"] {
   return {
     id: "run-1",
+    conversation_id: "run-1",
     harness_version_id: 7,
     harness: "notes",
     harness_version: 3,

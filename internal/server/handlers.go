@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/jangraefen/agenty/internal/api"
+	"github.com/jangraefen/agenty/internal/model"
 	"github.com/jangraefen/agenty/internal/policy"
 	"github.com/jangraefen/agenty/internal/store"
 	"github.com/jangraefen/agenty/internal/toolgateway"
@@ -105,7 +106,12 @@ func (s handlers) CreateRun(c *gin.Context, workspace string) {
 		s.failStore(c, err)
 		return
 	}
-	id, status, err := s.start(v, req.Input, c.GetString(userKey))
+	s.startRun(c, workspace, newRun{version: v, input: req.Input, user: c.GetString(userKey)})
+}
+
+// startRun starts r and responds with the started run.
+func (s handlers) startRun(c *gin.Context, workspace string, r newRun) {
+	id, status, err := s.start(r)
 	if err != nil {
 		s.fail(c, status, fmt.Errorf("cannot start run: %w", err))
 		return
@@ -116,6 +122,70 @@ func (s handlers) CreateRun(c *gin.Context, workspace string) {
 		return
 	}
 	c.JSON(http.StatusCreated, apiRun(run))
+}
+
+// FollowUpRun starts a run that continues the conversation of a run, the
+// conversation's latest, which must have succeeded. The new run runs the
+// harness's latest version, so grants and rules taken away since apply to
+// no conversation. The model sees the conversation as stored, redacted
+// again with the secrets known now.
+func (s handlers) FollowUpRun(c *gin.Context, workspace, id string) {
+	var req api.FollowUp
+	if err := decode(c, &req); err != nil {
+		s.failDecode(c, err)
+		return
+	}
+	if req.Input == "" {
+		s.fail(c, http.StatusBadRequest, errors.New("input is required"))
+		return
+	}
+	ctx := c.Request.Context()
+	runs, err := s.cfg.Store.Conversation(ctx, workspace, id)
+	if err != nil {
+		s.failStore(c, err)
+		return
+	}
+	last := runs[len(runs)-1]
+	switch {
+	case last.ID != id:
+		s.fail(c, http.StatusConflict, fmt.Errorf("run %s is already followed up; follow up run %s, the conversation's latest", id, last.ID))
+		return
+	case last.Status != store.RunSucceeded:
+		s.fail(c, http.StatusConflict, fmt.Errorf("run %s is %s: only a run that succeeded can be followed up", id, last.Status))
+		return
+	}
+	var history []model.Message
+	for _, r := range runs {
+		messages, err := s.cfg.Store.Transcript(ctx, r.ID)
+		if err != nil {
+			s.failStore(c, err)
+			return
+		}
+		for _, m := range messages {
+			history = append(history, redactMessage(s.cfg.Resolved.Redactor, m.Message))
+		}
+	}
+	v, err := s.cfg.Store.Harness(ctx, workspace, last.Harness)
+	if err != nil {
+		s.failStore(c, err)
+		return
+	}
+	s.startRun(c, workspace, newRun{version: v, input: req.Input, user: c.GetString(userKey), follows: last.ID, history: history})
+}
+
+// GetRunConversation lists the runs of the conversation a run belongs to,
+// oldest first.
+func (s handlers) GetRunConversation(c *gin.Context, workspace, id string) {
+	runs, err := s.cfg.Store.Conversation(c.Request.Context(), workspace, id)
+	if err != nil {
+		s.failStore(c, err)
+		return
+	}
+	out := make([]api.Run, len(runs))
+	for i, r := range runs {
+		out[i] = apiRun(r)
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 func (s handlers) ListRuns(c *gin.Context, workspace string, params api.ListRunsParams) {
@@ -174,6 +244,8 @@ func apiRun(r store.Run) api.Run {
 		Steps:            r.Steps,
 		Error:            r.Error,
 		CreatedAt:        r.CreatedAt,
+		ConversationID:   r.ConversationID,
+		Follows:          r.Follows,
 	}
 	if r.FinishedAt != nil {
 		out.FinishedAt = *r.FinishedAt

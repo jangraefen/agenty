@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -36,6 +37,10 @@ var migrations embed.FS
 
 // ErrNotFound is returned when a harness or run does not exist.
 var ErrNotFound = errors.New("not found")
+
+// ErrConflict is returned when a run is to follow a run that another run
+// already follows.
+var ErrConflict = errors.New("conflict")
 
 // Store is Agenty's state in PostgreSQL.
 type Store struct {
@@ -212,6 +217,12 @@ type Run struct {
 	CreatedAt time.Time
 	// FinishedAt is nil while the run is running.
 	FinishedAt *time.Time
+	// ConversationID names the conversation the run belongs to by the ID of
+	// its first run, which may be this one.
+	ConversationID string
+	// Follows is the ID of the run this run continues the conversation of,
+	// if any.
+	Follows string
 }
 
 // NewRun is a run to store.
@@ -221,12 +232,25 @@ type NewRun struct {
 	Input            string
 	// StartedBy names the user who starts the run.
 	StartedBy string
+	// Follows, when set, is the ID of the run whose conversation the run
+	// continues.
+	Follows string
 }
 
+// uniqueViolation is PostgreSQL's error code for a violated unique constraint.
+const uniqueViolation = "23505"
+
 // CreateRun stores a new running run. It belongs to the workspace of its
-// harness version.
+// harness version. A run that follows another joins its conversation; a run
+// that another run already follows returns ErrConflict, so a conversation
+// never branches.
 func (s *Store) CreateRun(ctx context.Context, r NewRun) error {
-	if err := s.queries.InsertRun(ctx, db.InsertRunParams{ID: r.ID, HarnessVersionID: r.HarnessVersionID, Input: r.Input, StartedBy: r.StartedBy}); err != nil {
+	err := s.queries.InsertRun(ctx, db.InsertRunParams{ID: r.ID, HarnessVersionID: r.HarnessVersionID, Input: r.Input, StartedBy: r.StartedBy, Follows: optional(r.Follows)})
+	var pgErr *pgconn.PgError
+	switch {
+	case errors.As(err, &pgErr) && pgErr.Code == uniqueViolation && pgErr.ConstraintName == "runs_follows_key":
+		return fmt.Errorf("store: run %s: run %s is already followed: %w", r.ID, r.Follows, ErrConflict)
+	case err != nil:
 		return fmt.Errorf("store: run %s: %w", r.ID, err)
 	}
 	return nil
@@ -256,6 +280,24 @@ func (s *Store) Run(ctx context.Context, workspace, id string) (Run, error) {
 		return Run{}, notFound("run "+id, err)
 	}
 	return run(row.Run, row.Harness, row.HarnessVersion), nil
+}
+
+// Conversation returns the runs of the conversation that the run with the
+// given ID in workspace belongs to, oldest first. A run of another workspace
+// is not found.
+func (s *Store) Conversation(ctx context.Context, workspace, id string) ([]Run, error) {
+	rows, err := s.queries.ConversationRuns(ctx, db.ConversationRunsParams{Workspace: workspace, ID: id})
+	switch {
+	case err != nil:
+		return nil, fmt.Errorf("store: conversation of run %s: %w", id, err)
+	case len(rows) == 0:
+		return nil, fmt.Errorf("store: run %s: %w", id, ErrNotFound)
+	}
+	out := make([]Run, len(rows))
+	for i, row := range rows {
+		out[i] = run(row.Run, row.Harness, row.HarnessVersion)
+	}
+	return out, nil
 }
 
 // RunFilter selects runs to list.
@@ -312,6 +354,8 @@ func run(row db.Run, harness string, version int32) Run {
 		Error:            row.Error,
 		CreatedAt:        row.CreatedAt,
 		FinishedAt:       row.FinishedAt,
+		ConversationID:   row.ConversationID,
+		Follows:          row.Follows.String,
 	}
 }
 

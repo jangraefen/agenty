@@ -196,19 +196,25 @@ var _ agent.Transcript = runTranscript{}
 
 // Append stores msg even if the run is being cancelled, as Record does.
 func (t runTranscript) Append(ctx context.Context, runID string, index int, msg model.Message) error {
-	msg.Text = t.redact.String(msg.Text)
+	return t.store.AppendMessage(context.WithoutCancel(ctx), runID, index, redactMessage(t.redact, msg))
+}
+
+// redactMessage returns a copy of msg with every secret redact knows of
+// redacted, wherever in the message it is.
+func redactMessage(redact *secret.Redactor, msg model.Message) model.Message {
+	msg.Text = redact.String(msg.Text)
 	msg.ToolCalls = slices.Clone(msg.ToolCalls)
 	for i := range msg.ToolCalls {
-		msg.ToolCalls[i].Args = t.redact.JSON(msg.ToolCalls[i].Args)
+		msg.ToolCalls[i].Args = redact.JSON(msg.ToolCalls[i].Args)
 	}
 	msg.ToolResults = slices.Clone(msg.ToolResults)
 	for i := range msg.ToolResults {
-		msg.ToolResults[i].Content = t.redact.String(msg.ToolResults[i].Content)
+		msg.ToolResults[i].Content = redact.String(msg.ToolResults[i].Content)
 	}
 	if msg.Provider != nil {
 		p := *msg.Provider
-		p.Data = t.redact.JSON(p.Data)
+		p.Data = redact.JSON(p.Data)
 		msg.Provider = &p
 	}
-	return t.store.AppendMessage(context.WithoutCancel(ctx), runID, index, msg)
+	return msg
 }

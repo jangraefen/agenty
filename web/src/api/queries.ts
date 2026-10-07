@@ -68,6 +68,36 @@ export function runQuery(api: Api, workspace: string, id: string) {
   });
 }
 
+/** The key under which the conversations of a workspace's runs are cached. */
+export function conversationsKey(workspace: string) {
+  return ["workspaces", workspace, "conversation"] as const;
+}
+
+// The runs of the conversation the run belongs to, oldest first.
+export function conversationQuery(api: Api, workspace: string, id: string) {
+  return queryOptions({
+    queryKey: [...conversationsKey(workspace), id],
+    queryFn: () =>
+      unwrap(
+        api.GET("/v1/workspaces/{workspace}/runs/{id}/conversation", {
+          params: { path: { workspace, id } },
+        }),
+      ),
+  });
+}
+
+export function auditQuery(api: Api, workspace: string, id: string) {
+  return queryOptions({
+    queryKey: ["workspaces", workspace, "run", id, "audit"],
+    queryFn: () =>
+      unwrap(
+        api.GET("/v1/workspaces/{workspace}/runs/{id}/audit", {
+          params: { path: { workspace, id } },
+        }),
+      ),
+  });
+}
+
 export function transcriptQuery(api: Api, workspace: string, id: string) {
   return queryOptions({
     queryKey: ["workspaces", workspace, "run", id, "transcript"],

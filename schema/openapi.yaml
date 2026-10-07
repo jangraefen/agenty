@@ -154,6 +154,49 @@ paths:
               schema: {$ref: "#/components/schemas/Run"}
         default: {$ref: "#/components/responses/Error"}
 
+  /v1/workspaces/{workspace}/runs/{id}/follow-up:
+    parameters:
+      - $ref: "#/components/parameters/Workspace"
+      - $ref: "#/components/parameters/RunID"
+    post:
+      operationId: followUpRun
+      summary: Continue a run's conversation with a new run
+      description: |
+        Starts a run of the harness's latest version that continues the
+        conversation: the model sees the earlier runs' transcripts, with
+        secrets redacted, before the new input. Only the conversation's
+        latest run can be followed up, once it has succeeded; any other is
+        a conflict.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/FollowUp"}
+      responses:
+        "201":
+          description: The started run.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Run"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /v1/workspaces/{workspace}/runs/{id}/conversation:
+    parameters:
+      - $ref: "#/components/parameters/Workspace"
+      - $ref: "#/components/parameters/RunID"
+    get:
+      operationId: getRunConversation
+      summary: The runs of the conversation a run belongs to, oldest first
+      responses:
+        "200":
+          description: The runs.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/Run"}
+        default: {$ref: "#/components/responses/Error"}
+
   /v1/workspaces/{workspace}/runs/{id}/cancel:
     parameters:
       - $ref: "#/components/parameters/Workspace"
@@ -377,15 +420,30 @@ components:
           type: string
         input: {type: string}
 
+    FollowUp:
+      type: object
+      additionalProperties: false
+      required: [input]
+      properties:
+        input: {type: string}
+
     RunStatus:
       type: string
       enum: [running, succeeded, failed, cancelled]
 
     Run:
       type: object
-      required: [id, harness_version_id, harness, harness_version, started_by, input, status, output, steps, created_at]
+      required: [id, conversation_id, harness_version_id, harness, harness_version, started_by, input, status, output, steps, created_at]
       properties:
         id: {type: string}
+        conversation_id:
+          description: |
+            The conversation the run belongs to, named by the ID of its
+            first run, which may be this one.
+          type: string
+        follows:
+          description: The run whose conversation this run continues, if any.
+          type: string
         harness_version_id: {type: integer, format: int64}
         harness: {type: string}
         harness_version: {type: integer}

@@ -11,6 +11,63 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const conversationRuns = `-- name: ConversationRuns :many
+SELECT runs.id, runs.harness_version_id, runs.input, runs.status, runs.output, runs.steps, runs.error, runs.created_at, runs.finished_at, runs.started_by, runs.conversation_id, runs.follows, harness_versions.name AS harness, harness_versions.version AS harness_version
+FROM runs
+JOIN harness_versions ON harness_versions.id = runs.harness_version_id
+WHERE harness_versions.workspace = $1
+  AND runs.conversation_id = (SELECT c.conversation_id FROM runs c WHERE c.id = $2)
+ORDER BY runs.created_at, runs.id
+`
+
+type ConversationRunsParams struct {
+	Workspace string
+	ID        string
+}
+
+type ConversationRunsRow struct {
+	Run            Run
+	Harness        string
+	HarnessVersion int32
+}
+
+// The runs of the conversation the run named by id belongs to, oldest first,
+// if that run is one of the workspace's.
+func (q *Queries) ConversationRuns(ctx context.Context, arg ConversationRunsParams) ([]ConversationRunsRow, error) {
+	rows, err := q.db.Query(ctx, conversationRuns, arg.Workspace, arg.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ConversationRunsRow
+	for rows.Next() {
+		var i ConversationRunsRow
+		if err := rows.Scan(
+			&i.Run.ID,
+			&i.Run.HarnessVersionID,
+			&i.Run.Input,
+			&i.Run.Status,
+			&i.Run.Output,
+			&i.Run.Steps,
+			&i.Run.Error,
+			&i.Run.CreatedAt,
+			&i.Run.FinishedAt,
+			&i.Run.StartedBy,
+			&i.Run.ConversationID,
+			&i.Run.Follows,
+			&i.Harness,
+			&i.HarnessVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const failRunningRuns = `-- name: FailRunningRuns :execrows
 UPDATE runs
 SET status = 'failed', error = $1, finished_at = now()
@@ -54,7 +111,7 @@ func (q *Queries) FinishRun(ctx context.Context, arg FinishRunParams) (int64, er
 }
 
 const getRun = `-- name: GetRun :one
-SELECT runs.id, runs.harness_version_id, runs.input, runs.status, runs.output, runs.steps, runs.error, runs.created_at, runs.finished_at, runs.started_by, harness_versions.name AS harness, harness_versions.version AS harness_version
+SELECT runs.id, runs.harness_version_id, runs.input, runs.status, runs.output, runs.steps, runs.error, runs.created_at, runs.finished_at, runs.started_by, runs.conversation_id, runs.follows, harness_versions.name AS harness, harness_versions.version AS harness_version
 FROM runs
 JOIN harness_versions ON harness_versions.id = runs.harness_version_id
 WHERE runs.id = $1 AND harness_versions.workspace = $2
@@ -86,6 +143,8 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (GetRunRow, erro
 		&i.Run.CreatedAt,
 		&i.Run.FinishedAt,
 		&i.Run.StartedBy,
+		&i.Run.ConversationID,
+		&i.Run.Follows,
 		&i.Harness,
 		&i.HarnessVersion,
 	)
@@ -93,8 +152,12 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (GetRunRow, erro
 }
 
 const insertRun = `-- name: InsertRun :exec
-INSERT INTO runs (id, harness_version_id, input, started_by)
-VALUES ($1, $2, $3, $4)
+INSERT INTO runs (id, harness_version_id, input, started_by, conversation_id, follows)
+VALUES (
+    $1, $2, $3, $4,
+    COALESCE((SELECT f.conversation_id FROM runs f WHERE f.id = $5), $1),
+    $5
+)
 `
 
 type InsertRunParams struct {
@@ -102,20 +165,24 @@ type InsertRunParams struct {
 	HarnessVersionID int64
 	Input            string
 	StartedBy        string
+	Follows          pgtype.Text
 }
 
+// A run that follows another joins its conversation; any other run starts
+// one of its own.
 func (q *Queries) InsertRun(ctx context.Context, arg InsertRunParams) error {
 	_, err := q.db.Exec(ctx, insertRun,
 		arg.ID,
 		arg.HarnessVersionID,
 		arg.Input,
 		arg.StartedBy,
+		arg.Follows,
 	)
 	return err
 }
 
 const listRuns = `-- name: ListRuns :many
-SELECT runs.id, runs.harness_version_id, runs.input, runs.status, runs.output, runs.steps, runs.error, runs.created_at, runs.finished_at, runs.started_by, harness_versions.name AS harness, harness_versions.version AS harness_version
+SELECT runs.id, runs.harness_version_id, runs.input, runs.status, runs.output, runs.steps, runs.error, runs.created_at, runs.finished_at, runs.started_by, runs.conversation_id, runs.follows, harness_versions.name AS harness, harness_versions.version AS harness_version
 FROM runs
 JOIN harness_versions ON harness_versions.id = runs.harness_version_id
 WHERE harness_versions.workspace = $1
@@ -173,6 +240,8 @@ func (q *Queries) ListRuns(ctx context.Context, arg ListRunsParams) ([]ListRunsR
 			&i.Run.CreatedAt,
 			&i.Run.FinishedAt,
 			&i.Run.StartedBy,
+			&i.Run.ConversationID,
+			&i.Run.Follows,
 			&i.Harness,
 			&i.HarnessVersion,
 		); err != nil {

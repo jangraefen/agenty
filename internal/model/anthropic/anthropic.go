@@ -132,7 +132,9 @@ func (m *Model) params(req model.Request) (sdk.MessageNewParams, error) {
 		if err != nil {
 			return params, err
 		}
-		if m.historyCache != nil && i == req.History-1 {
+		// Never the request's last block: the API refuses a TTL there that
+		// differs from the automatic breakpoint's.
+		if m.historyCache != nil && i == req.History-1 && i < len(req.Messages)-1 {
 			markCache(param, *m.historyCache)
 		}
 		params.Messages = append(params.Messages, param)

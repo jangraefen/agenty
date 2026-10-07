@@ -457,25 +457,33 @@ func TestGenerate_CachesTheHistory(t *testing.T) {
 		anthropictest.TextBlock("It is on fire."),
 		map[string]any{"type": "thinking", "thinking": "", "signature": "sig-2"},
 	)
-	history := []model.Message{
-		{Role: model.RoleUser, Text: "ticket 7"},
-		{Role: model.RoleAssistant, Text: "It is on fire.", Provider: &model.ProviderPart{Name: "anthropic", Data: json.RawMessage(answer.Body)}},
+	thoughtOnly := anthropictest.Reply(t, "end_turn", map[string]any{"type": "thinking", "thinking": "", "signature": "sig-3"})
+	replies := map[string]model.Message{
+		"replayed": {Role: model.RoleAssistant, Text: "It is on fire.", Provider: &model.ProviderPart{Name: "anthropic", Data: json.RawMessage(answer.Body)}},
+		"rebuilt":  {Role: model.RoleAssistant, Text: "It is on fire."},
+		// Nothing in it can be a breakpoint, so there is none.
+		"thinking only": {Role: model.RoleAssistant, Provider: &model.ProviderPart{Name: "anthropic", Data: json.RawMessage(thoughtOnly.Body)}},
 	}
+	marked := []string{"", `{"type":"ephemeral","ttl":"1h"}`, ""}
+	none := []string{"", "", ""}
 	tests := []struct {
-		name    string
-		ttl     string
-		history int
-		want    []string
+		name, ttl, reply string
+		history          int
+		want             []string
 	}{
-		{"an hour", "1h", 2, []string{"", `{"type":"ephemeral","ttl":"1h"}`, ""}},
-		{"no history", "1h", 0, []string{"", "", ""}},
-		{"no history cache", "", 2, []string{"", "", ""}},
+		{"an hour", "1h", "replayed", 2, marked},
+		{"a rebuilt reply", "1h", "rebuilt", 2, marked},
+		{"a reply of thinking only", "1h", "thinking only", 2, none},
+		{"no history", "1h", "replayed", 0, none},
+		{"nothing after the history", "1h", "replayed", 3, none},
+		{"no history cache", "", "replayed", 2, none},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			api := anthropictest.New(t, anthropictest.Reply(t, "end_turn", anthropictest.TextBlock("done")))
 			m, err := anthropic.New(anthropic.Config{APIKey: testKey, Model: "claude-test", MaxTokens: 1024, BaseURL: api.URL, HistoryCacheTTL: tt.ttl})
 			require.NoError(t, err)
+			history := []model.Message{{Role: model.RoleUser, Text: "ticket 7"}, replies[tt.reply]}
 			messages := append(slices.Clone(history), model.Message{Role: model.RoleUser, Text: "and now?"})
 
 			_, err = m.Generate(context.Background(), model.Request{Messages: messages, History: tt.history})

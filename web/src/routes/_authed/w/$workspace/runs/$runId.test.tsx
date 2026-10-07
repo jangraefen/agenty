@@ -639,15 +639,37 @@ describe("replying", () => {
     ["failed", "the model refused", "The last run failed."],
     ["cancelled", "cancelled by ana", "The last run was cancelled."],
   ] as const)("continues a conversation whose last run %s", async (status, error, hint) => {
+    let sent: unknown = null;
     const ended = run({ status, output: "", error });
-    server.use(...conversationHandlers([ended]), finishedEvents("run-1", ended));
-    renderApp(path, TOKEN);
+    const next = run({
+      id: "run-2",
+      follows: "run-1",
+      input: "try again",
+      status: "running",
+      output: "",
+    });
+    server.use(
+      ...conversationHandlers([ended]),
+      finishedEvents("run-1", ended),
+      http.post(`${base}/runs/:id/follow-up`, ({ params }) => {
+        sent = params.id;
+        server.use(
+          ...conversationHandlers([ended, next]),
+          http.get(`${base}/runs/run-2/events`, () => liveEventStream().response()),
+        );
+        return HttpResponse.json(next, { status: 201 });
+      }),
+    );
+    const { user, history } = renderApp(path, TOKEN);
 
     const box = await screen.findByRole("textbox", { name: "Message" });
     await waitFor(() =>
       expect(box).toHaveAccessibleDescription(`${hint} A reply continues from where it stopped.`),
     );
-    expect(screen.getByRole("button", { name: "Send" })).toHaveAttribute("aria-disabled", "false");
+    await user.type(box, "try again{Enter}");
+
+    await waitFor(() => expect(history.location.pathname).toBe("/w/notes/runs/run-2"));
+    expect(sent).toBe("run-1");
   });
 
   test("reports a reply the server refuses and keeps the message", async () => {

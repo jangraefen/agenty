@@ -102,14 +102,25 @@ func conversationHistory(redact *secret.Redactor, prior []priorRun, digest strin
 // result was not recorded.
 const interruptedCall = "The run ended before this call's result was recorded: it may or may not have run. Check before repeating it."
 
+// The answers of runs that ended without one.
+const (
+	endedFailed    = "[This turn ended without an answer: the run failed.]"
+	endedCancelled = "[This turn ended without an answer: the run was cancelled.]"
+)
+
 // ended returns the transcript of r completed so that a conversation can
 // continue from it, which needs it to end with the model's answer. A run that
 // failed or was cancelled may have stopped before: then the model is told,
 // as the result of each call it made without a recorded result, that the call
 // may or may not have run, as nothing tells whether it did, and, as the
-// answer, how the run ended. No call is run again: the tool may not be
+// answer, how the run ended, in words of its own: the run's error is internal
+// text, not the model's. No call is run again: the tool may not be
 // idempotent. The completion depends only on what was stored of the finished
-// run, so every later follow-up sends the same.
+// run, so every later follow-up sends the same; changing its words changes
+// what later follow-ups send, which only drops provider forms once.
+//
+// A run that failed after its answer, as when a tool server did not stop,
+// already ends as a conversation can continue from, and is sent as it is.
 func ended(r store.Run, messages []store.TranscriptMessage) []store.TranscriptMessage {
 	if r.Status == store.RunSucceeded {
 		return messages
@@ -129,11 +140,10 @@ func ended(r store.Run, messages []store.TranscriptMessage) []store.TranscriptMe
 		}
 		messages = append(messages, store.TranscriptMessage{Message: model.Message{Role: model.RoleUser, ToolResults: results}})
 	}
-	how := "the run failed: " + r.Error
+	note := model.Message{Role: model.RoleAssistant, Text: endedFailed}
 	if r.Status == store.RunCancelled {
-		how = "the run was " + r.Error
+		note.Text = endedCancelled
 	}
-	note := model.Message{Role: model.RoleAssistant, Text: "[This turn ended without an answer: " + how + "]"}
 	return append(messages, store.TranscriptMessage{Message: note})
 }
 

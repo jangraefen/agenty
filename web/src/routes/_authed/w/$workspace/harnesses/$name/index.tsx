@@ -53,7 +53,7 @@ function HarnessPage() {
 
       <section>
         <h2 className="text-sm font-semibold">Instructions</h2>
-        <p className="mt-1 whitespace-pre-wrap break-words">{harness.instructions}</p>
+        <p className="mt-1 whitespace-pre-wrap wrap-anywhere">{harness.instructions}</p>
       </section>
       <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1 text-sm">
         <dt className="text-muted-foreground">Model</dt>

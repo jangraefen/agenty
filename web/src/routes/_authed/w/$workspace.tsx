@@ -33,16 +33,19 @@ function WorkspaceLayout() {
 
   return (
     <div className="min-h-screen">
-      <header className="flex items-center gap-4 border-b px-6 py-3">
+      <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b px-6 py-3">
         <Link to="/" className="font-semibold">
           Agenty
         </Link>
         <WorkspaceMenu workspace={workspace} workspaces={me.workspaces} />
         <PageLinks workspace={workspace} />
-        <span className="ml-auto text-sm text-muted-foreground">{me.user}</span>
-        <Button variant="outline" size="sm" onClick={signOut}>
-          Sign out
-        </Button>
+        {/* The user and signing out stay together when the header wraps. */}
+        <div className="ml-auto flex items-center gap-4">
+          <span className="text-sm text-muted-foreground">{me.user}</span>
+          <Button variant="outline" size="sm" onClick={signOut}>
+            Sign out
+          </Button>
+        </div>
       </header>
       <main className="px-6 py-4">
         <Outlet />

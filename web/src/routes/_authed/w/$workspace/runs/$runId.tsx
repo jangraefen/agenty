@@ -284,15 +284,15 @@ function Composer({ runs, latest, ready }: { runs: Run[]; latest: Run; ready: bo
           ref={box}
           id={`${id}-message`}
           rows={2}
-          placeholder={`Reply to ${latest.harness}…`}
+          placeholder="Write a reply…"
           value={text}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={keyDown}
           aria-invalid={reply.isError}
           aria-describedby={described === "" ? undefined : described}
-          className="resize-none rounded-xl"
+          className="min-w-0 flex-1 resize-none rounded-xl"
         />
-        <Button type="submit" aria-disabled={blocked}>
+        <Button type="submit" className="shrink-0" aria-disabled={blocked}>
           Send
         </Button>
       </div>

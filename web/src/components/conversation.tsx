@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useRouteContext } from "@tanstack/react-router";
-import { useId, useState } from "react";
+import { Fragment, useId, useState } from "react";
 import type { Schemas } from "@/api/client";
 import { auditQuery, transcriptQuery } from "@/api/queries";
 import type { AnswerOutcome } from "@/components/answer-notice";
@@ -55,7 +55,7 @@ export function Turn({
         <span className="text-xs text-muted-foreground">
           {run.started_by} · <time dateTime={run.created_at}>{formatTime(run.created_at)}</time>
         </span>
-        <p className="max-w-[85%] rounded-2xl rounded-br-sm bg-primary px-4 py-2 whitespace-pre-wrap break-words text-primary-foreground">
+        <p className="max-w-[85%] rounded-2xl rounded-br-sm bg-primary px-4 py-2 whitespace-pre-wrap wrap-anywhere text-primary-foreground">
           {run.input}
         </p>
       </li>
@@ -141,7 +141,7 @@ function Reply({
         {harness}
       </span>
       {text !== "" && (
-        <p className="max-w-[85%] rounded-2xl rounded-bl-sm bg-muted px-4 py-2 whitespace-pre-wrap break-words">
+        <p className="max-w-[85%] rounded-2xl rounded-bl-sm bg-muted px-4 py-2 whitespace-pre-wrap wrap-anywhere">
           {text}
         </p>
       )}
@@ -184,10 +184,10 @@ function ToolCall({
           ›
         </span>
         <span className="text-muted-foreground">Called</span>
-        <code className="font-semibold">{call.name}</code>
+        <code className="min-w-0 font-semibold wrap-anywhere">{breakable(call.name)}</code>
         <span
           className={cn(
-            "ml-auto rounded px-1.5 text-xs",
+            "ml-auto shrink-0 rounded px-1.5 text-xs",
             state === "error"
               ? "bg-red-100 text-red-900 dark:bg-red-950 dark:text-red-200"
               : "bg-muted",
@@ -223,7 +223,7 @@ function RunEnd({ run }: { run: Run }) {
         {run.status === "failed" ? "The run failed" : "The run was cancelled"}
       </h2>
       {run.error !== undefined && run.error !== "" && (
-        <p className="mt-1 whitespace-pre-wrap break-words">{run.error}</p>
+        <p className="mt-1 whitespace-pre-wrap wrap-anywhere">{run.error}</p>
       )}
     </li>
   );
@@ -324,4 +324,20 @@ function AuditLog({
       </ol>
     </details>
   );
+}
+
+// breakable lets a tool name wrap after its underscores, as in
+// files_read_text_file, before it wraps anywhere else.
+function breakable(name: string) {
+  return name.split("_").map((part, i, parts) => (
+    // biome-ignore lint/suspicious/noArrayIndexKey: the parts never reorder.
+    <Fragment key={i}>
+      {part}
+      {i < parts.length - 1 && (
+        <>
+          _<wbr />
+        </>
+      )}
+    </Fragment>
+  ));
 }

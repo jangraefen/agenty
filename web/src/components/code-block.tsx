@@ -6,7 +6,7 @@ export function CodeBlock({ children, className }: { children: ReactNode; classN
   return (
     <pre
       className={cn(
-        "rounded-md bg-muted px-3 py-2 font-mono text-xs whitespace-pre-wrap break-words",
+        "rounded-md bg-muted px-3 py-2 font-mono text-xs whitespace-pre-wrap wrap-anywhere",
         className,
       )}
     >

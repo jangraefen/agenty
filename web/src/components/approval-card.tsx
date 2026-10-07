@@ -88,7 +88,7 @@ export function ApprovalCard({
       </ul>
       <Json value={request.args} />
       <div className="flex flex-wrap items-end gap-2">
-        <div className="grid min-w-60 flex-1 gap-1">
+        <div className="grid min-w-0 grow basis-60 gap-1">
           <Label htmlFor={`${id}-reason`} className="text-xs font-normal text-muted-foreground">
             Reason (optional)
           </Label>

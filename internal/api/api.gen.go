@@ -256,7 +256,9 @@ type Run struct {
 	Status    RunStatus `json:"status"`
 	Steps     int       `json:"steps"`
 
-	// Usage The tokens of all the run's model calls so far.
+	// Usage The tokens of the model calls that wrote the run's replies so
+	// far. A call that failed, such as one whose reply was cut off, is
+	// not counted.
 	Usage Usage `json:"usage"`
 }
 

@@ -506,12 +506,13 @@ type NewMessage struct {
 }
 
 // AppendMessage stores m in the transcript of the run runID, which must
-// exist, and adds its usage to the run's. A position is written once. As with Record, content never makes
-// storing fail: invalid UTF-8 and NUL bytes in the text are replaced, and
-// tool call arguments and provider parts that are not valid JSON are kept as
-// a JSON string; a message changed so is stored as altered. A provider
-// part's JSON is otherwise kept as written, so the provider can replay it
-// exactly.
+// exist, and adds its usage to the run's. A position is written once. As
+// with Record, content never makes storing fail: invalid UTF-8 and NUL bytes
+// in the text are replaced, and tool call arguments and provider parts that
+// are not valid JSON are kept as a JSON string; a message changed so is
+// stored as altered. A provider part's JSON is otherwise kept as written, so
+// the provider can replay it exactly. A usage of all zeros is read back as
+// none.
 func (s *Store) AppendMessage(ctx context.Context, runID string, m NewMessage) error {
 	msg, position := m.Message, m.Position
 	altered := m.Altered || text(msg.Text) != msg.Text

@@ -455,7 +455,10 @@ components:
         output: {type: string}
         steps: {type: integer}
         usage:
-          description: The tokens of all the run's model calls so far.
+          description: |
+            The tokens of the model calls that wrote the run's replies so
+            far. A call that failed, such as one whose reply was cut off, is
+            not counted.
           allOf: [{$ref: "#/components/schemas/Usage"}]
         error:
           description: Why the run failed, or who cancelled it.

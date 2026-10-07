@@ -369,7 +369,11 @@ export interface components {
             status: components["schemas"]["RunStatus"];
             output: string;
             steps: number;
-            /** @description The tokens of all the run's model calls so far. */
+            /**
+             * @description The tokens of the model calls that wrote the run's replies so
+             *     far. A call that failed, such as one whose reply was cut off, is
+             *     not counted.
+             */
             usage: components["schemas"]["Usage"];
             /** @description Why the run failed, or who cancelled it. */
             error?: string;

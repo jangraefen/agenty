@@ -43,7 +43,8 @@ type Message struct {
 	// treats it as opaque data that is stored with the message.
 	Provider *ProviderPart `json:"provider,omitempty"`
 	// Usage is the tokens of the model call that wrote a reply, if the
-	// provider reports them.
+	// provider reports them. A model call that fails, such as one whose
+	// reply was cut off, writes no reply, and its tokens are not counted.
 	Usage *Usage `json:"usage,omitempty"`
 }
 

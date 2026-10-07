@@ -10,6 +10,7 @@ import {
 } from "@/api/queries";
 import { RunStatusBadge } from "@/components/run-status";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { formatDuration, formatTime } from "@/lib/format";
 
 // The filters in a search, ignoring anything else: the router passes on the
@@ -82,9 +83,9 @@ function Runs() {
     <section>
       <div className="flex flex-wrap items-center gap-4">
         <h1 className="mr-auto text-xl font-semibold">Runs</h1>
-        <label htmlFor={`${id}-harness`} className="text-sm">
+        <Label htmlFor={`${id}-harness`} className="font-normal">
           Harness
-        </label>
+        </Label>
         <select
           id={`${id}-harness`}
           value={filters.harness ?? ""}
@@ -103,9 +104,9 @@ function Runs() {
             </option>
           ))}
         </select>
-        <label htmlFor={`${id}-status`} className="text-sm">
+        <Label htmlFor={`${id}-status`} className="font-normal">
           Status
-        </label>
+        </Label>
         <select
           id={`${id}-status`}
           value={filters.status ?? ""}

@@ -8,6 +8,7 @@ import type { AnswerOutcome } from "@/components/answer-notice";
 import { Json } from "@/components/json";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useNow } from "@/hooks/use-now";
 import { formatRemaining, formatTime } from "@/lib/format";
 
@@ -89,9 +90,9 @@ export function ApprovalCard({
       <Json value={request.args} />
       <div className="flex flex-wrap items-end gap-2">
         <div className="grid min-w-60 flex-1 gap-1">
-          <label htmlFor={`${id}-reason`} className="text-xs text-muted-foreground">
+          <Label htmlFor={`${id}-reason`} className="text-xs font-normal text-muted-foreground">
             Reason (optional)
-          </label>
+          </Label>
           <Input
             id={`${id}-reason`}
             value={reason}

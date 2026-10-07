@@ -3,7 +3,10 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useId, useState } from "react";
 import { unwrap } from "@/api/client";
 import { harnessQuery } from "@/api/queries";
+import { CodeBlock } from "@/components/code-block";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { formatTime } from "@/lib/format";
 import { harnessYaml } from "@/lib/harness-yaml";
 
@@ -89,9 +92,7 @@ function HarnessPage() {
           harness.policy.map((module) => (
             <figure key={module.name} className="mt-2">
               <figcaption className="text-xs text-muted-foreground">{module.name}</figcaption>
-              <pre className="mt-1 rounded-md bg-muted px-3 py-2 font-mono text-xs whitespace-pre-wrap break-words">
-                {module.source}
-              </pre>
+              <CodeBlock className="mt-1">{module.source}</CodeBlock>
             </figure>
           ))
         )}
@@ -104,9 +105,7 @@ function HarnessPage() {
           The harness file's fields, read-only; its policy is shown above.
         </p>
         <figure aria-labelledby={`${id}-yaml`} className="mt-2">
-          <pre className="rounded-md bg-muted px-3 py-2 font-mono text-xs whitespace-pre-wrap break-words">
-            {harnessYaml(harness)}
-          </pre>
+          <CodeBlock>{harnessYaml(harness)}</CodeBlock>
         </figure>
       </section>
     </article>
@@ -138,10 +137,10 @@ function StartRun({ name }: { name: string }) {
 
   return (
     <form onSubmit={submit} className="grid gap-2 rounded-md border p-4">
-      <label htmlFor={`${id}-input`} className="text-sm font-semibold">
+      <Label htmlFor={`${id}-input`} className="font-semibold">
         Input
-      </label>
-      <textarea
+      </Label>
+      <Textarea
         id={`${id}-input`}
         required
         rows={3}
@@ -149,7 +148,6 @@ function StartRun({ name }: { name: string }) {
         onChange={(event) => setInput(event.target.value)}
         aria-invalid={start.isError}
         aria-describedby={start.isError ? `${id}-error` : undefined}
-        className="rounded-md border bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring"
       />
       {start.isError && (
         <p id={`${id}-error`} role="alert" className="text-sm text-destructive">

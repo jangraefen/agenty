@@ -1,14 +1,12 @@
 import { createFormHook, createFormHookContexts } from "@tanstack/react-form";
 import { type ReactNode, useId } from "react";
 import { Input } from "@/components/ui/input";
-import { cn } from "@/lib/utils";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 
 // The app's form hook, whose fields bring their label, hint and error.
 
 const { fieldContext, formContext, useFieldContext } = createFormHookContexts();
-
-const textareaClass =
-  "w-full rounded-md border bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring aria-invalid:border-destructive aria-invalid:ring-destructive";
 
 interface ControlProps {
   id: string;
@@ -40,9 +38,7 @@ function Field({
     .join(" ");
   return (
     <div className="grid gap-1">
-      <label htmlFor={id} className="text-sm font-medium">
-        {label}
-      </label>
+      <Label htmlFor={id}>{label}</Label>
       {children({
         id,
         "aria-invalid": error !== undefined,
@@ -103,11 +99,11 @@ function TextareaField({
   return (
     <Field label={label} hint={hint}>
       {(props) => (
-        <textarea
+        <Textarea
           {...props}
           rows={rows}
           spellCheck={!code}
-          className={cn(textareaClass, code && "font-mono")}
+          className={code ? "font-mono" : undefined}
           value={field.state.value}
           onBlur={field.handleBlur}
           onChange={(event) => field.handleChange(event.target.value)}

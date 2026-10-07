@@ -1,4 +1,5 @@
 import { useId, useRef } from "react";
+import { CodeBlock } from "@/components/code-block";
 import { useAppForm } from "@/components/form";
 import { Button } from "@/components/ui/button";
 import {
@@ -198,9 +199,7 @@ export function HarnessForm({
         <form.Subscribe selector={(state) => state.values}>
           {(values) => (
             <figure aria-labelledby={`${id}-preview`} className="mt-2">
-              <pre className="rounded-md bg-muted px-3 py-2 font-mono text-xs whitespace-pre-wrap break-words">
-                {harnessYaml(toHarness(values))}
-              </pre>
+              <CodeBlock>{harnessYaml(toHarness(values))}</CodeBlock>
             </figure>
           )}
         </form.Subscribe>

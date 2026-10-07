@@ -92,16 +92,11 @@ function RunDetails({
         <RunStatusBadge status={run.status} />
         {running && (
           <span className="ml-auto">
-            {/* Not disabled, which would drop the focus, until the run ends. */}
             <Button
               variant="destructive"
               size="sm"
               aria-disabled={!cancel.isIdle && !cancel.isError}
-              onClick={() => {
-                if (cancel.isIdle || cancel.isError) {
-                  cancel.mutate();
-                }
-              }}
+              onClick={() => cancel.mutate()}
             >
               {cancel.isSuccess ? "Cancelling…" : "Cancel run"}
             </Button>

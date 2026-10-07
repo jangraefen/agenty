@@ -59,13 +59,7 @@ export function ApprovalCard({
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: approvalsQuery(api, workspace).queryKey }),
   });
-  // Not disabled, which would drop the focus.
   const blocked = expired || answer.isPending;
-  function send(approved: boolean) {
-    if (!blocked) {
-      answer.mutate(approved);
-    }
-  }
 
   return (
     <li className="grid gap-2 rounded-md border bg-background p-4 text-sm">
@@ -105,14 +99,18 @@ export function ApprovalCard({
             readOnly={expired}
           />
         </div>
-        <Button aria-disabled={blocked} aria-describedby={`${id}-tool`} onClick={() => send(true)}>
+        <Button
+          aria-disabled={blocked}
+          aria-describedby={`${id}-tool`}
+          onClick={() => answer.mutate(true)}
+        >
           Approve
         </Button>
         <Button
           variant="destructive"
           aria-disabled={blocked}
           aria-describedby={`${id}-tool`}
-          onClick={() => send(false)}
+          onClick={() => answer.mutate(false)}
         >
           Reject
         </Button>

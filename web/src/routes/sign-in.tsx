@@ -70,7 +70,7 @@ function SignIn() {
             {error}
           </p>
         )}
-        <Button type="submit" disabled={signIn.isPending}>
+        <Button type="submit" aria-disabled={signIn.isPending}>
           Sign in
         </Button>
       </form>

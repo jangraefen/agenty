@@ -24,16 +24,28 @@ const buttonVariants = cva(
   },
 );
 
+// A busy or blocked button is marked aria-disabled rather than disabled,
+// which would drop the focus; marked so, it ignores clicks and does not
+// submit its form.
 function Button({
   className,
   variant,
   size,
+  onClick,
   ...props
 }: React.ComponentProps<"button"> & VariantProps<typeof buttonVariants>) {
+  const blocked = props["aria-disabled"] === true || props["aria-disabled"] === "true";
   return (
     <button
       data-slot="button"
       className={cn(buttonVariants({ variant, size, className }))}
+      onClick={(event) => {
+        if (blocked) {
+          event.preventDefault();
+          return;
+        }
+        onClick?.(event);
+      }}
       {...props}
     />
   );

@@ -70,9 +70,6 @@ function Runs() {
   }, [focusRun]);
 
   async function loadMore() {
-    if (runs.isFetchingNextPage) {
-      return;
-    }
     const result = await runs.fetchNextPage();
     if (result.isSuccess) {
       // An empty page has no run to focus, and the table takes the focus.
@@ -204,7 +201,6 @@ function Runs() {
         <Button
           variant="outline"
           className="mt-4"
-          // Not disabled, which would drop the focus.
           aria-disabled={runs.isFetchingNextPage}
           onClick={() => void loadMore()}
         >

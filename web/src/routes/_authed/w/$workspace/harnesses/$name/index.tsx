@@ -133,9 +133,7 @@ function StartRun({ name }: { name: string }) {
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!start.isPending) {
-      start.mutate();
-    }
+    start.mutate();
   }
 
   return (
@@ -158,7 +156,6 @@ function StartRun({ name }: { name: string }) {
           The run could not be started: {start.error.message}
         </p>
       )}
-      {/* Not disabled, which would drop the focus. */}
       <Button type="submit" className="justify-self-start" aria-disabled={start.isPending}>
         Start run
       </Button>

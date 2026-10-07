@@ -185,7 +185,6 @@ export function HarnessForm({
         )}
         <form.Subscribe selector={(state) => state.isSubmitting}>
           {(submitting) => (
-            // Not disabled, which would drop the focus.
             <Button type="submit" className="justify-self-start" aria-disabled={submitting}>
               {submitLabel}
             </Button>

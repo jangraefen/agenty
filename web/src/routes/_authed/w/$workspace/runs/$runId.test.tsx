@@ -1,7 +1,7 @@
 import { focusManager } from "@tanstack/react-query";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
-import { beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { apiUrl } from "@/config";
 import { approvalRequest, auditRecord, run } from "@/test/fixtures";
 import { renderApp } from "@/test/render";
@@ -16,6 +16,20 @@ import {
 
 const base = `${apiUrl}/v1/workspaces/notes`;
 const path = "/w/notes/runs/run-1";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+// Returns to the page once the run it shows is stale: a page loads its data
+// before it shows, and a loaded query counts as fresh for a second.
+function refocusLater() {
+  vi.setSystemTime(Date.now() + 1000);
+  act(() => {
+    focusManager.setFocused(false);
+    focusManager.setFocused(true);
+  });
+}
 
 function runHandler(value: Schemas["Run"]) {
   return http.get(`${base}/runs/run-1`, () => HttpResponse.json(value));
@@ -120,10 +134,7 @@ describe("the run page", () => {
     await screen.findByText("running");
 
     hold = true;
-    act(() => {
-      focusManager.setFocused(false);
-      focusManager.setFocused(true);
-    });
+    refocusLater();
     await waitFor(() => {
       expect(release).not.toBeNull();
     });
@@ -153,10 +164,7 @@ describe("the run page", () => {
     await screen.findByRole("heading", { name: "notes v3" });
 
     fail = true;
-    act(() => {
-      focusManager.setFocused(false);
-      focusManager.setFocused(true);
-    });
+    refocusLater();
 
     expect(await screen.findByRole("alert")).toHaveTextContent("boom");
     expect(screen.getByRole("heading", { name: "notes v3" })).toBeInTheDocument();

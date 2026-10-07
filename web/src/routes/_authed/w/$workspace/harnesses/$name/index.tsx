@@ -1,14 +1,11 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useId, useState } from "react";
-import { ApiError, unwrap } from "@/api/client";
+import { unwrap } from "@/api/client";
 import { harnessQuery } from "@/api/queries";
-import type { components } from "@/api/schema";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { formatTime } from "@/lib/format";
 import { harnessYaml } from "@/lib/harness-yaml";
-
-type HarnessVersion = components["schemas"]["HarnessVersion"];
 
 export const Route = createFileRoute("/_authed/w/$workspace/harnesses/$name/")({
   component: HarnessPage,
@@ -17,37 +14,7 @@ export const Route = createFileRoute("/_authed/w/$workspace/harnesses/$name/")({
 function HarnessPage() {
   const { workspace, name } = Route.useParams();
   const { api } = Route.useRouteContext();
-  const harness = useQuery(harnessQuery(api, workspace, name));
-
-  if (harness.data !== undefined) {
-    return <HarnessDetails stored={harness.data} />;
-  }
-  if (harness.isError) {
-    if (harness.error instanceof ApiError && harness.error.status === 404) {
-      return (
-        <section>
-          <h1 className="text-xl font-semibold">Harness not found</h1>
-          <Link
-            to="/w/$workspace/harnesses"
-            params={{ workspace }}
-            className="mt-2 inline-block underline"
-          >
-            All harnesses
-          </Link>
-        </section>
-      );
-    }
-    return (
-      <p role="alert" className="text-destructive">
-        The harness could not be loaded: {harness.error.message}
-      </p>
-    );
-  }
-  return <p className="text-muted-foreground">Loading the harness…</p>;
-}
-
-function HarnessDetails({ stored }: { stored: HarnessVersion }) {
-  const { workspace } = Route.useParams();
+  const { data: stored } = useSuspenseQuery(harnessQuery(api, workspace, name));
   const { harness } = stored;
   const id = useId();
 

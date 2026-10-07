@@ -1,17 +1,19 @@
-import { useQuery } from "@tanstack/react-query";
+import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { harnessesQuery } from "@/api/queries";
 import { buttonVariants } from "@/components/ui/button";
 import { formatTime } from "@/lib/format";
 
 export const Route = createFileRoute("/_authed/w/$workspace/harnesses/")({
+  loader: ({ context: { queryClient, api }, params }) =>
+    queryClient.ensureQueryData(harnessesQuery(api, params.workspace)),
   component: Harnesses,
 });
 
 function Harnesses() {
   const { workspace } = Route.useParams();
   const { api } = Route.useRouteContext();
-  const harnesses = useQuery(harnessesQuery(api, workspace));
+  const { data: harnesses } = useSuspenseQuery(harnessesQuery(api, workspace));
 
   return (
     <section>
@@ -21,18 +23,11 @@ function Harnesses() {
           New harness
         </Link>
       </div>
-      {harnesses.isPending && <p className="mt-6 text-muted-foreground">Loading harnesses…</p>}
-      {harnesses.isError && (
-        <p role="alert" className="mt-6 text-destructive">
-          The harnesses could not be loaded: {harnesses.error.message}
-        </p>
-      )}
-      {harnesses.data?.length === 0 && (
+      {harnesses.length === 0 ? (
         <p className="mt-6 text-muted-foreground">
           No harnesses yet. Create one, or apply a harness file with <code>agenty apply</code>.
         </p>
-      )}
-      {harnesses.data !== undefined && harnesses.data.length > 0 && (
+      ) : (
         <table className="mt-6 w-full text-left text-sm">
           <caption className="sr-only">Harnesses</caption>
           <thead className="border-b text-muted-foreground">
@@ -45,7 +40,7 @@ function Harnesses() {
             </tr>
           </thead>
           <tbody>
-            {harnesses.data.map(({ harness, version, created_at }) => (
+            {harnesses.map(({ harness, version, created_at }) => (
               <tr key={harness.name} className="border-b last:border-0">
                 <td className="py-2 pr-4">
                   <Link

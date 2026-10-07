@@ -58,3 +58,13 @@ test("the header links to the harnesses", async () => {
     "page",
   );
 });
+
+test("says why the harnesses cannot be loaded, under the workspace's header", async () => {
+  server.use(
+    http.get(`${base}/harnesses`, () => HttpResponse.json({ error: "boom" }, { status: 500 })),
+  );
+  renderApp("/w/notes/harnesses", TOKEN);
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("boom");
+  expect(screen.getByRole("navigation", { name: "Pages" })).toBeInTheDocument();
+});

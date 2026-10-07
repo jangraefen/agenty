@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useQuery, useSuspenseInfiniteQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useId, useRef, useState } from "react";
 import {
@@ -24,6 +24,9 @@ function runFilters(search: Record<string, unknown>): RunFilters {
 
 export const Route = createFileRoute("/_authed/w/$workspace/runs/")({
   validateSearch: runFilters,
+  loaderDeps: ({ search }) => runFilters(search),
+  loader: ({ context: { queryClient, api }, params, deps }) =>
+    queryClient.ensureInfiniteQueryData(runsQuery(api, params.workspace, deps)),
   component: Runs,
 });
 
@@ -35,7 +38,7 @@ function Runs() {
   const { api } = Route.useRouteContext();
   const navigate = Route.useNavigate();
   const id = useId();
-  const runs = useInfiniteQuery(runsQuery(api, workspace, filters));
+  const runs = useSuspenseInfiniteQuery(runsQuery(api, workspace, filters));
   const harnesses = useQuery(harnessesQuery(api, workspace));
 
   const harnessNames = new Set(harnesses.data?.map((version) => version.harness.name));
@@ -47,7 +50,7 @@ function Runs() {
     void navigate({ search: next, replace: true });
   }
 
-  const pages = runs.data?.pages ?? [];
+  const { pages } = runs.data;
   const shown = pages.reduce((count, page) => count + page.runs.length, 0);
 
   // After loading more, the focus moves to the first run of the page loaded,
@@ -125,8 +128,7 @@ function Runs() {
         </select>
       </div>
 
-      {runs.isPending && <p className="mt-6 text-muted-foreground">Loading runs…</p>}
-      {runs.isError && (
+      {runs.error !== null && (
         <p role="alert" className="mt-6 text-destructive">
           The runs could not be loaded: {runs.error.message}
         </p>
@@ -134,11 +136,9 @@ function Runs() {
       <p role="status" className="sr-only">
         {runs.isFetchingNextPage
           ? "Loading more runs…"
-          : runs.data === undefined
-            ? ""
-            : `${shown} ${shown === 1 ? "run" : "runs"} shown.`}
+          : `${shown} ${shown === 1 ? "run" : "runs"} shown.`}
       </p>
-      {runs.isSuccess && shown === 0 && (
+      {shown === 0 && (
         <p className="mt-6 text-muted-foreground">
           {filtered ? "No runs match these filters." : "No runs yet."}
         </p>

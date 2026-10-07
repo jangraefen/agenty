@@ -60,3 +60,14 @@ export function eventStream(events: { event: string; data: unknown }[]) {
   live.close();
   return response;
 }
+
+// Answers what a workspace's pages load with nothing: no runs, harnesses or
+// waiting approvals.
+export function emptyWorkspaceHandlers(workspace: string) {
+  const base = `${apiUrl}/v1/workspaces/${workspace}`;
+  return [
+    http.get(`${base}/runs`, () => HttpResponse.json<Schemas["RunList"]>({ runs: [] })),
+    http.get(`${base}/harnesses`, () => HttpResponse.json([])),
+    http.get(`${base}/approvals`, () => HttpResponse.json([])),
+  ];
+}

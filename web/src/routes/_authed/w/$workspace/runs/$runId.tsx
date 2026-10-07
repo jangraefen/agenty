@@ -1,7 +1,7 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useId, useState } from "react";
-import { ApiError, unwrap } from "@/api/client";
+import { unwrap } from "@/api/client";
 import { approvalsQuery, runQuery, transcriptQuery } from "@/api/queries";
 import type { components } from "@/api/schema";
 import { AnswerNotice, type AnswerOutcome } from "@/components/answer-notice";
@@ -11,56 +11,44 @@ import { RunStatusBadge } from "@/components/run-status";
 import { Button } from "@/components/ui/button";
 import { useRunEvents } from "@/hooks/use-run-events";
 import { formatDuration, formatTime } from "@/lib/format";
+import { orNotFound } from "@/lib/not-found";
 
 type Schemas = components["schemas"];
 
 export const Route = createFileRoute("/_authed/w/$workspace/runs/$runId")({
+  loader: ({ context: { queryClient, api }, params }) =>
+    orNotFound(queryClient.ensureQueryData(runQuery(api, params.workspace, params.runId))),
   component: RunPage,
+  notFoundComponent: RunNotFound,
 });
 
 function RunPage() {
   const { workspace, runId } = Route.useParams();
   const { api } = Route.useRouteContext();
-  const run = useQuery(runQuery(api, workspace, runId));
+  const run = useSuspenseQuery(runQuery(api, workspace, runId));
   const events = useRunEvents(api, workspace, runId);
+  return (
+    <>
+      {run.isError && (
+        <p role="alert" className="mb-4 text-sm text-destructive">
+          The run could not be refreshed: {run.error.message}
+        </p>
+      )}
+      <RunDetails run={run.data} events={events} />
+    </>
+  );
+}
 
-  if (run.data !== undefined) {
-    return (
-      <>
-        {run.isError && (
-          <p role="alert" className="mb-4 text-sm text-destructive">
-            The run could not be refreshed: {run.error.message}
-          </p>
-        )}
-        <RunDetails run={run.data} events={events} />
-      </>
-    );
-  }
-  if (run.isPending) {
-    return <p className="text-muted-foreground">Loading the run…</p>;
-  }
-  if (run.isError) {
-    if (run.error instanceof ApiError && run.error.status === 404) {
-      return (
-        <section>
-          <h1 className="text-xl font-semibold">Run not found</h1>
-          <Link
-            to="/w/$workspace/runs"
-            params={{ workspace }}
-            className="mt-2 inline-block underline"
-          >
-            All runs
-          </Link>
-        </section>
-      );
-    }
-    return (
-      <p role="alert" className="text-destructive">
-        The run could not be loaded: {run.error.message}
-      </p>
-    );
-  }
-  return null;
+function RunNotFound() {
+  const { workspace } = Route.useParams();
+  return (
+    <section>
+      <h1 className="text-xl font-semibold">Run not found</h1>
+      <Link to="/w/$workspace/runs" params={{ workspace }} className="mt-2 inline-block underline">
+        All runs
+      </Link>
+    </section>
+  );
 }
 
 function RunDetails({

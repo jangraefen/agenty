@@ -1,9 +1,13 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
-import { describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test } from "vitest";
 import { apiUrl } from "@/config";
 import { renderApp } from "@/test/render";
-import { meHandler, server, TOKEN } from "@/test/server";
+import { emptyWorkspaceHandlers, meHandler, server, TOKEN } from "@/test/server";
+
+beforeEach(() => {
+  server.use(...emptyWorkspaceHandlers("notes"), ...emptyWorkspaceHandlers("ops"));
+});
 
 describe("signing in", () => {
   test("without a token, every page asks to sign in", async () => {
@@ -34,9 +38,6 @@ describe("signing in", () => {
         asked += 1;
         return HttpResponse.json({ user: "demo", workspaces: ["notes"] });
       }),
-      http.get(`${apiUrl}/v1/workspaces/notes/runs`, () => HttpResponse.json({ runs: [] })),
-      http.get(`${apiUrl}/v1/workspaces/notes/harnesses`, () => HttpResponse.json([])),
-      http.get(`${apiUrl}/v1/workspaces/notes/approvals`, () => HttpResponse.json([])),
     );
     const { user } = renderApp("/sign-in", null);
 

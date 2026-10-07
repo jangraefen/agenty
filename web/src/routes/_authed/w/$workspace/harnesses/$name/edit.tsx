@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { harnessQuery } from "@/api/queries";
 import { HarnessForm } from "@/components/harness-form";
@@ -12,7 +12,7 @@ export const Route = createFileRoute("/_authed/w/$workspace/harnesses/$name/edit
 function EditHarness() {
   const { workspace, name } = Route.useParams();
   const { api } = Route.useRouteContext();
-  const harness = useQuery(harnessQuery(api, workspace, name));
+  const { data: harness } = useSuspenseQuery(harnessQuery(api, workspace, name));
   const { save, error } = useSaveHarness(api, workspace, false);
 
   return (
@@ -25,30 +25,20 @@ function EditHarness() {
         Back to {name}
       </Link>
       <h1 className="text-xl font-semibold">Edit {name}</h1>
-      {harness.isPending && <p className="text-muted-foreground">Loading the harness…</p>}
-      {harness.isError && (
-        <p role="alert" className="text-destructive">
-          The harness could not be loaded: {harness.error.message}
-        </p>
-      )}
-      {harness.data !== undefined && (
-        <>
-          <p className="text-sm text-muted-foreground">
-            Editing version {harness.data.version}. Saving stores the changes as the next version;
-            runs keep the version they ran.
-          </p>
-          <HarnessForm
-            // A form starts from its initial values once; a newer version
-            // starts a new form.
-            key={harness.data.version}
-            initial={fromHarness(harness.data.harness)}
-            creating={false}
-            submitLabel="Save as a new version"
-            error={error}
-            onSubmit={save}
-          />
-        </>
-      )}
+      <p className="text-sm text-muted-foreground">
+        Editing version {harness.version}. Saving stores the changes as the next version; runs keep
+        the version they ran.
+      </p>
+      <HarnessForm
+        // A form starts from its initial values once; a newer version starts
+        // a new form.
+        key={harness.version}
+        initial={fromHarness(harness.harness)}
+        creating={false}
+        submitLabel="Save as a new version"
+        error={error}
+        onSubmit={save}
+      />
     </article>
   );
 }

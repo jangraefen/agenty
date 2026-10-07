@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { approvalsQuery } from "@/api/queries";
@@ -6,13 +6,18 @@ import { AnswerNotice, type AnswerOutcome } from "@/components/answer-notice";
 import { ApprovalCard } from "@/components/approval-card";
 
 export const Route = createFileRoute("/_authed/w/$workspace/approvals")({
+  loader: ({ context: { queryClient, api }, params }) =>
+    queryClient.ensureQueryData(approvalsQuery(api, params.workspace)),
   component: Approvals,
 });
 
 function Approvals() {
   const { workspace } = Route.useParams();
   const { api } = Route.useRouteContext();
-  const approvals = useQuery({ ...approvalsQuery(api, workspace), refetchInterval: 5000 });
+  const { data: approvals } = useSuspenseQuery({
+    ...approvalsQuery(api, workspace),
+    refetchInterval: 5000,
+  });
   const [outcome, setOutcome] = useState<AnswerOutcome | null>(null);
 
   return (
@@ -23,18 +28,11 @@ function Approvals() {
         is rejected when its time runs out.
       </p>
       <AnswerNotice outcome={outcome} />
-      {approvals.isPending && <p className="text-muted-foreground">Loading approvals…</p>}
-      {approvals.isError && (
-        <p role="alert" className="text-destructive">
-          The approvals could not be loaded: {approvals.error.message}
-        </p>
-      )}
-      {approvals.data?.length === 0 && (
+      {approvals.length === 0 ? (
         <p className="text-muted-foreground">Nothing is waiting for approval.</p>
-      )}
-      {approvals.data !== undefined && approvals.data.length > 0 && (
+      ) : (
         <ul aria-label="Waiting approvals" className="grid gap-3">
-          {approvals.data.map((request) => (
+          {approvals.map((request) => (
             <ApprovalCard
               key={request.id}
               request={request}

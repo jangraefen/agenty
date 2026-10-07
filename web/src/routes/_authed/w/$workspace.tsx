@@ -51,8 +51,9 @@ function WorkspaceLayout() {
   );
 }
 
-// WorkspaceMenu switches to another of the user's workspaces. Not modal, so
-// the page stays usable while it is open.
+// WorkspaceMenu switches to another of the user's workspaces. Not modal: a
+// modal menu locks scrolling with an injected <style> element, which the
+// Content-Security-Policy refuses, and the page stays usable while it is open.
 function WorkspaceMenu({ workspace, workspaces }: { workspace: string; workspaces: string[] }) {
   return (
     <DropdownMenu modal={false}>

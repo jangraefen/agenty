@@ -69,7 +69,8 @@ func TestConversationHistory_SendsOnlyValidProviderForms(t *testing.T) {
 // TestConversationHistory_SendsOnlyValidProviderFormsAtRandom simulates
 // random conversations, which must also be sent only valid forms.
 func TestConversationHistory_SendsOnlyValidProviderFormsAtRandom(t *testing.T) {
-	rnd := rand.New(rand.NewPCG(1, 2))
+	// Seeded, so a failure replays.
+	rnd := rand.New(rand.NewPCG(1, 2)) //nolint:gosec // G404: a test simulation, not a secret.
 	for range 500 {
 		turns := make([]turn, 2+rnd.IntN(8))
 		for i := range turns {

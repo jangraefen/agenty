@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -86,4 +87,58 @@ func TestRun_ContinuesOnlyAfterAnAnswer(t *testing.T) {
 			assert.Empty(t, tr.messages, "nothing is recorded")
 		})
 	}
+}
+
+func TestAgent_PromptDigest(t *testing.T) {
+	digest := func(change func(*fixture)) string {
+		t.Helper()
+		f := newFixture(3)
+		change(f)
+		a, err := agent.New(context.Background(), f.config(modeltest.NewScripted()))
+		require.NoError(t, err)
+		return a.PromptDigest()
+	}
+	same := digest(func(*fixture) {})
+
+	assert.Equal(t, same, digest(func(*fixture) {}), "the same harness and tools give the same digest")
+	assert.Equal(t, same, digest(func(f *fixture) { f.harness.Limits.MaxSteps = 9 }), "limits are not sent to the model")
+	changes := map[string]func(*fixture){
+		"instructions":     func(f *fixture) { f.harness.Instructions = "Shout." },
+		"model":            func(f *fixture) { f.harness.Model.Name = "other" },
+		"grants":           func(f *fixture) { f.harness.Tools = []string{"tickets_read"} },
+		"tool description": func(f *fixture) { f.read.Description = "Reads a ticket." },
+	}
+	for name, change := range changes {
+		assert.NotEqual(t, same, digest(change), "a change of %s changes the digest", name)
+	}
+}
+
+// TestRun_ShowsCallsOfAToollessHistoryAsText: a harness that grants no tools
+// any more is offered none, and providers refuse a conversation with tool
+// calls but no tools, so the earlier calls and results reach the model as
+// text, in place of the reply's provider form.
+func TestRun_ShowsCallsOfAToollessHistoryAsText(t *testing.T) {
+	f := newFixture(3)
+	f.harness.Tools = nil
+	m := modeltest.NewScripted(modeltest.Reply("It was on fire."))
+	a, err := agent.New(context.Background(), f.config(m))
+	require.NoError(t, err)
+	history := earlier()
+	history[1].Text = "Let me look."
+	history[1].Provider = &model.ProviderPart{Name: "scripted", Data: json.RawMessage(`{"thinking":"look it up"}`)}
+	history[2].ToolResults[0].IsError = true
+
+	_, err = a.Start().Continue(context.Background(), history, "what was it?")
+
+	require.NoError(t, err)
+	require.Len(t, m.Requests(), 1)
+	want := []model.Message{
+		history[0],
+		{Role: model.RoleAssistant, Text: "Let me look.\n\n[called tickets_read with {\"id\":7}]"},
+		{Role: model.RoleUser, Text: "[tickets_read failed: {\"title\":\"Printer on fire\"}]"},
+		history[3],
+		{Role: model.RoleUser, Text: "what was it?"},
+	}
+	assert.Equal(t, want, m.Requests()[0].Messages)
+	assert.NotNil(t, history[1].Provider, "the caller's history is not changed")
 }

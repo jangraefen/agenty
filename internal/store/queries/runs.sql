@@ -1,9 +1,9 @@
 -- name: InsertRun :exec
 -- A run that follows another joins its conversation; any other run starts
 -- one of its own.
-INSERT INTO runs (id, harness_version_id, input, started_by, conversation_id, follows)
+INSERT INTO runs (id, harness_version_id, input, started_by, prompt_digest, conversation_id, follows)
 VALUES (
-    sqlc.arg(id), sqlc.arg(harness_version_id), sqlc.arg(input), sqlc.arg(started_by),
+    sqlc.arg(id), sqlc.arg(harness_version_id), sqlc.arg(input), sqlc.arg(started_by), sqlc.arg(prompt_digest),
     COALESCE((SELECT f.conversation_id FROM runs f WHERE f.id = sqlc.narg(follows)), sqlc.arg(id)),
     sqlc.narg(follows)
 );

@@ -47,6 +47,7 @@ type Run struct {
 	StartedBy        string
 	ConversationID   string
 	Follows          pgtype.Text
+	PromptDigest     string
 }
 
 type RunMessage struct {
@@ -59,4 +60,5 @@ type RunMessage struct {
 	CreatedAt    time.Time
 	Provider     string
 	ProviderData []byte
+	Altered      bool
 }

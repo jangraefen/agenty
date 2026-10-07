@@ -14,6 +14,7 @@ import (
 	"github.com/jangraefen/agenty/internal/model"
 	"github.com/jangraefen/agenty/internal/model/modeltest"
 	"github.com/jangraefen/agenty/internal/policy"
+	"github.com/jangraefen/agenty/internal/store"
 )
 
 // finish waits until the run has finished and returns how it ended.
@@ -232,18 +233,23 @@ func TestInvariant_FollowUpsRedactWithTodaysSecrets(t *testing.T) {
 	require.Equal(t, api.RunStatusSucceeded, f.finish(t, first.ID).Status)
 	// As a transcript stored before the token was a configured secret has it.
 	ctx := context.Background()
-	require.NoError(t, f.store.AppendMessage(ctx, first.ID, 2, model.Message{Role: model.RoleUser, Text: "the token is " + token}))
-	require.NoError(t, f.store.AppendMessage(ctx, first.ID, 3, model.Message{Role: model.RoleAssistant, Text: "noted: " + token}))
-	m := f.script(modeltest.Reply("ok"))
-
+	require.NoError(t, f.store.AppendMessage(ctx, first.ID, store.NewMessage{Position: 2, Message: model.Message{Role: model.RoleUser, Text: "the token is " + token}}))
+	require.NoError(t, f.store.AppendMessage(ctx, first.ID, store.NewMessage{Position: 3, Message: model.Message{Role: model.RoleAssistant, Text: "noted: " + token}}))
+	f.script(thought("two"))
 	second := f.followUp(t, aliceToken, first.ID, "what was it?")
 	f.finish(t, second.ID)
+	m := f.script(modeltest.Reply("ok"))
+
+	third := f.followUp(t, aliceToken, second.ID, "and again?")
+	f.finish(t, third.ID)
 
 	require.Len(t, m.Requests(), 1)
 	sent, err := json.Marshal(m.Requests()[0].Messages)
 	require.NoError(t, err)
 	assert.NotContains(t, string(sent), token)
 	assert.Contains(t, string(sent), "the token is [redacted]")
+	assert.Empty(t, replayed(m.Requests()[0].Messages),
+		"the second run may have seen the old message as it was, so no reply since is sent in its provider form")
 }
 
 // TestFollowUp_RacingFollowUpsDoNotBranch follows up one run many times at
@@ -288,4 +294,96 @@ func TestFollowUp_RacingFollowUpsDoNotBranch(t *testing.T) {
 	var conversation []api.Run
 	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+first.ID+"/conversation", nil, &conversation))
 	assert.Len(t, conversation, 2)
+}
+
+// thought is a reply with a provider form, as Anthropic's thinking blocks are
+// kept.
+func thought(text string) modeltest.Step {
+	return modeltest.Step{Response: model.Message{
+		Role: model.RoleAssistant, Text: text,
+		Provider: &model.ProviderPart{Name: "scripted", Data: json.RawMessage(`{"thinking":"` + text + `"}`)},
+	}}
+}
+
+// replayed lists, for each reply the model is sent again, the text of those
+// sent in their provider form.
+func replayed(messages []model.Message) []string {
+	out := []string{}
+	for _, m := range messages {
+		if m.Role == model.RoleAssistant && m.Provider != nil {
+			out = append(out, m.Text)
+		}
+	}
+	return out
+}
+
+func TestFollowUp_ReplaysRepliesInTheirProviderForm(t *testing.T) {
+	f := newFixture(t, options{})
+	f.putNotes(t)
+	f.script(thought("one"))
+	first := f.startRun(t, "one")
+	f.finish(t, first.ID)
+	f.script(thought("two"))
+	second := f.followUp(t, aliceToken, first.ID, "two")
+	f.finish(t, second.ID)
+	m := f.script(modeltest.Reply("ok"))
+
+	third := f.followUp(t, aliceToken, second.ID, "three")
+	f.finish(t, third.ID)
+
+	require.Len(t, m.Requests(), 1)
+	assert.Equal(t, []string{"one", "two"}, replayed(m.Requests()[0].Messages), "nothing changed, so every reply is sent as the provider gave it")
+}
+
+// TestFollowUp_DropsTheProviderFormOfRunsWithAnotherPrompt: a provider may
+// bind a reply's reasoning to the instructions and tools it was given, so a
+// reply given under others is sent without its provider form, as is every
+// reply before it, and the replies since keep theirs.
+func TestFollowUp_DropsTheProviderFormOfRunsWithAnotherPrompt(t *testing.T) {
+	f := newFixture(t, options{})
+	f.putNotes(t)
+	f.script(thought("one"))
+	first := f.startRun(t, "one")
+	f.finish(t, first.ID)
+	changed := notes()
+	changed.Instructions = "Shout."
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodPut, home+"/harnesses/notes", changed, nil))
+	m := f.script(thought("two"))
+	second := f.followUp(t, aliceToken, first.ID, "two")
+	f.finish(t, second.ID)
+	m3 := f.script(modeltest.Reply("ok"))
+
+	third := f.followUp(t, aliceToken, second.ID, "three")
+	f.finish(t, third.ID)
+
+	require.Len(t, m.Requests(), 1)
+	assert.Empty(t, replayed(m.Requests()[0].Messages), "the first reply was given under other instructions")
+	require.Len(t, m3.Requests(), 1)
+	assert.Equal(t, []string{"two"}, replayed(m3.Requests()[0].Messages))
+	assert.Len(t, m3.Requests()[0].Messages, 5, "the replies themselves are all sent")
+}
+
+// TestFollowUp_DropsTheProviderFormOfAlteredRuns: redaction makes what is
+// stored differ from what the model saw, so a run with a redacted message is
+// sent without provider forms, as is every run before it.
+func TestFollowUp_DropsTheProviderFormOfAlteredRuns(t *testing.T) {
+	f := newFixture(t, options{})
+	f.putNotes(t)
+	f.script(thought("one"))
+	first := f.startRun(t, "one")
+	f.finish(t, first.ID)
+	f.script(thought("two"))
+	// The gateway redacts what tools return, but a user may paste a secret.
+	second := f.followUp(t, aliceToken, first.ID, "use "+token)
+	f.finish(t, second.ID)
+	f.script(thought("three"))
+	third := f.followUp(t, aliceToken, second.ID, "three")
+	f.finish(t, third.ID)
+	m := f.script(modeltest.Reply("ok"))
+
+	fourth := f.followUp(t, aliceToken, third.ID, "four")
+	f.finish(t, fourth.ID)
+
+	require.Len(t, m.Requests(), 1)
+	assert.Equal(t, []string{"three"}, replayed(m.Requests()[0].Messages))
 }

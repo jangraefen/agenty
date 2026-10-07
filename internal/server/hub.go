@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/rand"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -194,9 +195,11 @@ type runTranscript struct {
 
 var _ agent.Transcript = runTranscript{}
 
-// Append stores msg even if the run is being cancelled, as Record does.
+// Append stores msg even if the run is being cancelled, as Record does. A
+// message redaction changed is stored as altered.
 func (t runTranscript) Append(ctx context.Context, runID string, index int, msg model.Message) error {
-	return t.store.AppendMessage(context.WithoutCancel(ctx), runID, index, redactMessage(t.redact, msg))
+	redacted := redactMessage(t.redact, msg)
+	return t.store.AppendMessage(context.WithoutCancel(ctx), runID, store.NewMessage{Position: index, Message: redacted, Altered: !reflect.DeepEqual(redacted, msg)})
 }
 
 // redactMessage returns a copy of msg with every secret redact knows of

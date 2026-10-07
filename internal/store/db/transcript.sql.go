@@ -10,8 +10,8 @@ import (
 )
 
 const insertRunMessage = `-- name: InsertRunMessage :exec
-INSERT INTO run_messages (run_id, position, role, text, tool_calls, tool_results, provider, provider_data)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO run_messages (run_id, position, role, text, tool_calls, tool_results, provider, provider_data, altered)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 `
 
 type InsertRunMessageParams struct {
@@ -23,6 +23,7 @@ type InsertRunMessageParams struct {
 	ToolResults  []byte
 	Provider     string
 	ProviderData []byte
+	Altered      bool
 }
 
 func (q *Queries) InsertRunMessage(ctx context.Context, arg InsertRunMessageParams) error {
@@ -35,12 +36,13 @@ func (q *Queries) InsertRunMessage(ctx context.Context, arg InsertRunMessagePara
 		arg.ToolResults,
 		arg.Provider,
 		arg.ProviderData,
+		arg.Altered,
 	)
 	return err
 }
 
 const runMessages = `-- name: RunMessages :many
-SELECT run_id, position, role, text, tool_calls, tool_results, created_at, provider, provider_data FROM run_messages
+SELECT run_id, position, role, text, tool_calls, tool_results, created_at, provider, provider_data, altered FROM run_messages
 WHERE run_id = $1
 ORDER BY position
 `
@@ -64,6 +66,7 @@ func (q *Queries) RunMessages(ctx context.Context, runID string) ([]RunMessage, 
 			&i.CreatedAt,
 			&i.Provider,
 			&i.ProviderData,
+			&i.Altered,
 		); err != nil {
 			return nil, err
 		}

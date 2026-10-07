@@ -5,14 +5,20 @@
 package agent
 
 import (
+	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync/atomic"
 
 	"github.com/jangraefen/agenty/internal/harness"
 	"github.com/jangraefen/agenty/internal/model"
+	"github.com/jangraefen/agenty/internal/must"
 	"github.com/jangraefen/agenty/internal/policy"
 	"github.com/jangraefen/agenty/internal/secret"
 	"github.com/jangraefen/agenty/internal/toolgateway"
@@ -120,6 +126,19 @@ func (a *Agent) Tools() []toolgateway.Definition {
 	return a.gateway.Definitions()
 }
 
+// PromptDigest identifies what every run of the agent sends the model before
+// the conversation: the model, the instructions and the tools. Two agents
+// with the same digest send the same.
+func (a *Agent) PromptDigest() string {
+	prompt := struct {
+		Model        harness.Model            `json:"model"`
+		Instructions string                   `json:"instructions"`
+		Tools        []toolgateway.Definition `json:"tools"`
+	}{a.harness.Model, a.harness.Instructions, a.gateway.Definitions()}
+	sum := sha256.Sum256(must.Value(json.Marshal(prompt)))
+	return hex.EncodeToString(sum[:])
+}
+
 // Close stops the tool servers the agent started.
 func (a *Agent) Close() error {
 	if err := a.gateway.Close(); err != nil {
@@ -194,6 +213,9 @@ func (r *Run) Continue(ctx context.Context, history []model.Message, input strin
 		return res, err
 	}
 	tools := a.gateway.Definitions()
+	if len(tools) == 0 {
+		history = callsAsText(history)
+	}
 	maxSteps := a.harness.Limits.MaxSteps
 
 	for step := 1; step <= maxSteps; step++ {
@@ -243,6 +265,37 @@ func checkHistory(history []model.Message) error {
 		return errors.New("agent: the conversation to continue does not end with an answer")
 	}
 	return nil
+}
+
+// callsAsText returns history with its tool calls and results written as
+// text, for a model that is offered no tools: providers refuse tool calls in
+// a conversation without tools. A reply with calls loses its provider form,
+// which holds them too.
+func callsAsText(history []model.Message) []model.Message {
+	out := make([]model.Message, len(history))
+	names := map[string]string{}
+	for i, msg := range history {
+		var parts []string
+		if msg.Text != "" {
+			parts = append(parts, msg.Text)
+		}
+		for _, c := range msg.ToolCalls {
+			names[c.ID] = c.Name
+			parts = append(parts, fmt.Sprintf("[called %s with %s]", c.Name, c.Args))
+		}
+		for _, r := range msg.ToolResults {
+			outcome := "returned"
+			if r.IsError {
+				outcome = "failed"
+			}
+			parts = append(parts, fmt.Sprintf("[%s %s: %s]", cmp.Or(names[r.CallID], "a tool"), outcome, r.Content))
+		}
+		if len(msg.ToolCalls) > 0 || len(msg.ToolResults) > 0 {
+			msg = model.Message{Role: msg.Role, Text: strings.Join(parts, "\n\n")}
+		}
+		out[i] = msg
+	}
+	return out
 }
 
 // callTools runs calls in order through the gateway. Denials and tool errors

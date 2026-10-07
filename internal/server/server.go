@@ -264,9 +264,9 @@ type newRun struct {
 	// user is who starts the run.
 	user string
 	// follows, if set, is the ID of the run whose conversation the run
-	// continues, and history is that conversation so far.
+	// continues, and prior are that conversation's runs so far.
 	follows string
-	history []model.Message
+	prior   []priorRun
 }
 
 // start builds an agent for the run's harness version, which starts the MCP
@@ -303,6 +303,8 @@ func (s *Server) start(r newRun) (string, int, error) {
 	if err != nil {
 		return "", http.StatusUnprocessableEntity, err
 	}
+	digest := a.PromptDigest()
+	history := conversationHistory(s.cfg.Resolved.Redactor, r.prior, digest)
 	run := a.Start()
 	hub.runID = run.ID()
 	runCtx, cancel := context.WithCancelCause(s.ctx)
@@ -319,7 +321,7 @@ func (s *Server) start(r newRun) (string, int, error) {
 	s.runs[run.ID()] = hub
 	s.wg.Add(1)
 	s.mu.Unlock()
-	if err := s.cfg.Store.CreateRun(s.ctx, store.NewRun{ID: run.ID(), HarnessVersionID: v.ID, Input: r.input, StartedBy: r.user, Follows: r.follows}); err != nil {
+	if err := s.cfg.Store.CreateRun(s.ctx, store.NewRun{ID: run.ID(), HarnessVersionID: v.ID, Input: r.input, StartedBy: r.user, Follows: r.follows, PromptDigest: digest}); err != nil {
 		s.mu.Lock()
 		delete(s.runs, run.ID())
 		s.mu.Unlock()
@@ -336,7 +338,7 @@ func (s *Server) start(r newRun) (string, int, error) {
 	go func() {
 		defer s.wg.Done()
 		defer cancel(nil)
-		s.execute(runCtx, a, run, hub, r.history, r.input)
+		s.execute(runCtx, a, run, hub, history, r.input)
 	}()
 	return run.ID(), 0, nil
 }

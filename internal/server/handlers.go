@@ -12,7 +12,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/jangraefen/agenty/internal/api"
-	"github.com/jangraefen/agenty/internal/model"
 	"github.com/jangraefen/agenty/internal/policy"
 	"github.com/jangraefen/agenty/internal/store"
 	"github.com/jangraefen/agenty/internal/toolgateway"
@@ -154,23 +153,21 @@ func (s handlers) FollowUpRun(c *gin.Context, workspace, id string) {
 		s.fail(c, http.StatusConflict, fmt.Errorf("run %s is %s: only a run that succeeded can be followed up", id, last.Status))
 		return
 	}
-	var history []model.Message
-	for _, r := range runs {
+	prior := make([]priorRun, len(runs))
+	for i, r := range runs {
 		messages, err := s.cfg.Store.Transcript(ctx, r.ID)
 		if err != nil {
 			s.failStore(c, err)
 			return
 		}
-		for _, m := range messages {
-			history = append(history, redactMessage(s.cfg.Resolved.Redactor, m.Message))
-		}
+		prior[i] = priorRun{digest: r.PromptDigest, messages: messages}
 	}
 	v, err := s.cfg.Store.Harness(ctx, workspace, last.Harness)
 	if err != nil {
 		s.failStore(c, err)
 		return
 	}
-	s.startRun(c, workspace, newRun{version: v, input: req.Input, user: c.GetString(userKey), follows: last.ID, history: history})
+	s.startRun(c, workspace, newRun{version: v, input: req.Input, user: c.GetString(userKey), follows: last.ID, prior: prior})
 }
 
 // GetRunConversation lists the runs of the conversation a run belongs to,

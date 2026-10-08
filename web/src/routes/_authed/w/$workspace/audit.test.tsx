@@ -21,7 +21,7 @@ test("lists the workspace's changes, with who made them", async () => {
       }),
     ),
   );
-  renderApp("/w/notes/audit", TOKEN);
+  const { user } = renderApp("/w/notes/audit", TOKEN);
 
   expect(await screen.findByRole("heading", { name: "Audit log" })).toBeInTheDocument();
   const table = await screen.findByRole("table", { name: "Events" });
@@ -30,6 +30,16 @@ test("lists the workspace's changes, with who made them", async () => {
   expect(change).toHaveTextContent("Harness changed");
   expect(change).toHaveTextContent("notes");
   expect(change).toHaveTextContent("version 3");
+  await user.click(
+    within(change as HTMLElement).getByRole("button", {
+      name: "Details of Harness changed notes version 3",
+    }),
+  );
+  expect(
+    within(table)
+      .getByText(/"version": 3/)
+      .closest("td"),
+  ).toHaveAttribute("colspan", "5");
   const manage = screen.getByRole("navigation", { name: "Manage" });
   expect(within(manage).getByRole("link", { name: "Audit log" })).toHaveAttribute(
     "aria-current",

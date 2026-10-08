@@ -53,10 +53,9 @@ test("lists what the user did, newest first, and loads more", async () => {
   expect(started).toHaveTextContent("notes v2");
   expect(within(table).queryByRole("columnheader", { name: "Who" })).not.toBeInTheDocument();
 
-  if (approval === undefined) {
-    throw new Error("no row for the approval");
-  }
-  const toggle = within(approval).getByRole("button", { name: "Details" });
+  const toggle = within(approval as HTMLElement).getByRole("button", {
+    name: "Details of Approval notes run-1 files_write: allow",
+  });
   expect(toggle).toHaveAttribute("aria-expanded", "false");
   expect(within(table).queryByText(/"call_id": "c1"/)).not.toBeInTheDocument();
   await user.click(toggle);

@@ -63,26 +63,9 @@ func serverStarted(cfg Config) auditlog.Event {
 	return auditlog.Event{Action: "server.started", Details: must.Value(json.Marshal(d))}
 }
 
-// recordRead records an auditor's read, with what was read, and answers the
-// request itself when it cannot: a read the log cannot record does not
-// happen, and is then not ok. A read is no event of the run it read, so a
-// run's events never hold who looked at it.
-func (s handlers) recordRead(c *gin.Context, what map[string]any) bool {
-	e := auditlog.Event{Actor: c.GetString(userKey), Action: "audit.read", Details: must.Value(json.Marshal(what))}
-	if _, err := s.cfg.Store.AppendEvent(c.Request.Context(), e); err != nil {
-		s.failStore(c, err)
-		return false
-	}
-	return true
-}
-
 // workspaceChanges are the actions that change a workspace itself, which its
 // members see in its audit log.
 var workspaceChanges = []string{"harness.changed"}
-
-// maxFilter is the longest filter value an auditor's listing takes, so its
-// recorded read stays small.
-const maxFilter = 200
 
 // eventList is a page of the audit log as the API lists it. It is not the
 // generated api.AuditLogEventList: the events are package auditlog's, so
@@ -94,18 +77,13 @@ type eventList struct {
 
 // listEvents answers with a page of events that list returns, its limit and
 // before taken from the request's parameters (before 0 for the newest).
-// read, if not nil, records the read once the request is valid, and answers
-// when it cannot.
-func (s handlers) listEvents(c *gin.Context, limit int, before int64, read func() bool, list func(before int64, limit int) ([]auditlog.Event, error)) {
+func (s handlers) listEvents(c *gin.Context, limit int, before int64, list func(before int64, limit int) ([]auditlog.Event, error)) {
 	if before < 0 {
 		s.fail(c, http.StatusBadRequest, fmt.Errorf("before %d: must not be negative", before))
 		return
 	}
 	limit, ok := s.pageLimit(c, limit)
 	if !ok {
-		return
-	}
-	if read != nil && !read() {
 		return
 	}
 	events, err := list(before, limit)
@@ -122,11 +100,10 @@ func (s handlers) listEvents(c *gin.Context, limit int, before int64, read func(
 }
 
 // ListMyActivity lists what the user did: the events they are the actor of,
-// in the workspaces they are a member of now, or in none. What others did,
-// auditors' reads of the user's runs too, is not theirs.
+// in the workspaces they are a member of now. What others did is not theirs.
 func (s handlers) ListMyActivity(c *gin.Context, params api.ListMyActivityParams) {
 	user := c.GetString(userKey)
-	s.listEvents(c, params.Limit, params.Before, nil, func(before int64, limit int) ([]auditlog.Event, error) {
+	s.listEvents(c, params.Limit, params.Before, func(before int64, limit int) ([]auditlog.Event, error) {
 		return s.cfg.Store.ActorEvents(c.Request.Context(), user, s.memberships(user), before, limit)
 	})
 }
@@ -134,7 +111,7 @@ func (s handlers) ListMyActivity(c *gin.Context, params api.ListMyActivityParams
 // ListWorkspaceAuditEvents lists the changes made to a workspace, for its
 // members.
 func (s handlers) ListWorkspaceAuditEvents(c *gin.Context, workspace string, params api.ListWorkspaceAuditEventsParams) {
-	s.listEvents(c, params.Limit, params.Before, nil, func(before int64, limit int) ([]auditlog.Event, error) {
+	s.listEvents(c, params.Limit, params.Before, func(before int64, limit int) ([]auditlog.Event, error) {
 		return s.cfg.Store.WorkspaceEvents(c.Request.Context(), workspace, workspaceChanges, before, limit)
 	})
 }
@@ -144,23 +121,8 @@ func (s handlers) ListAuditEvents(c *gin.Context, params api.ListAuditEventsPara
 	if !s.auditor(c) {
 		return
 	}
-	for _, value := range []string{params.Actor, params.Workspace, params.Action, params.Run} {
-		if len(value) > maxFilter {
-			s.fail(c, http.StatusBadRequest, fmt.Errorf("a filter is longer than %d bytes", maxFilter))
-			return
-		}
-	}
-	read := map[string]any{"read": "events"}
-	for key, value := range map[string]string{"actor": params.Actor, "workspace": params.Workspace, "action": params.Action, "run": params.Run} {
-		if value != "" {
-			read[key] = value
-		}
-	}
-	if params.Before != 0 {
-		read["before"] = params.Before
-	}
 	f := store.EventFilter{Actor: params.Actor, Workspace: params.Workspace, Action: params.Action, RunID: params.Run}
-	s.listEvents(c, params.Limit, params.Before, func() bool { return s.recordRead(c, read) }, func(before int64, limit int) ([]auditlog.Event, error) {
+	s.listEvents(c, params.Limit, params.Before, func(before int64, limit int) ([]auditlog.Event, error) {
 		f.Before, f.Limit = before, limit
 		return s.cfg.Store.ListAuditEvents(c.Request.Context(), f)
 	})

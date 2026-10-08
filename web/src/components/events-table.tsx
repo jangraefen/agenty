@@ -16,7 +16,6 @@ const labels: Record<string, string> = {
   "run.finished": "Run finished",
   "harness.changed": "Harness changed",
   "server.started": "Server started",
-  "audit.read": "Audit log read",
 };
 
 // text is a detail of an event as text, or "" when it has none.
@@ -38,8 +37,6 @@ function summary({ action, details: d }: Event): string {
     case "tool.approval":
     case "tool.result":
       return `${text(d.tool)}: ${text(d.decision)}`;
-    case "audit.read":
-      return [text(d.read), text(d.run)].filter((part) => part !== "").join(" ");
     default:
       return "";
   }

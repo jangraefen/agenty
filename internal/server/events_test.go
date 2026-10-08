@@ -16,7 +16,6 @@ import (
 	"github.com/jangraefen/agenty/internal/auditlog"
 	"github.com/jangraefen/agenty/internal/model/modeltest"
 	"github.com/jangraefen/agenty/internal/policy"
-	"github.com/jangraefen/agenty/internal/store/storetest"
 )
 
 // logEvents returns the audit log's events with the given action, in order.
@@ -76,7 +75,7 @@ func TestAuditEvents_ServerStarted(t *testing.T) {
 	assert.Len(t, f.logEvents(t, "server.started"), 2, "each start is an event")
 }
 
-func TestAuditEvents_CancelAndReads(t *testing.T) {
+func TestAuditEvents_CancelAndNoReads(t *testing.T) {
 	f := newFixture(t, options{policy: writesNeedApproval})
 	f.putNotes(t)
 	run, _ := f.waitForApproval(t)
@@ -101,39 +100,16 @@ func TestAuditEvents_CancelAndReads(t *testing.T) {
 	var e api.Error
 	require.Equal(t, http.StatusForbidden, f.doAs(t, aliceToken, http.MethodGet, "/v1/audit/runs", nil, &e))
 
-	reads := f.logEvents(t, "audit.read")
-	require.Len(t, reads, 3, "every read of an auditor is an event; a refused one reads nothing")
-	for _, r := range reads {
-		assert.Equal(t, "dana", r.Actor)
-		assert.Empty(t, r.RunID, "a read is not an event of the run it read")
+	all, err := f.store.AuditEvents(context.Background(), 0, math.MaxInt64, 1000)
+	require.NoError(t, err)
+	require.NotEmpty(t, all)
+	for _, e := range all {
+		assert.NotEqual(t, "dana", e.Actor, "an auditor's reads are not part of any log")
 	}
-	assert.JSONEq(t, `{"read":"runs","workspace":"home","status":"cancelled"}`, string(reads[0].Details))
-	assert.JSONEq(t, `{"read":"run","run":"`+run.ID+`"}`, string(reads[1].Details))
-	assert.JSONEq(t, `{"read":"export","after":2}`, string(reads[2].Details))
 
 	whole, _ := f.export(t, "")
-	_, err := auditlog.Verify(strings.NewReader(whole))
+	_, err = auditlog.Verify(strings.NewReader(whole))
 	require.NoError(t, err)
-}
-
-// TestAuditEvents_ReadsFailClosed: an auditor's read that the log cannot
-// record does not happen.
-func TestAuditEvents_ReadsFailClosed(t *testing.T) {
-	f := newFixture(t, options{})
-	f.putNotes(t)
-	f.script(modeltest.Reply("done"))
-	run := f.startRun(t, "tidy my notes")
-	f.finish(t, run.ID)
-	storetest.Exec(t, f.dbURL, `
-		CREATE FUNCTION refuse_appends() RETURNS trigger LANGUAGE plpgsql AS $$
-		BEGIN RAISE EXCEPTION 'the log is broken'; END $$;
-		CREATE TRIGGER refuse_appends BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION refuse_appends()`)
-
-	for _, path := range []string{"/v1/audit/runs", "/v1/audit/runs/" + run.ID, "/v1/audit/events", "/v1/audit/export"} {
-		var raw json.RawMessage
-		assert.Equal(t, http.StatusInternalServerError, f.doAs(t, danaToken, http.MethodGet, path, nil, &raw), path)
-		assert.NotContains(t, string(raw), run.ID, "%s: nothing read", path)
-	}
 }
 
 func TestAuditEvents_CancelARunningRun(t *testing.T) {
@@ -183,10 +159,10 @@ func TestAuditViews(t *testing.T) {
 		var mine eventPage
 		require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, "/v1/me/activity", nil, &mine))
 		assert.Equal(t, []string{"alice run.started", "alice harness.changed"}, actions(mine),
-			"what alice did, newest first; not the server's events, nor the auditor's read of her run")
+			"what alice did, newest first; not the server's events")
 		var theirs eventPage
 		require.Equal(t, http.StatusOK, f.doAs(t, danaToken, http.MethodGet, "/v1/me/activity", nil, &theirs))
-		assert.Equal(t, []string{"dana audit.read"}, actions(theirs), "an auditor's reads are their own actions")
+		assert.Empty(t, theirs.Events, "an auditor's reads are not recorded")
 	})
 	t.Run("a workspace's changes", func(t *testing.T) {
 		var changes eventPage
@@ -201,7 +177,7 @@ func TestAuditViews(t *testing.T) {
 		var all eventPage
 		require.Equal(t, http.StatusOK, f.doAs(t, danaToken, http.MethodGet, "/v1/audit/events?limit=3", nil, &all))
 		require.Len(t, all.Events, 3)
-		assert.Equal(t, "dana audit.read", actions(all)[0], "the listing itself, recorded first")
+		assert.Equal(t, []string{" run.finished", "alice run.started", "alice harness.changed"}, actions(all))
 		assert.Equal(t, all.Events[2].ID, all.Next)
 		var older eventPage
 		require.Equal(t, http.StatusOK, f.doAs(t, danaToken, http.MethodGet, fmt.Sprintf("/v1/audit/events?before=%d&action=server.started", all.Next), nil, &older))
@@ -210,9 +186,5 @@ func TestAuditViews(t *testing.T) {
 		require.Equal(t, http.StatusOK, f.doAs(t, danaToken, http.MethodGet, "/v1/audit/events?run="+run.ID+"&actor=alice", nil, &ofRun))
 		assert.Equal(t, []string{"alice run.started"}, actions(ofRun))
 		assert.Equal(t, http.StatusBadRequest, f.doAs(t, danaToken, http.MethodGet, "/v1/audit/events?before=-1", nil, &e))
-		assert.Equal(t, http.StatusBadRequest, f.doAs(t, danaToken, http.MethodGet, "/v1/audit/events?actor="+strings.Repeat("a", 201), nil, &e))
-		reads := f.logEvents(t, "audit.read")
-		assert.JSONEq(t, `{"read":"events","run":"`+run.ID+`","actor":"alice"}`, string(reads[len(reads)-1].Details),
-			"a refused listing read nothing, so it is no read")
 	})
 }

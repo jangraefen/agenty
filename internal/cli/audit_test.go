@@ -25,7 +25,7 @@ func TestAudit_ExportAndVerify(t *testing.T) {
 	out := f.stdout.String()
 	last, err := f.store.LastAuditEventID(context.Background())
 	require.NoError(t, err)
-	assert.Contains(t, out, fmt.Sprintf("verified %d events, 1 to %d", last, last), "the whole log, up to the export's own read")
+	assert.Contains(t, out, fmt.Sprintf("verified %d events, 1 to %d", last, last), "the whole log")
 	anchor := strings.TrimSpace(out[strings.Index(out, "anchor: ")+len("anchor: "):])
 	assert.Regexp(t, fmt.Sprintf(`^%d:[0-9a-f]{64}$`, last), anchor, "the last event's id and hash, to keep")
 	f.stdout.Reset()

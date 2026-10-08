@@ -264,9 +264,8 @@ func (s *Store) ListAuditEvents(ctx context.Context, f EventFilter) ([]auditlog.
 	return events(rows), nil
 }
 
-// ActorEvents lists up to limit events by actor, newest first, before the
-// one with id before (0 for the newest), leaving out those of a workspace
-// not in workspaces: what a user did in a workspace they left.
+// ActorEvents lists up to limit events by actor in workspaces, newest first,
+// before the one with id before (0 for the newest).
 func (s *Store) ActorEvents(ctx context.Context, actor string, workspaces []string, before int64, limit int) ([]auditlog.Event, error) {
 	if limit <= 0 || limit > math.MaxInt32 {
 		return nil, fmt.Errorf("store: audit: limit %d is out of range", limit)
@@ -423,8 +422,8 @@ func (s *Store) withEvents(ctx context.Context, change func(*db.Queries) ([]audi
 	return nil
 }
 
-// AppendEvent appends an event of the server's own, such as its start or
-// an auditor's read, to the audit log, and returns it as appended.
+// AppendEvent appends an event of the server's own, such as its start, or a
+// request recorded before it takes effect, and returns it as appended.
 func (s *Store) AppendEvent(ctx context.Context, e auditlog.Event) (auditlog.Event, error) {
 	tx, err := s.beginAppend(ctx)
 	if err != nil {

@@ -142,12 +142,17 @@ export function myActivityQuery(api: Api) {
   );
 }
 
-// The changes made to a workspace.
-export function workspaceAuditQuery(api: Api, workspace: string) {
-  return eventsQuery(["workspaces", workspace, "audit"], (before) =>
+// The changes made to a workspace, in pages of limit events if given, else of
+// the server's default size.
+export function workspaceAuditQuery(api: Api, workspace: string, limit?: number) {
+  const size = limit === undefined ? {} : { limit };
+  return eventsQuery(["workspaces", workspace, "audit", size], (before) =>
     unwrap(
       api.GET("/v1/workspaces/{workspace}/audit", {
-        params: { path: { workspace }, query: before === undefined ? {} : { before } },
+        params: {
+          path: { workspace },
+          query: { ...size, ...(before === undefined ? {} : { before }) },
+        },
       }),
     ),
   );
@@ -162,15 +167,13 @@ export type EventFilters = {
 
 // Every event of the audit log, for auditors.
 export function auditEventsQuery(api: Api, filters: EventFilters) {
-  return {
-    ...eventsQuery(["audit", "events", filters], (before) =>
-      unwrap(
-        api.GET("/v1/audit/events", {
-          params: { query: { ...filters, ...(before === undefined ? {} : { before }) } },
-        }),
-      ),
+  return eventsQuery(["audit", "events", filters], (before) =>
+    unwrap(
+      api.GET("/v1/audit/events", {
+        params: { query: { ...filters, ...(before === undefined ? {} : { before }) } },
+      }),
     ),
-  };
+  );
 }
 
 export function runQuery(api: Api, workspace: string, id: string) {
@@ -213,14 +216,14 @@ export function transcriptQuery(api: Api, workspace: string, id: string) {
   });
 }
 
-// A workspace's waiting approval requests, oldest first. There is no stream
-// of them for a whole workspace, so the pages that show them poll.
+// A workspace's waiting approval requests, oldest first. The event stream of
+// a run refreshes them when it asks for an approval, gets an answer or ends;
+// a stream that stopped leaves them as they are until it is reconnected.
 export function approvalsQuery(api: Api, workspace: string) {
   return queryOptions({
     queryKey: ["workspaces", workspace, "approvals"],
     queryFn: () =>
       unwrap(api.GET("/v1/workspaces/{workspace}/approvals", { params: { path: { workspace } } })),
-    refetchInterval: 10_000,
   });
 }
 

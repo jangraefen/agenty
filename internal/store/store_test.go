@@ -378,9 +378,7 @@ func TestOwnRun(t *testing.T) {
 	s := storetest.New(t)
 	v := newRun(t, s, "a1")
 	require.NoError(t, s.FinishRun(ctx, "a1", store.RunSucceeded, "ok", 1, ""))
-	// A follow-up another member started before runs were private is part
-	// of the conversation of the user who started it.
-	createRun(t, s, store.NewRun{ID: "a2", HarnessVersionID: v.ID, Input: "more", StartedBy: "bob", Follows: "a1"})
+	createRun(t, s, store.NewRun{ID: "a2", HarnessVersionID: v.ID, Input: "more", StartedBy: "alice", Follows: "a1"})
 
 	for _, id := range []string{"a1", "a2"} {
 		run, err := s.OwnRun(ctx, ws, "alice", id)
@@ -389,7 +387,7 @@ func TestOwnRun(t *testing.T) {
 	}
 	for _, tt := range []struct{ name, workspace, user, id string }{
 		{"another member's", ws, "bob", "a1"},
-		{"another member's, though they started this run", ws, "bob", "a2"},
+		{"another member's follow-up", ws, "bob", "a2"},
 		{"in another workspace", "work", "alice", "a1"},
 		{"that does not exist", ws, "alice", "ghost"},
 	} {

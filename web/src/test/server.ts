@@ -80,8 +80,8 @@ export function eventStream(events: { event: string; data: unknown }[]) {
   return response;
 }
 
-// Answers what a workspace's pages load with nothing: no harnesses or waiting
-// approvals.
+// Answers what a workspace's pages load with nothing: no harnesses or audit
+// log events.
 export function emptyWorkspaceHandlers(workspace: string) {
   const base = `${apiUrl}/v1/workspaces/${workspace}`;
   return [
@@ -89,7 +89,6 @@ export function emptyWorkspaceHandlers(workspace: string) {
       HttpResponse.json<Schemas["WorkspaceDetail"]>({ name: workspace, members: ["demo"] }),
     ),
     http.get(`${base}/harnesses`, () => HttpResponse.json([])),
-    http.get(`${base}/approvals`, () => HttpResponse.json([])),
     http.get(`${base}/audit`, () =>
       HttpResponse.json<Schemas["AuditLogEventList"]>({ events: [] }),
     ),

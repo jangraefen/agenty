@@ -33,10 +33,9 @@ export interface paths {
          * @description The conversations whose first run the user started, in every
          *     workspace, those they left included, the one whose latest run was
          *     started last first. Only its starter continues, cancels and answers
-         *     a conversation, through its workspace; in one from before runs were
-         *     private, another member's follow-up belongs to the starter too. A
-         *     conversation followed up while the pages are read moves to the
-         *     first page, so later pages leave it out.
+         *     a conversation, through its workspace. A conversation followed up
+         *     while the pages are read moves to the first page, so later pages
+         *     leave it out.
          */
         get: operations["listConversations"];
         put?: never;
@@ -388,7 +387,8 @@ export interface paths {
          * Cancel a queued, waiting or running run
          * @description A queued run, or one waiting for approval, ends at once; a running
          *     one as soon as what it is doing stops. Either ends as cancelled by
-         *     the user; its events tell when.
+         *     the user; its events tell when. A run that finishes as it is
+         *     cancelled may keep its own end.
          */
         post: operations["cancelRun"];
         delete?: never;

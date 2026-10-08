@@ -27,7 +27,6 @@ const notes = storedHarness(
 beforeEach(() => {
   server.use(
     meHandler({ user: "demo", workspaces: ["notes"] }),
-    http.get(`${base}/approvals`, () => HttpResponse.json([])),
     http.get(`${base}/harnesses/notes`, () => HttpResponse.json(notes)),
   );
 });

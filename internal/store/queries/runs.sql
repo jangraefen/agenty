@@ -1,13 +1,15 @@
 -- name: InsertRun :one
 -- A run is stored as queued. A run that follows another joins its
--- conversation; any other run starts one of its own. It is returned as
--- stored, before a worker may claim it, with its harness.
+-- conversation, and follows only a run its own starter started, so a
+-- conversation is one user's; any other run starts one of its own. It is
+-- returned as stored, before a worker may claim it, with its harness; no
+-- row is returned for a run that follows no run of its starter.
 INSERT INTO runs (id, harness_version_id, input, started_by, conversation_id, follows)
-VALUES (
-    sqlc.arg(id), sqlc.arg(harness_version_id), sqlc.arg(input), sqlc.arg(started_by),
-    COALESCE((SELECT f.conversation_id FROM runs f WHERE f.id = sqlc.narg(follows)), sqlc.arg(id)),
-    sqlc.narg(follows)
-)
+SELECT sqlc.arg(id)::text, sqlc.arg(harness_version_id)::bigint, sqlc.arg(input)::text, sqlc.arg(started_by)::text,
+    COALESCE(f.conversation_id, sqlc.arg(id)::text), f.id
+FROM (SELECT sqlc.narg(follows)::text AS id) wanted
+LEFT JOIN runs f ON f.id = wanted.id AND f.started_by = sqlc.arg(started_by)::text
+WHERE wanted.id IS NULL OR f.id IS NOT NULL
 RETURNING sqlc.embed(runs),
     (SELECT hv.name FROM harness_versions hv WHERE hv.id = runs.harness_version_id)::text AS harness,
     (SELECT hv.version FROM harness_versions hv WHERE hv.id = runs.harness_version_id)::integer AS harness_version;
@@ -25,14 +27,13 @@ JOIN harness_versions ON harness_versions.id = runs.harness_version_id
 WHERE runs.id = sqlc.arg(id) AND harness_versions.workspace = sqlc.arg(workspace);
 
 -- name: GetOwnRun :one
--- A run of the workspace, found only for the user who started its
--- conversation.
+-- A run of the workspace, found only for the user who started it, who
+-- started its conversation: only they follow it up.
 SELECT sqlc.embed(runs), harness_versions.name AS harness, harness_versions.version AS harness_version
 FROM runs
 JOIN harness_versions ON harness_versions.id = runs.harness_version_id
-JOIN runs first ON first.id = runs.conversation_id
 WHERE runs.id = sqlc.arg(id) AND harness_versions.workspace = sqlc.arg(workspace)
-  AND first.started_by = sqlc.arg(owner);
+  AND runs.started_by = sqlc.arg(owner);
 
 -- name: ListAuditRuns :many
 -- The runs of every workspace, newest first, each with its workspace,
@@ -96,12 +97,10 @@ JOIN harness_versions ON harness_versions.id = claimed.harness_version_id;
 
 -- name: IdleRuns :many
 -- The runs no worker holds that have not finished, queued or waiting, oldest
--- first, with their workspaces, harnesses and the users who started their
--- conversations.
-SELECT runs.id, runs.status, harness_versions.workspace, harness_versions.name AS harness, first.started_by AS owner
+-- first, with their workspaces, harnesses and the users who started them.
+SELECT runs.id, runs.status, harness_versions.workspace, harness_versions.name AS harness, runs.started_by AS owner
 FROM runs
 JOIN harness_versions ON harness_versions.id = runs.harness_version_id
-JOIN runs first ON first.id = runs.conversation_id
 WHERE runs.status IN ('queued', 'waiting')
 ORDER BY runs.created_at, runs.id;
 

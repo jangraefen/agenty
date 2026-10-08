@@ -19,20 +19,6 @@ export function run(overrides: Partial<Schemas["Run"]> = {}): Schemas["Run"] {
   };
 }
 
-export function harnessVersion(name: string): Schemas["HarnessVersion"] {
-  return {
-    id: 1,
-    version: 1,
-    created_at: "2026-10-01T09:00:00Z",
-    harness: {
-      name,
-      instructions: "Help.",
-      model: { provider: "anthropic", name: "a-model" },
-      limits: { max_steps: 10, max_tool_calls: 10 },
-    },
-  };
-}
-
 export function auditRecord(
   overrides: Partial<Schemas["AuditRecord"]> = {},
 ): Schemas["AuditRecord"] {
@@ -64,12 +50,24 @@ export function approvalRequest(
   };
 }
 
+// A stored version of a harness, by default version 1 of notes.
 export function storedHarness(
   harness: Partial<Schemas["Harness"]> = {},
   version: Partial<Omit<Schemas["HarnessVersion"], "harness">> = {},
 ): Schemas["HarnessVersion"] {
-  const base = harnessVersion(harness.name ?? "notes");
-  return { ...base, ...version, harness: { ...base.harness, ...harness } };
+  return {
+    id: 1,
+    version: 1,
+    created_at: "2026-10-01T09:00:00Z",
+    ...version,
+    harness: {
+      name: "notes",
+      instructions: "Help.",
+      model: { provider: "anthropic", name: "a-model" },
+      limits: { max_steps: 10, max_tool_calls: 10 },
+      ...harness,
+    },
+  };
 }
 
 export function conversation(

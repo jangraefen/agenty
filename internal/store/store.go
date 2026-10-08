@@ -65,8 +65,7 @@ func Open(ctx context.Context, url string) (*Store, error) {
 
 func migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	sqlDB := stdlib.OpenDBFromPool(pool)
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, must.Value(fs.Sub(migrations, "migrations")),
-		goose.WithGoMigrations(goose.NewGoMigration(13, &goose.GoFunc{RunTx: copyAuditRecords}, nil)))
+	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, must.Value(fs.Sub(migrations, "migrations")))
 	if err != nil {
 		return errors.Join(err, sqlDB.Close())
 	}
@@ -241,7 +240,7 @@ type Run struct {
 	// PromptDigest identifies what the run sent the model before the
 	// conversation: its model, instructions and tools. HistoryDigest
 	// identifies the conversation of earlier runs it sent before its input.
-	// Runs stored before they were recorded have neither.
+	// A run that never ran has neither.
 	PromptDigest, HistoryDigest string
 	// Usage sums the usage of the run's stored replies.
 	Usage model.Usage
@@ -264,8 +263,11 @@ const uniqueViolation = "23505"
 
 // CreateRun stores a new queued run and returns it as stored, before a
 // worker may claim it. It belongs to the workspace of its harness version. A
-// run that follows another joins its conversation; a run that another run
-// already follows returns ErrConflict, so a conversation never branches.
+// run that follows another joins its conversation. It follows only a run its
+// own starter started, so a conversation is one user's: following any other
+// run, or none that is stored, returns ErrNotFound. Following a run that
+// another run already follows returns ErrConflict, so a conversation never
+// branches.
 func (s *Store) CreateRun(ctx context.Context, r NewRun) (Run, error) {
 	var created Run
 	err := s.withEvents(ctx, func(q *db.Queries) ([]auditlog.Event, error) {
@@ -274,6 +276,8 @@ func (s *Store) CreateRun(ctx context.Context, r NewRun) (Run, error) {
 		switch {
 		case errors.As(err, &pgErr) && pgErr.Code == uniqueViolation && pgErr.ConstraintName == "runs_follows_key":
 			return nil, fmt.Errorf("store: run %s: run %s is already followed: %w", r.ID, r.Follows, ErrConflict)
+		case errors.Is(err, pgx.ErrNoRows):
+			return nil, fmt.Errorf("store: run %s: run %s of %s: %w", r.ID, r.Follows, r.StartedBy, ErrNotFound)
 		case err != nil:
 			return nil, fmt.Errorf("store: run %s: %w", r.ID, err)
 		}
@@ -316,7 +320,7 @@ type IdleRun struct {
 	Status    RunStatus
 	Workspace string
 	Harness   string
-	// Owner started the run's conversation.
+	// Owner started the run, and so its conversation.
 	Owner string
 }
 

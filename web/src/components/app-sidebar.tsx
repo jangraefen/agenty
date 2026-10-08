@@ -13,6 +13,7 @@ import {
   LuUser,
 } from "react-icons/lu";
 import { recentChatsQuery } from "@/api/queries";
+import { LoadMore } from "@/components/load-more";
 import { ThemeMenu } from "@/components/theme-menu";
 import { Button } from "@/components/ui/button";
 import {
@@ -129,17 +130,9 @@ function RecentChats() {
           </li>
         ))}
       </ul>
-      {chats.hasNextPage && (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="self-start"
-          aria-disabled={chats.isFetchingNextPage}
-          onClick={() => void chats.fetchNextPage()}
-        >
-          Show more
-        </Button>
-      )}
+      <LoadMore query={chats} variant="ghost" size="sm" className="self-start">
+        Show more
+      </LoadMore>
     </nav>
   );
 }

@@ -137,7 +137,7 @@ func TestInvariant_ResumedCallsMeetTheCentralPolicyOfTheTime(t *testing.T) {
 }
 
 // TestInvariant_LimitsSurviveARestart guards a trust-model guarantee: a run
-// resumed by another server keeps counting the calls it made before, so its
+// resumed by the next server keeps counting the calls it made before, so its
 // limits are not reset.
 func TestInvariant_LimitsSurviveARestart(t *testing.T) {
 	f := newFixture(t, options{policy: writesNeedApproval})

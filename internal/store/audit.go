@@ -3,7 +3,6 @@ package store
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -307,91 +306,6 @@ func events(rows []db.AuditEvent) []auditlog.Event {
 		copy(out[i].Hash[:], row.Hash)
 	}
 	return out
-}
-
-// copyPage is how many records migration 13 copies at a time; a test lowers
-// it to cross pages with few records.
-var copyPage = 1000
-
-// copyAuditRecords is migration 13: it copies every record of the table that
-// held the tool gateway's records before the audit log held every event,
-// into the log, in order, chained. It reads them a page at a time, and fails
-// unless it copied every one: migration 14 drops the table.
-func copyAuditRecords(ctx context.Context, tx *sql.Tx) error {
-	var want int64
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM audit_records`).Scan(&want); err != nil {
-		return err
-	}
-	var prev auditlog.Hash
-	var copied, after int64
-	for {
-		page, last, err := readAuditRecords(ctx, tx, after)
-		if err != nil {
-			return err
-		}
-		if len(page) == 0 {
-			break
-		}
-		after = last
-		for _, e := range page {
-			if e.Details, err = auditlog.Canonical(e.Details); err != nil {
-				return err
-			}
-			copied++
-			e.ID = copied
-			e.PrevHash = prev
-			e.Hash = e.Sum()
-			prev = e.Hash
-			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO audit_events (id, recorded_at, actor, action, workspace, run_id, target, details, prev_hash, hash)
-				VALUES ($1, $2, $3, $4, $5, $6, '', $7, $8, $9)`,
-				e.ID, e.RecordedAt, e.Actor, e.Action, e.Workspace, e.RunID, string(e.Details), e.PrevHash[:], e.Hash[:]); err != nil {
-				return err
-			}
-		}
-	}
-	if copied != want {
-		return fmt.Errorf("copied %d of %d audit records", copied, want)
-	}
-	return nil
-}
-
-// readAuditRecords reads a page of the records after the one with the given
-// id, as events, and the id of the page's last record.
-func readAuditRecords(ctx context.Context, tx *sql.Tx, after int64) (_ []auditlog.Event, last int64, err error) {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT r.id, r.run_id, r.call_id, r.event, r.tool, r.args::text, r.decision, r.reason, r.approver,
-		       r.result::text, r.error, r.recorded_at, runs.started_by, harness_versions.workspace
-		FROM audit_records r
-		JOIN runs ON runs.id = r.run_id
-		JOIN harness_versions ON harness_versions.id = runs.harness_version_id
-		WHERE r.id > $1
-		ORDER BY r.id
-		LIMIT $2`, after, copyPage)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer func() { err = errors.Join(err, rows.Close()) }()
-	var events []auditlog.Event
-	for rows.Next() {
-		var rec toolgateway.Record
-		var args, result sql.NullString
-		var at time.Time
-		var starter, workspace string
-		if err := rows.Scan(&last, &rec.RunID, &rec.CallID, &rec.Event, &rec.Tool, &args, &rec.Decision, &rec.Reason,
-			&rec.Approver, &result, &rec.Err, &at, &starter, &workspace); err != nil {
-			return nil, 0, err
-		}
-		rec.Args = json.RawMessage(args.String)
-		rec.Result = json.RawMessage(result.String)
-		e, err := toolEvent(rec, starter, workspace)
-		if err != nil {
-			return nil, 0, err
-		}
-		e.RecordedAt = at.UTC().Truncate(time.Microsecond)
-		events = append(events, e)
-	}
-	return events, last, rows.Err()
 }
 
 // beginAppend begins a transaction that appends to the audit log. It reads

@@ -327,13 +327,13 @@ func (s handlers) CancelRun(c *gin.Context, workspace, id string) {
 	if !ok {
 		return
 	}
-	if h != nil {
+	if h != nil && !run.Finished() {
 		// A cancel stops an agent: it goes ahead even when the log cannot
 		// record the request. How the run ended, and by whom, is recorded
 		// as it ends.
 		request := auditlog.Event{Actor: c.GetString(userKey), Action: "run.cancel_requested", Workspace: workspace, RunID: id, Details: json.RawMessage("{}")}
 		if _, err := s.cfg.Store.AppendEvent(c.Request.Context(), request); err != nil {
-			s.cfg.Logger.Error("cannot record a cancel request", "run_id", id, "error", s.cfg.Resolved.Redactor.String(err.Error()))
+			s.cfg.Logger.Error("cannot record a cancel request", "run_id", id, "error", err)
 		}
 		by := cancelledBy(c.GetString(userKey))
 		// A worker that claims the run from now on finds it cancelled.
@@ -342,12 +342,18 @@ func (s handlers) CancelRun(c *gin.Context, workspace, id string) {
 		c.Status(http.StatusAccepted)
 		return
 	}
-	switch {
-	case !run.Finished():
-		s.fail(c, http.StatusConflict, fmt.Errorf("run %s is running on another server", id))
-	default:
-		s.fail(c, http.StatusConflict, fmt.Errorf("run %s has already finished", id))
+	if !run.Finished() {
+		s.fail(c, http.StatusConflict, errNotRunHere(id))
+		return
 	}
+	s.fail(c, http.StatusConflict, fmt.Errorf("run %s has already finished", id))
+}
+
+// errNotRunHere is the error for a run that has not finished, though this
+// server does not run it: one serves a database, and stores a run's end
+// before it lets go of the run, so the run's end could not be stored.
+func errNotRunHere(id string) error {
+	return fmt.Errorf("run %s has not finished, but this server does not run it", id)
 }
 
 // ListApprovals returns the approval requests the user's own runs in the
@@ -395,7 +401,7 @@ func (s handlers) GetRunTranscript(c *gin.Context, workspace, id string) {
 func (s handlers) StreamRunEvents(c *gin.Context, workspace, id string) {
 	// The hub is looked up before the run is read: a run's end is stored
 	// before its hub is unregistered, so a run without a hub is read as
-	// finished, unless another server runs it.
+	// finished.
 	h := s.hub(workspace, id)
 	run, ok := s.ownRun(c, workspace, id)
 	if !ok {
@@ -434,10 +440,7 @@ func (s handlers) replayEvents(c *gin.Context, run store.Run) {
 	ctx := c.Request.Context()
 	id := run.ID
 	if !run.Finished() {
-		// Every queued or running run of this server has a hub, New fails
-		// the running runs of earlier servers and takes up their queued
-		// ones, so this is a run of another server sharing the database.
-		s.fail(c, http.StatusConflict, fmt.Errorf("run %s is running on another server", id))
+		s.fail(c, http.StatusConflict, errNotRunHere(id))
 		return
 	}
 	records, err := s.cfg.Store.AuditRecords(ctx, id)

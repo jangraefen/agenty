@@ -49,7 +49,8 @@ describe("Theme", () => {
   test("choosing a theme applies it, keeps it and tells subscribers", () => {
     fakeColorScheme("light");
     const theme = new Theme(localStorage, window);
-    const listener = vi.fn();
+    // Subscribers hear of a theme already applied.
+    const listener = vi.fn(() => expect(html).toHaveAttribute("data-theme", "dark"));
     theme.subscribe(listener);
 
     theme.choose("dark");

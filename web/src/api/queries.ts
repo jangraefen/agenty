@@ -217,7 +217,8 @@ export function transcriptQuery(api: Api, workspace: string, id: string) {
 }
 
 // A workspace's waiting approval requests, oldest first. The event stream of
-// a run refreshes them when it asks for an approval, gets an answer or ends.
+// a run refreshes them when it asks for an approval, gets an answer or ends;
+// a stream that stopped leaves them as they are until it is reconnected.
 export function approvalsQuery(api: Api, workspace: string) {
   return queryOptions({
     queryKey: ["workspaces", workspace, "approvals"],

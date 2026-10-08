@@ -6,6 +6,8 @@ package api
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/jangraefen/agenty/internal/auditlog"
 )
 
 // Defines values for AuditEvent.
@@ -128,24 +130,7 @@ type AuditEvent string
 // AuditLogEvent One event of the audit log, as package auditlog hashes it: hash is
 // the SHA-256 of a fixed encoding of the other fields, prev_hash the
 // hash of the event before it, zero before the first.
-type AuditLogEvent struct {
-	Action string `json:"action"`
-
-	// Actor The user who acted; empty for the server itself.
-	Actor   string                 `json:"actor"`
-	Details map[string]interface{} `json:"details"`
-	Hash    string                 `json:"hash"`
-
-	// ID The event's position in the log, from 1 without gaps.
-	ID         int64     `json:"id"`
-	PrevHash   string    `json:"prev_hash"`
-	RecordedAt time.Time `json:"recorded_at"`
-	RunID      string    `json:"run_id"`
-	Target     string    `json:"target"`
-
-	// Workspace Empty for an event of the whole organisation.
-	Workspace string `json:"workspace"`
-}
+type AuditLogEvent = auditlog.Event
 
 // AuditLogEventList defines model for AuditLogEventList.
 type AuditLogEventList struct {
@@ -171,14 +156,12 @@ type AuditRecord struct {
 
 	// Result Any JSON value, kept as written.
 	Result JSON   `json:"result,omitempty"`
-	RunID  string `json:"run_id"`
 	Tool   string `json:"tool"`
 }
 
 // AuditRun A run as auditors see it, without what was said in it.
 type AuditRun struct {
-	ConversationID string    `json:"conversation_id"`
-	CreatedAt      time.Time `json:"created_at"`
+	CreatedAt time.Time `json:"created_at"`
 
 	// Error Why the run failed, or who cancelled it.
 	Error string `json:"error,omitempty"`
@@ -284,10 +267,7 @@ type HarnessVersion struct {
 
 	// Harness A declarative definition of an agent.
 	Harness Harness `json:"harness"`
-
-	// ID Identifies the version across all harnesses.
-	ID      int64 `json:"id"`
-	Version int   `json:"version"`
+	Version int     `json:"version"`
 }
 
 // JSON Any JSON value, kept as written.
@@ -318,14 +298,6 @@ type PolicyModule struct {
 	Source string `json:"source"`
 }
 
-// ProviderPart A message in the form of the provider that generated it, kept so it
-// can be sent to the model again.
-type ProviderPart struct {
-	// Data Any JSON value, kept as written.
-	Data JSON   `json:"data"`
-	Name string `json:"name"`
-}
-
 // Role defines model for Role.
 type Role string
 
@@ -343,13 +315,12 @@ type Run struct {
 	FinishedAt time.Time `json:"finished_at,omitempty,omitzero"`
 
 	// Follows The run whose conversation this run continues, if any.
-	Follows          string `json:"follows,omitempty"`
-	Harness          string `json:"harness"`
-	HarnessVersion   int    `json:"harness_version"`
-	HarnessVersionID int64  `json:"harness_version_id"`
-	ID               string `json:"id"`
-	Input            string `json:"input"`
-	Output           string `json:"output"`
+	Follows        string `json:"follows,omitempty"`
+	Harness        string `json:"harness"`
+	HarnessVersion int    `json:"harness_version"`
+	ID             string `json:"id"`
+	Input          string `json:"input"`
+	Output         string `json:"output"`
 
 	// StartedBy The user who started the run.
 	StartedBy string    `json:"started_by"`
@@ -381,20 +352,16 @@ type ToolResult struct {
 }
 
 // TranscriptMessage One message of a run's conversation with the model: the input, a
-// model reply, or the results of the reply's tool calls.
+// model reply, or the results of the reply's tool calls. What the
+// provider kept of a reply for the model, such as its thinking, is
+// not part of it.
 type TranscriptMessage struct {
-	CreatedAt time.Time `json:"created_at"`
-
 	// Position The message's index in the conversation.
 	Position    int          `json:"position"`
-	Provider    ProviderPart `json:"provider,omitempty,omitzero"`
 	Role        Role         `json:"role"`
 	Text        string       `json:"text,omitempty"`
 	ToolCalls   []ToolCall   `json:"tool_calls,omitempty"`
 	ToolResults []ToolResult `json:"tool_results,omitempty"`
-
-	// Usage The tokens of the model call that wrote a reply.
-	Usage Usage `json:"usage,omitempty,omitzero"`
 }
 
 // Usage The tokens of model calls. Input the provider read from its prompt
@@ -447,7 +414,8 @@ type ListAuditEventsParams struct {
 	// Limit The page size.
 	Limit Limit `form:"limit,omitempty" json:"limit,omitempty"`
 
-	// Before Continue before the event with this id, as AuditLogEventList.next gives it.
+	// Before Continue before the event with this id, as AuditLogEventList.next
+	// gives it; 0, the default, starts at the newest.
 	Before BeforeEvent `form:"before,omitempty" json:"before,omitempty"`
 }
 
@@ -493,7 +461,8 @@ type ListMyActivityParams struct {
 	// Limit The page size.
 	Limit Limit `form:"limit,omitempty" json:"limit,omitempty"`
 
-	// Before Continue before the event with this id, as AuditLogEventList.next gives it.
+	// Before Continue before the event with this id, as AuditLogEventList.next
+	// gives it; 0, the default, starts at the newest.
 	Before BeforeEvent `form:"before,omitempty" json:"before,omitempty"`
 }
 
@@ -502,7 +471,8 @@ type ListWorkspaceAuditEventsParams struct {
 	// Limit The page size.
 	Limit Limit `form:"limit,omitempty" json:"limit,omitempty"`
 
-	// Before Continue before the event with this id, as AuditLogEventList.next gives it.
+	// Before Continue before the event with this id, as AuditLogEventList.next
+	// gives it; 0, the default, starts at the newest.
 	Before BeforeEvent `form:"before,omitempty" json:"before,omitempty"`
 }
 

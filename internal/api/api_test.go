@@ -41,14 +41,13 @@ func TestFromRecord(t *testing.T) {
 	}
 
 	assert.Equal(t, api.AuditRecord{
-		RunID: "r1", CallID: "c1", Event: api.AuditEventApproval, Tool: "files_write",
+		CallID: "c1", Event: api.AuditEventApproval, Tool: "files_write",
 		Args: json.RawMessage(`{"path":"a"}`), Decision: api.DecisionDeny, Reason: "no",
 		Approver: "alice", Result: json.RawMessage(`{}`), Error: "boom", RecordedAt: at,
 	}, api.FromRecord(rec, at))
 }
 
 func TestFromMessage(t *testing.T) {
-	at := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
 	msg := model.Message{
 		Role:        model.RoleAssistant,
 		Text:        "done",
@@ -57,7 +56,7 @@ func TestFromMessage(t *testing.T) {
 		Provider:    &model.ProviderPart{Name: "anthropic", Data: json.RawMessage(`{"a":1}`)},
 	}
 
-	got := api.FromMessage(3, msg, at)
+	got := api.FromMessage(3, msg)
 
 	assert.Equal(t, api.TranscriptMessage{
 		Position:    3,
@@ -65,12 +64,10 @@ func TestFromMessage(t *testing.T) {
 		Text:        "done",
 		ToolCalls:   []api.ToolCall{{ID: "c1", Name: "files_read", Args: json.RawMessage(`{}`)}},
 		ToolResults: []api.ToolResult{{CallID: "c0", Content: "x", IsError: true}},
-		Provider:    api.ProviderPart{Name: "anthropic", Data: json.RawMessage(`{"a":1}`)},
-		CreatedAt:   at,
 	}, got)
-	b, err := json.Marshal(api.FromMessage(0, model.Message{Role: model.RoleUser, Text: "hi"}, at))
+	b, err := json.Marshal(got)
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"position":0,"role":"user","text":"hi","created_at":"2026-10-06T12:00:00Z"}`, string(b), "a message without a provider part has none")
+	assert.NotContains(t, string(b), "anthropic", "the provider's form of a reply is for the model alone")
 }
 
 func TestRun_UnfinishedHasNoFinishedAt(t *testing.T) {

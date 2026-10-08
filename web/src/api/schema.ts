@@ -437,7 +437,9 @@ export interface paths {
         };
         /**
          * A run's events, as server-sent events
-         * @description The events from the run's start. A running run's stream follows it
+         * @description The events from the run's start. The stream of a run that has not
+         *     finished, queued, waiting or running, replays what it recorded so
+         *     far, a waiting run's approval request included, then follows it
          *     until it finishes; a finished run's stream replays its audit records
          *     and its end. Each event's data is JSON:
          *
@@ -552,11 +554,6 @@ export interface components {
             source: string;
         };
         HarnessVersion: {
-            /**
-             * Format: int64
-             * @description Identifies the version across all harnesses.
-             */
-            id: number;
             version: number;
             harness: components["schemas"]["Harness"];
             /** Format: date-time */
@@ -581,8 +578,6 @@ export interface components {
             conversation_id: string;
             /** @description The run whose conversation this run continues, if any. */
             follows?: string;
-            /** Format: int64 */
-            harness_version_id: number;
             harness: string;
             harness_version: number;
             /** @description The user who started the run. */
@@ -633,7 +628,6 @@ export interface components {
         /** @description A run as auditors see it, without what was said in it. */
         AuditRun: {
             id: string;
-            conversation_id: string;
             follows?: string;
             workspace: string;
             harness: string;
@@ -716,7 +710,6 @@ export interface components {
         Decision: "allow" | "deny" | "require_approval";
         /** @description One decision, approval or result the tool gateway recorded. */
         AuditRecord: {
-            run_id: string;
             call_id: string;
             event: components["schemas"]["AuditEvent"];
             tool: string;
@@ -743,16 +736,10 @@ export interface components {
             is_error?: boolean;
         };
         /**
-         * @description A message in the form of the provider that generated it, kept so it
-         *     can be sent to the model again.
-         */
-        ProviderPart: {
-            name: string;
-            data: components["schemas"]["JSON"];
-        };
-        /**
          * @description One message of a run's conversation with the model: the input, a
-         *     model reply, or the results of the reply's tool calls.
+         *     model reply, or the results of the reply's tool calls. What the
+         *     provider kept of a reply for the model, such as its thinking, is
+         *     not part of it.
          */
         TranscriptMessage: {
             /** @description The message's index in the conversation. */
@@ -761,11 +748,6 @@ export interface components {
             text?: string;
             tool_calls?: components["schemas"]["ToolCall"][];
             tool_results?: components["schemas"]["ToolResult"][];
-            provider?: components["schemas"]["ProviderPart"];
-            /** @description The tokens of the model call that wrote a reply. */
-            usage?: components["schemas"]["Usage"];
-            /** Format: date-time */
-            created_at: string;
         };
         /**
          * @description A call that policy marked as requiring approval. Secrets are already
@@ -812,7 +794,10 @@ export interface components {
          *     another member's conversation, is not found.
          */
         RunID: string;
-        /** @description Continue before the event with this id, as AuditLogEventList.next gives it. */
+        /**
+         * @description Continue before the event with this id, as AuditLogEventList.next
+         *     gives it; 0, the default, starts at the newest.
+         */
         BeforeEvent: number;
         /** @description The page size. */
         Limit: number;
@@ -959,7 +944,10 @@ export interface operations {
             query?: {
                 /** @description The page size. */
                 limit?: components["parameters"]["Limit"];
-                /** @description Continue before the event with this id, as AuditLogEventList.next gives it. */
+                /**
+                 * @description Continue before the event with this id, as AuditLogEventList.next
+                 *     gives it; 0, the default, starts at the newest.
+                 */
                 before?: components["parameters"]["BeforeEvent"];
             };
             header?: never;
@@ -993,7 +981,10 @@ export interface operations {
                 run?: string;
                 /** @description The page size. */
                 limit?: components["parameters"]["Limit"];
-                /** @description Continue before the event with this id, as AuditLogEventList.next gives it. */
+                /**
+                 * @description Continue before the event with this id, as AuditLogEventList.next
+                 *     gives it; 0, the default, starts at the newest.
+                 */
                 before?: components["parameters"]["BeforeEvent"];
             };
             header?: never;
@@ -1066,7 +1057,10 @@ export interface operations {
             query?: {
                 /** @description The page size. */
                 limit?: components["parameters"]["Limit"];
-                /** @description Continue before the event with this id, as AuditLogEventList.next gives it. */
+                /**
+                 * @description Continue before the event with this id, as AuditLogEventList.next
+                 *     gives it; 0, the default, starts at the newest.
+                 */
                 before?: components["parameters"]["BeforeEvent"];
             };
             header?: never;

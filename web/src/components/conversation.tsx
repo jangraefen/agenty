@@ -70,7 +70,7 @@ export function Turn({
         <Reply
           first={replies.length === 0}
           harness={run.harness}
-          message={{ position: -1, role: "assistant", text: run.output, created_at: "" }}
+          message={{ position: -1, role: "assistant", text: run.output }}
           results={results}
           running={false}
         />

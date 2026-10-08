@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"strings"
 	"testing"
@@ -18,7 +19,7 @@ import (
 // logEvents returns the audit log's events with the given action, in order.
 func (f *fixture) logEvents(t *testing.T, action string) []auditlog.Event {
 	t.Helper()
-	all, err := f.store.AuditEvents(context.Background(), 0, 1000)
+	all, err := f.store.AuditEvents(context.Background(), 0, math.MaxInt64, 1000)
 	require.NoError(t, err)
 	var out []auditlog.Event
 	for _, e := range all {

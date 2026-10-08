@@ -245,9 +245,11 @@ func TestRecord_ConcurrentAppendsStayLinear(t *testing.T) {
 		require.NoError(t, <-errs)
 	}
 	sum, err := auditlog.Verify(bytes.NewReader(export(t, s)))
+	require.NoError(t, err, "one chain, without gaps")
+	records, err := s.AuditRecords(context.Background(), "r1")
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), sum.First)
-	assert.Equal(t, n, sum.Events)
+	assert.Len(t, records, n, "every append made it")
+	assert.Equal(t, int64(sum.Events), sum.Last)
 }
 
 // events returns "actor action workspace run target details" for every

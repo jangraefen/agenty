@@ -185,29 +185,39 @@ func TestQueue_AQueuedRunsStreamEndsWithTheServer(t *testing.T) {
 
 // TestQueue_ARunFinishingAsItIsReadIsNotOnAnotherServer: a run that ends
 // while its events are asked for, or its cancel, is this server's: its
-// stream replays it, and its cancel finds it finished.
+// stream replays it, and its cancel finds it finished or cancels it.
 func TestQueue_ARunFinishingAsItIsReadIsNotOnAnotherServer(t *testing.T) {
 	f := newFixture(t, options{})
 	f.putNotes(t)
 	for range 30 {
 		f.script(modeltest.Reply("done"))
 		run := f.startRun(t, "tidy my notes")
+		code, body := f.raw(t, http.MethodGet, home+"/runs/"+run.ID+"/events")
+		require.Equal(t, http.StatusOK, code, body)
+		f.finish(t, run.ID)
 
-		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, f.http.URL+home+"/runs/"+run.ID+"/events", nil)
-		require.NoError(t, err)
-		req.Header.Set("Authorization", "Bearer "+aliceToken)
-		resp, err := http.DefaultClient.Do(req)
-		require.NoError(t, err)
-		body, err := io.ReadAll(resp.Body)
-		require.NoError(t, err)
-		require.NoError(t, resp.Body.Close())
-		require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
-
-		var e api.Error
-		if code := f.do(t, http.MethodPost, home+"/runs/"+run.ID+"/cancel", nil, &e); code != http.StatusAccepted {
-			require.Equal(t, http.StatusConflict, code)
-			require.Contains(t, e.Error, "has already finished")
+		f.script(modeltest.Reply("done"))
+		run = f.startRun(t, "tidy my notes")
+		code, body = f.raw(t, http.MethodPost, home+"/runs/"+run.ID+"/cancel")
+		if code != http.StatusAccepted {
+			require.Equal(t, http.StatusConflict, code, body)
+			require.Contains(t, body, "has already finished")
 		}
 		f.finish(t, run.ID)
 	}
+}
+
+// raw sends alice's request without a body and returns the response's
+// status and body, read to the end.
+func (f *fixture) raw(t *testing.T, method, path string) (int, string) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), method, f.http.URL+path, nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+aliceToken)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	return resp.StatusCode, string(body)
 }

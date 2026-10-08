@@ -705,6 +705,8 @@ components:
     AuditRun:
       description: A run as auditors see it, without what was said in it.
       type: object
+      # So no field that holds what was said joins it unnoticed.
+      additionalProperties: false
       required: [id, workspace, harness, harness_version, started_by, status, steps, usage, created_at]
       properties:
         id: {type: string}

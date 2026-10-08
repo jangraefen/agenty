@@ -372,12 +372,14 @@ func TestInvariant_ServerCredentialsNeverLeak(t *testing.T) {
 	audit := f.audit(t, run.ID)
 	var transcript []api.TranscriptMessage
 	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+run.ID+"/transcript", nil, &transcript))
-	storedJSON, err := json.Marshal(stored)
-	require.NoError(t, err)
+	// What the API sent, as it sent it: the decoded types hold only the
+	// fields they know.
+	code, storedJSON := f.raw(t, http.MethodGet, home+"/runs/"+run.ID)
+	require.Equal(t, http.StatusOK, code)
 	auditJSON, err := json.Marshal(audit)
 	require.NoError(t, err)
-	transcriptJSON, err := json.Marshal(transcript)
-	require.NoError(t, err)
+	code, transcriptJSON := f.raw(t, http.MethodGet, home+"/runs/"+run.ID+"/transcript")
+	require.Equal(t, http.StatusOK, code)
 
 	assert.Equal(t, "the token is [redacted]", stored.Output)
 	assert.Equal(t, "the token is [redacted]", transcript[len(transcript)-1].Text)
@@ -385,7 +387,7 @@ func TestInvariant_ServerCredentialsNeverLeak(t *testing.T) {
 	assert.Equal(t, 1, f.write.Calls, "the approved call ran, and failed")
 	// The API leaves out the provider's form of a reply; the store keeps it
 	// for the model, redacted as well.
-	assert.NotContains(t, string(transcriptJSON), "thinking", "the API does not send the provider's form of a reply")
+	assert.NotContains(t, transcriptJSON, "thinking", "the API does not send the provider's form of a reply")
 	kept, err := f.store.Transcript(context.Background(), run.ID)
 	require.NoError(t, err)
 	last := kept[len(kept)-1].Provider
@@ -400,7 +402,7 @@ func TestInvariant_ServerCredentialsNeverLeak(t *testing.T) {
 	approvalJSON, err := json.Marshal(approval)
 	require.NoError(t, err)
 	assert.Contains(t, string(approvalJSON), "[redacted]", "the results the request keeps are redacted")
-	for _, data := range append(seen, string(storedJSON), string(auditJSON), string(transcriptJSON), string(keptJSON), string(approvalJSON), f.logs.String()) {
+	for _, data := range append(seen, storedJSON, string(auditJSON), transcriptJSON, string(keptJSON), string(approvalJSON), f.logs.String()) {
 		assert.NotContains(t, data, token)
 	}
 	assert.Contains(t, strings.Join(seen, "\n"), "[redacted]")

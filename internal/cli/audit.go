@@ -54,51 +54,17 @@ func printAuditUsage(w io.Writer, msg string, code int) int {
 	return code
 }
 
-// auditFlags parses the flags of an audit command and checks that nargs
-// arguments follow them; ok is false, with the exit code, when they do not.
-func auditFlags(name string, nargs int, args []string, env Env, define func(*flag.FlagSet)) ([]string, int, bool) {
-	fs := flag.NewFlagSet("agenty audit "+name, flag.ContinueOnError)
-	fs.SetOutput(env.Stderr)
-	fs.Usage = func() {
-		if _, err := io.WriteString(env.Stderr, auditUsage+"\nFlags:\n"); err == nil {
-			fs.PrintDefaults()
-		}
-	}
-	define(fs)
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return nil, exitOK, false
-		}
-		return nil, exitUsage, false
-	}
-	if fs.NArg() != nargs {
-		if _, err := fmt.Fprintf(env.Stderr, "agenty audit %s: expected %d argument(s), got %d\n", name, nargs, fs.NArg()); err != nil {
-			return nil, exitFailure, false
-		}
-		fs.Usage()
-		return nil, exitUsage, false
-	}
-	return fs.Args(), exitOK, true
-}
-
 func auditExport(ctx context.Context, args []string, env Env) int {
-	var flags clientFlags
 	var after int64
-	_, code, ok := auditFlags("export", 0, args, env, func(fs *flag.FlagSet) {
-		fs.StringVar(&flags.server, "server", "http://127.0.0.1:8080", "`URL` of the agenty server")
+	flags, _, code, ok := parseFlags(command{name: "audit export", usage: auditUsage, client: true, define: func(fs *flag.FlagSet) {
 		fs.Int64Var(&after, "after", 0, "start after the event with this `id`")
-	})
+	}}, args, env)
 	if !ok {
 		return code
 	}
-	flags.token, _ = env.LookupEnv(tokenVar)
-	flags.logLevel = slog.LevelInfo
 	logger, err := clientLogger(env, flags)
 	if err != nil {
 		return fail(logger, "export failed", err)
-	}
-	if flags.token == "" {
-		return fail(logger, "export failed", errors.New(tokenVar+" is not set: sign in with an auditor's token"))
 	}
 	c, err := newClient(flags)
 	if err != nil {
@@ -155,9 +121,9 @@ func (a *anchors) Set(s string) error {
 
 func auditVerify(args []string, env Env) int {
 	var want anchors
-	rest, code, ok := auditFlags("verify", 1, args, env, func(fs *flag.FlagSet) {
+	_, rest, code, ok := parseFlags(command{name: "audit verify", usage: auditUsage, nargs: 1, define: func(fs *flag.FlagSet) {
 		fs.Var(&want, "anchor", "an event's `ID:HASH` kept from an earlier export, which this one must hold; repeatable")
-	})
+	}}, args, env)
 	if !ok {
 		return code
 	}

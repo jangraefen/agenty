@@ -2,3 +2,8 @@ provider:
   anthropic:
     api_key: {env: ANTHROPIC_API_KEY}
     max_tokens: 1024
+database:
+  url: {env: DATABASE_URL}
+users:
+  alice:
+    token: {env: ALICE_TOKEN}

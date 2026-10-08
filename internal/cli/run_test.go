@@ -42,6 +42,8 @@ const configYAML = `provider:
     api_key: {env: ANTHROPIC_API_KEY}
     max_tokens: 1024
     base_url: %s
+database:
+  url: {env: DATABASE_URL}
 mcp_servers:
   # Servers that stop with each run, as these tests check.
   files:
@@ -126,6 +128,8 @@ func newFixture(t *testing.T, responses ...anthropictest.Response) *fixture {
 			"ANTHROPIC_API_KEY": apiKey, "FILES_TOKEN": filesToken, "ALICE_TOKEN": aliceToken, "BOB_TOKEN": bobToken,
 			// The CLI signs in as alice, in her workspace.
 			"AGENTY_TOKEN": aliceToken, "AGENTY_WORKSPACE": "home",
+			// Only agenty serve opens it; other tests use a store of their own.
+			"DATABASE_URL": "postgres://agenty:unused-password@127.0.0.1:1/agenty",
 		},
 		stdin:      "y\n",
 		tty:        true,

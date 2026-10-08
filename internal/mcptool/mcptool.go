@@ -99,9 +99,6 @@ func (s *Session) Tools(ctx context.Context) ([]toolgateway.Tool, error) {
 			return nil, fmt.Errorf("mcptool: %s: list tools: %w", s.name, err)
 		}
 		name := s.name + "_" + t.Name
-		if err := toolgateway.ValidateToolName(name); err != nil {
-			return nil, fmt.Errorf("mcptool: %s: %w", s.name, err)
-		}
 		schema, err := json.Marshal(t.InputSchema)
 		if err != nil {
 			return nil, fmt.Errorf("mcptool: %s: tool %s: input schema: %w", s.name, t.Name, err)

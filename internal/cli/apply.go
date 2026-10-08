@@ -17,7 +17,7 @@ Harnesses belong to the workspace they are applied to.
 `
 
 func apply(ctx context.Context, args []string, env Env) int {
-	flags, rest, code, ok := parseClientFlags("apply", applyUsage, 1, args, env)
+	flags, rest, code, ok := parseFlags(command{name: "apply", usage: applyUsage, nargs: 1, client: true, workspace: true}, args, env)
 	if !ok {
 		return code
 	}

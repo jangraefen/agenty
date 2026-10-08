@@ -72,11 +72,15 @@ paths:
   /v1/conversations/{id}:
     get:
       operationId: getConversation
-      summary: A conversation the user started
+      summary: A conversation the user started, with its runs
       description: |
         Only the user who started the conversation finds it, in any
-        workspace; one of a workspace they left is read-only. Only the ID
-        of its first run names it.
+        workspace, those they left or the config no longer has included;
+        anyone else, other members and auditors too, finds no such
+        conversation. One of a workspace the user left is read-only. Only
+        the ID of its first run names it. Its runs come oldest first; its
+        latest is followed, continued, cancelled and answered through its
+        workspace.
       parameters:
         - name: id
           in: path
@@ -85,10 +89,10 @@ paths:
           schema: {type: string}
       responses:
         "200":
-          description: The conversation.
+          description: The conversation and its runs.
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/ConversationSummary"}
+              schema: {$ref: "#/components/schemas/Conversation"}
         default: {$ref: "#/components/responses/Error"}
 
   /v1/audit/runs:
@@ -374,23 +378,6 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Run"}
-        default: {$ref: "#/components/responses/Error"}
-
-  /v1/workspaces/{workspace}/runs/{id}/conversation:
-    parameters:
-      - $ref: "#/components/parameters/Workspace"
-      - $ref: "#/components/parameters/RunID"
-    get:
-      operationId: getRunConversation
-      summary: The runs of the conversation a run belongs to, oldest first
-      responses:
-        "200":
-          description: The runs.
-          content:
-            application/json:
-              schema:
-                type: array
-                items: {$ref: "#/components/schemas/Run"}
         default: {$ref: "#/components/responses/Error"}
 
   /v1/workspaces/{workspace}/runs/{id}/cancel:
@@ -804,6 +791,17 @@ components:
         status:
           description: The status of the conversation's latest run.
           allOf: [{$ref: "#/components/schemas/RunStatus"}]
+
+    Conversation:
+      allOf:
+        - {$ref: "#/components/schemas/ConversationSummary"}
+        - type: object
+          required: [runs]
+          properties:
+            runs:
+              description: The conversation's runs, oldest first.
+              type: array
+              items: {$ref: "#/components/schemas/Run"}
 
     ConversationList:
       type: object

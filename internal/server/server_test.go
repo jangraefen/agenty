@@ -621,7 +621,7 @@ func TestInvariant_ServerRequiresSignIn(t *testing.T) {
 		{http.MethodGet, home + "/runs", ""},
 		{http.MethodPost, home + "/runs/r1/cancel", ""},
 		{http.MethodPost, home + "/runs/r1/follow-up", `{"input":"x"}`},
-		{http.MethodGet, home + "/runs/r1/conversation", ""},
+		{http.MethodGet, "/v1/conversations/r1", ""},
 		{http.MethodGet, home + "/approvals", ""},
 		{http.MethodGet, "/v1/workspaces/ghost/harnesses", ""},
 		{http.MethodGet, "/v1/no-such-route", ""},
@@ -749,7 +749,6 @@ func TestInvariant_WorkspacesAreSeparate(t *testing.T) {
 			{carolToken, http.MethodPost, home + "/runs/" + run.ID + "/approvals/" + req.ID, api.Answer{Approved: true}},
 			{carolToken, http.MethodPost, home + "/runs/" + run.ID + "/cancel", nil},
 			{carolToken, http.MethodPost, home + "/runs/" + run.ID + "/follow-up", api.FollowUp{Input: "x"}},
-			{carolToken, http.MethodGet, home + "/runs/" + run.ID + "/conversation", nil},
 			{carolToken, http.MethodGet, home + "/approvals", nil},
 			{aliceToken, http.MethodGet, work, nil},
 			{aliceToken, http.MethodGet, work + "/harnesses", nil},
@@ -763,7 +762,7 @@ func TestInvariant_WorkspacesAreSeparate(t *testing.T) {
 		}
 	})
 	t.Run("a member of another workspace", func(t *testing.T) {
-		for _, path := range []string{"/runs/" + run.ID, "/runs/" + run.ID + "/transcript", "/runs/" + run.ID + "/events", "/runs/" + run.ID + "/conversation", "/harnesses/notes"} {
+		for _, path := range []string{"/runs/" + run.ID, "/runs/" + run.ID + "/transcript", "/runs/" + run.ID + "/events", "/harnesses/notes"} {
 			var e api.Error
 			assert.Equal(t, http.StatusNotFound, f.doAs(t, bobToken, http.MethodGet, work+path, nil, &e), path)
 		}
@@ -798,12 +797,11 @@ func TestInvariant_WorkspacesAreSeparate(t *testing.T) {
 		require.Equal(t, http.StatusOK, f.doAs(t, carolToken, http.MethodGet, "/v1/conversations", nil, &hers))
 		require.Len(t, hers.Conversations, 1)
 		assert.Equal(t, "carols", hers.Conversations[0].ID)
-		var found api.ConversationSummary
+		var found api.Conversation
 		require.Equal(t, http.StatusOK, f.doAs(t, carolToken, http.MethodGet, "/v1/conversations/carols", nil, &found))
 		var own api.Run
 		require.Equal(t, http.StatusOK, f.doAs(t, carolToken, http.MethodGet, home+"/runs/carols", nil, &own))
-		var runs []api.Run
-		require.Equal(t, http.StatusOK, f.doAs(t, carolToken, http.MethodGet, home+"/runs/carols/conversation", nil, &runs))
+		assert.Equal(t, []api.Run{own}, found.Runs, "her conversation comes with its runs")
 		var transcript []api.TranscriptMessage
 		require.Equal(t, http.StatusOK, f.doAs(t, carolToken, http.MethodGet, home+"/runs/carols/transcript", nil, &transcript))
 		assert.Equal(t, http.StatusOK, f.doAs(t, carolToken, http.MethodGet, home+"/runs/carols/events", nil, nil), "her run's events replay: it has finished")
@@ -821,8 +819,16 @@ func TestInvariant_WorkspacesAreSeparate(t *testing.T) {
 		}
 		var inGone api.Run
 		assert.Equal(t, http.StatusOK, f.do(t, http.MethodGet, "/v1/workspaces/gone/runs/alices-gone", nil, &inGone), "a workspace the config no longer has is left too")
+		var goneConversation api.Conversation
+		require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, "/v1/conversations/alices-gone", nil, &goneConversation))
+		assert.Equal(t, "gone", goneConversation.Workspace)
+		assert.Equal(t, []api.Run{inGone}, goneConversation.Runs, "a conversation of a workspace the config no longer has is read too")
+		for _, conversation := range []string{run.ID, "alices-gone"} {
+			var e api.Error
+			assert.Equal(t, http.StatusNotFound, f.doAs(t, carolToken, http.MethodGet, "/v1/conversations/"+conversation, nil, &e), conversation)
+		}
 		for _, run := range []string{home + "/runs/" + run.ID, "/v1/workspaces/ghost/runs/carols", "/v1/workspaces/gone/runs/alices-gone"} {
-			for _, read := range []string{"", "/conversation", "/transcript", "/events"} {
+			for _, read := range []string{"", "/transcript", "/events"} {
 				path := run + read
 				var e api.Error
 				assert.Equal(t, http.StatusNotFound, f.doAs(t, carolToken, http.MethodGet, path, nil, &e), path)

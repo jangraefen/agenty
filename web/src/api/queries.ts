@@ -78,14 +78,32 @@ export function recentChatsQuery(api: Api) {
   });
 }
 
-// A conversation of any of the user's workspaces, which tells its workspace.
-export function conversationSummaryQuery(api: Api, id: string) {
+/** The key under which the user's conversations, each with its runs, are cached. */
+export function conversationsKey() {
+  return ["conversations"] as const;
+}
+
+// A conversation of any of the user's workspaces, which tells its workspace,
+// with its runs, oldest first.
+export function conversationQuery(api: Api, id: string) {
   return queryOptions({
-    queryKey: ["conversation-summary", id],
+    queryKey: [...conversationsKey(), id],
     queryFn: () => unwrap(api.GET("/v1/conversations/{id}", { params: { path: { id } } })),
-    // A conversation stays in its workspace, and its title is its first input.
-    staleTime: Number.POSITIVE_INFINITY,
   });
+}
+
+/**
+ * The conversation with run in it, in place of the run with its ID, else
+ * after the others, and with the status of its latest run.
+ */
+export function withRun(
+  conversation: Schemas["Conversation"],
+  run: Schemas["Run"],
+): Schemas["Conversation"] {
+  const runs = conversation.runs.some((r) => r.id === run.id)
+    ? conversation.runs.map((r) => (r.id === run.id ? run : r))
+    : [...conversation.runs, run];
+  return { ...conversation, runs, status: runs.at(-1)?.status ?? conversation.status };
 }
 
 export interface AuditFilters {
@@ -176,34 +194,6 @@ export function auditEventsQuery(api: Api, filters: EventFilters) {
   );
 }
 
-export function runQuery(api: Api, workspace: string, id: string) {
-  return queryOptions({
-    queryKey: ["workspaces", workspace, "run", id],
-    queryFn: () =>
-      unwrap(
-        api.GET("/v1/workspaces/{workspace}/runs/{id}", { params: { path: { workspace, id } } }),
-      ),
-  });
-}
-
-/** The key under which the conversations of a workspace's runs are cached. */
-export function conversationsKey(workspace: string) {
-  return ["workspaces", workspace, "conversation"] as const;
-}
-
-// The runs of the conversation the run belongs to, oldest first.
-export function conversationQuery(api: Api, workspace: string, id: string) {
-  return queryOptions({
-    queryKey: [...conversationsKey(workspace), id],
-    queryFn: () =>
-      unwrap(
-        api.GET("/v1/workspaces/{workspace}/runs/{id}/conversation", {
-          params: { path: { workspace, id } },
-        }),
-      ),
-  });
-}
-
 export function transcriptQuery(api: Api, workspace: string, id: string) {
   return queryOptions({
     queryKey: ["workspaces", workspace, "run", id, "transcript"],
@@ -240,21 +230,28 @@ export function harnessQuery(api: Api, workspace: string, name: string) {
 }
 
 /**
- * Caches run, just started after earlier, the runs of its conversation so far,
- * so its chat shows it at once, and refreshes the lists it joins.
+ * Caches run, just started in workspace, in its conversation: the one it
+ * follows up if given, else a new one. Its chat then shows it at once, while
+ * the conversation and the recent chats are refreshed.
  */
 export function cacheStartedRun(
   queryClient: QueryClient,
   api: Api,
   workspace: string,
   run: Schemas["Run"],
-  earlier: Schemas["Run"][] = [],
+  followed?: Schemas["Conversation"],
 ) {
-  queryClient.setQueryData(runQuery(api, workspace, run.id).queryKey, run);
-  queryClient.setQueryData(conversationQuery(api, workspace, run.conversation_id).queryKey, [
-    ...earlier,
-    run,
-  ]);
-  void queryClient.invalidateQueries({ queryKey: conversationsKey(workspace) });
+  const conversation = followed ?? {
+    id: run.conversation_id,
+    workspace,
+    harness: run.harness,
+    // Cut as the server cuts a title: to 100 characters, not UTF-16 units.
+    title: Array.from(run.input).slice(0, 100).join(""),
+    status: run.status,
+    runs: [],
+  };
+  const { queryKey } = conversationQuery(api, run.conversation_id);
+  queryClient.setQueryData(queryKey, withRun(conversation, run));
+  void queryClient.invalidateQueries({ queryKey });
   void queryClient.invalidateQueries({ queryKey: recentChatsKey() });
 }

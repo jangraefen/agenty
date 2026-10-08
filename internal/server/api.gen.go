@@ -29,7 +29,7 @@ type ServerInterface interface {
 	// ListConversations The conversations the user started, latest activity first, a page at a time
 	// (GET /v1/conversations)
 	ListConversations(c *gin.Context, params ListConversationsParams)
-	// GetConversation A conversation the user started
+	// GetConversation A conversation the user started, with its runs
 	// (GET /v1/conversations/{id})
 	GetConversation(c *gin.Context, id string)
 	// GetMe The signed-in user and their workspaces
@@ -68,9 +68,6 @@ type ServerInterface interface {
 	// CancelRun Cancel a queued, waiting or running run
 	// (POST /v1/workspaces/{workspace}/runs/{id}/cancel)
 	CancelRun(c *gin.Context, workspace Workspace, id RunID)
-	// GetRunConversation The runs of the conversation a run belongs to, oldest first
-	// (GET /v1/workspaces/{workspace}/runs/{id}/conversation)
-	GetRunConversation(c *gin.Context, workspace Workspace, id RunID)
 	// StreamRunEvents A run's events, as server-sent events
 	// (GET /v1/workspaces/{workspace}/runs/{id}/events)
 	StreamRunEvents(c *gin.Context, workspace Workspace, id RunID)
@@ -708,40 +705,6 @@ func (siw *ServerInterfaceWrapper) CancelRun(c *gin.Context) {
 	siw.Handler.CancelRun(c, workspace, id)
 }
 
-// GetRunConversation operation middleware
-func (siw *ServerInterfaceWrapper) GetRunConversation(c *gin.Context) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "workspace" -------------
-	var workspace Workspace
-
-	err = runtime.BindStyledParameterWithOptions("simple", "workspace", c.Param("workspace"), &workspace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter workspace: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	// ------------- Path parameter "id" -------------
-	var id RunID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "id", c.Param("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter id: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.GetRunConversation(c, workspace, id)
-}
-
 // StreamRunEvents operation middleware
 func (siw *ServerInterfaceWrapper) StreamRunEvents(c *gin.Context) {
 
@@ -887,7 +850,6 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.POST(options.BaseURL+"/v1/workspaces/:workspace/runs", wrapper.CreateRun)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace/runs/:id", wrapper.GetRun)
 	router.POST(options.BaseURL+"/v1/workspaces/:workspace/runs/:id/follow-up", wrapper.FollowUpRun)
-	router.GET(options.BaseURL+"/v1/workspaces/:workspace/runs/:id/conversation", wrapper.GetRunConversation)
 	router.POST(options.BaseURL+"/v1/workspaces/:workspace/runs/:id/cancel", wrapper.CancelRun)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace/runs/:id/transcript", wrapper.GetRunTranscript)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace/runs/:id/events", wrapper.StreamRunEvents)

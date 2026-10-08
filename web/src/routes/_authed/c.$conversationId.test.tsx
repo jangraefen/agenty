@@ -3,7 +3,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, onTestFinished, test, vi } from "vitest";
 import { apiUrl } from "@/config";
-import { approvalRequest, auditRecord, conversation, run } from "@/test/fixtures";
+import { approvalRequest, auditRecord, conversation, conversationOf, run } from "@/test/fixtures";
 import { renderApp } from "@/test/render";
 import {
   eventStream,
@@ -33,30 +33,29 @@ function refocusLater() {
 
 type Message = Schemas["TranscriptMessage"];
 
-// Answers for the runs of one conversation: each run, the conversation from
-// any of them, and each run's transcript, by run ID.
+// Answers for one conversation of workspace, with these runs: the
+// conversation, named by its first run alone, and each run's transcript, by
+// run ID.
 function conversationHandlers(
   runs: Schemas["Run"][],
   transcripts: Record<string, Message[]> = {},
-  at = base,
+  workspace = "notes",
 ) {
-  const find = (id: unknown) => runs.find((r) => r.id === id);
   return [
-    http.get(`${at}/runs/:id`, ({ params }) => {
-      const found = find(params.id);
-      return found === undefined
-        ? HttpResponse.json({ error: "not found" }, { status: 404 })
-        : HttpResponse.json(found);
-    }),
-    http.get(`${at}/runs/:id/conversation`, ({ params }) =>
-      find(params.id) === undefined
-        ? HttpResponse.json({ error: "not found" }, { status: 404 })
-        : HttpResponse.json(runs),
+    http.get(`${apiUrl}/v1/conversations/:id`, ({ params }) =>
+      params.id === runs[0]?.id
+        ? HttpResponse.json(conversationOf(runs, { workspace }))
+        : HttpResponse.json({ error: "not found" }, { status: 404 }),
     ),
-    http.get(`${at}/runs/:id/transcript`, ({ params }) =>
+    http.get(`${apiUrl}/v1/workspaces/${workspace}/runs/:id/transcript`, ({ params }) =>
       HttpResponse.json(transcripts[String(params.id)] ?? []),
     ),
   ];
+}
+
+// Answers for the conversation run-1, as handler answers.
+function conversationAnswer(handler: () => Response | Promise<Response>) {
+  return http.get(`${apiUrl}/v1/conversations/run-1`, handler);
 }
 
 function finishedEvents(id: string, finished: Schemas["Run"]) {
@@ -86,11 +85,7 @@ const second = run({
 });
 
 beforeEach(() => {
-  server.use(
-    meHandler({ user: "demo", workspaces: ["notes"] }),
-    approvalsHandler([]),
-    http.get(`${apiUrl}/v1/conversations/run-1`, () => HttpResponse.json(conversation())),
-  );
+  server.use(meHandler({ user: "demo", workspaces: ["notes"] }), approvalsHandler([]));
 });
 
 describe("the conversation page", () => {
@@ -232,20 +227,20 @@ describe("the conversation page", () => {
     expect(authorization).toBe(`Bearer ${TOKEN}`);
   });
 
-  test("a run response older than the run's end does not undo it", async () => {
+  test("a conversation response older than the run's end does not undo it", async () => {
     const live = liveEventStream();
     let hold = false;
     let release: (() => void) | null = null;
     server.use(...conversationHandlers([runningRun]));
     server.use(
-      http.get(`${base}/runs/run-1`, async () => {
+      conversationAnswer(async () => {
         if (hold) {
           // A response the server produced before the run ended, arriving late.
           await new Promise<void>((resolve) => {
             release = resolve;
           });
         }
-        return HttpResponse.json(runningRun);
+        return HttpResponse.json(conversationOf([runningRun]));
       }),
       http.get(`${base}/runs/run-1/events`, () => live.response()),
     );
@@ -270,12 +265,14 @@ describe("the conversation page", () => {
     expect(screen.queryByRole("button", { name: "Cancel run" })).not.toBeInTheDocument();
   });
 
-  test("keeps showing the run when refreshing it fails", async () => {
+  test("keeps showing the conversation when refreshing it fails", async () => {
     let fail = false;
     server.use(...conversationHandlers([run()]), finishedEvents("run-1", run()));
     server.use(
-      http.get(`${base}/runs/run-1`, () =>
-        fail ? HttpResponse.json({ error: "boom" }, { status: 500 }) : HttpResponse.json(run()),
+      conversationAnswer(() =>
+        fail
+          ? HttpResponse.json({ error: "boom" }, { status: 500 })
+          : HttpResponse.json(conversationOf()),
       ),
     );
     renderApp(path, TOKEN);
@@ -284,7 +281,9 @@ describe("the conversation page", () => {
     fail = true;
     refocusLater();
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("boom");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The conversation could not be refreshed: boom",
+    );
     expect(screen.getByRole("heading", { name: "tidy my notes" })).toBeInTheDocument();
   });
 
@@ -552,10 +551,7 @@ describe("the conversation page", () => {
 
   test("of a workspace the user left, is read-only", async () => {
     server.use(
-      http.get(`${apiUrl}/v1/conversations/run-1`, () =>
-        HttpResponse.json(conversation({ workspace: "gone" })),
-      ),
-      ...conversationHandlers([run()], {}, `${apiUrl}/v1/workspaces/gone`),
+      ...conversationHandlers([run()], {}, "gone"),
       http.get(`${apiUrl}/v1/workspaces/gone/runs/run-1/events`, () =>
         eventStream([{ event: "finished", data: run() }]),
       ),
@@ -585,20 +581,37 @@ describe("the conversation page", () => {
     );
   });
 
-  test("shows the first run when the rest of the conversation cannot be loaded", async () => {
+  test("reports a conversation that cannot be loaded", async () => {
+    server.use(conversationAnswer(() => HttpResponse.json({ error: "boom" }, { status: 500 })));
+    renderApp(path, TOKEN);
+
+    expect(
+      await screen.findByRole("heading", { name: "Something went wrong" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("boom");
+  });
+
+  test("opens with the conversation alone, its runs included", async () => {
+    const requests: string[] = [];
+    const record = ({ request }: { request: Request }) => {
+      requests.push(request.url);
+    };
+    server.events.on("request:start", record);
+    onTestFinished(() => {
+      server.events.removeListener("request:start", record);
+    });
     server.use(
-      http.get(`${base}/runs/run-1/conversation`, () =>
-        HttpResponse.json({ error: "boom" }, { status: 500 }),
-      ),
-      ...conversationHandlers([run()]),
-      finishedEvents("run-1", run()),
+      ...conversationHandlers([run(), second]),
+      // A stream that has yet to end, which would refresh the conversation.
+      http.get(`${base}/runs/run-2/events`, () => liveEventStream().response()),
     );
     renderApp(path, TOKEN);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "The rest of the conversation could not be loaded: boom",
+    await screen.findByText("Sorted.");
+    const reads = requests.filter(
+      (url) => url.includes("/conversations/") || /\/runs\/[^/]+$/.test(url),
     );
-    expect(screen.getByRole("heading", { name: "tidy my notes" })).toBeInTheDocument();
+    expect(reads).toEqual([`${apiUrl}/v1/conversations/run-1`]);
   });
 
   test("scrolls to the run a link names", async () => {
@@ -670,7 +683,7 @@ describe("replying", () => {
         server.use(
           ...conversationHandlers([run(), second, third]),
           // The refreshed conversation is slow to come.
-          http.get(`${base}/runs/run-1/conversation`, () => new Promise<never>(() => undefined)),
+          conversationAnswer(() => new Promise<never>(() => undefined)),
           http.get(`${base}/runs/run-3/events`, () => liveEventStream().response()),
         );
         return HttpResponse.json(third, { status: 201 });

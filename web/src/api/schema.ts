@@ -386,7 +386,8 @@ export interface paths {
          * Cancel a queued, waiting or running run
          * @description A queued run, or one waiting for approval, ends at once; a running
          *     one as soon as what it is doing stops. Either ends as cancelled by
-         *     the user; its events tell when.
+         *     the user; its events tell when. A run that finishes as it is
+         *     cancelled may keep its own end.
          */
         post: operations["cancelRun"];
         delete?: never;

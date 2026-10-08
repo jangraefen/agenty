@@ -59,8 +59,8 @@ func (h *hub) publish(e event) {
 	h.changed = make(chan struct{})
 }
 
-// stop ends the hub's event streams without an end: the run is left to
-// another server.
+// stop ends the hub's event streams without an end: the run is left to the
+// next server.
 func (h *hub) stop() {
 	h.mu.Lock()
 	defer h.mu.Unlock()

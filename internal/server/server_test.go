@@ -43,6 +43,7 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 	}{
 		{"no store", server.Config{Operator: &config.Config{}, Resolved: &config.Resolved{Redactor: r}, Logger: logger}, "store is required"},
 		{"no config", server.Config{Store: s, Logger: logger}, "config is required"},
+		{"no redactor", server.Config{Store: s, Operator: &config.Config{}, Resolved: &config.Resolved{}, Logger: logger}, "redactor is required"},
 		{"no logger", server.Config{Store: s, Operator: &config.Config{}, Resolved: &config.Resolved{Redactor: r}}, "logger is required"},
 		// Central policy that cannot compile fails the server at its start,
 		// not each run.
@@ -882,7 +883,10 @@ func TestCancelRun(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, f.do(t, http.MethodPost, home+"/runs/ghost/cancel", nil, &resp))
 }
 
-func TestCancelRun_RunningOnAnotherServer(t *testing.T) {
+// TestCancelRun_UnfinishedRunThisServerDoesNotRun: a run stored as running
+// that this server does not run, as its end could not be stored, is not
+// cancelled.
+func TestCancelRun_UnfinishedRunThisServerDoesNotRun(t *testing.T) {
 	f := newFixture(t, options{})
 	v, err := f.store.PutHarness(context.Background(), "home", "alice", notes())
 	require.NoError(t, err)
@@ -890,7 +894,7 @@ func TestCancelRun_RunningOnAnotherServer(t *testing.T) {
 	var resp api.Error
 
 	assert.Equal(t, http.StatusConflict, f.do(t, http.MethodPost, home+"/runs/elsewhere/cancel", nil, &resp))
-	assert.Contains(t, resp.Error, "running on another server")
+	assert.Contains(t, resp.Error, "this server does not run it")
 }
 
 func TestApprovals_ListedUntilAnswered(t *testing.T) {

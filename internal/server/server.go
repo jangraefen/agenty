@@ -7,6 +7,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -69,6 +71,9 @@ type Server struct {
 
 	// wake wakes a worker waiting for a queued run.
 	wake chan struct{}
+	// expiry wakes the goroutine that expires approval requests when a
+	// request is added.
+	expiry chan struct{}
 
 	mu sync.Mutex
 	// closed is set by Close; no run is queued after it.
@@ -126,7 +131,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	for name, srv := range cfg.Operator.MCPServers {
 		idleTimeout[name] = srv.IdleTimeoutOrDefault()
 	}
-	queued, err := cfg.Store.QueuedRuns(ctx)
+	idle, err := cfg.Store.IdleRuns(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("server: %w", err)
 	}
@@ -134,22 +139,34 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	workers := cfg.Operator.Runs.WorkersOrDefault()
 	s := &Server{
 		cfg: cfg, ctx: runCtx, cancel: cancel, runs: map[string]*hub{}, tokens: hashTokens(cfg.Resolved.UserTokens),
-		pool: toolgateway.NewPool(idleTimeout, cfg.Logger),
-		wake: make(chan struct{}, workers),
+		pool:   toolgateway.NewPool(idleTimeout, cfg.Logger),
+		wake:   make(chan struct{}, workers),
+		expiry: make(chan struct{}, 1),
 	}
-	// The runs an earlier server left queued get their event streams before
-	// any worker may claim them.
-	for _, q := range queued {
-		if _, err := s.register(q.ID, q.Workspace, q.Harness); err != nil {
+	// The runs an earlier server left queued or waiting get their event
+	// streams, with what they recorded so far, before any worker may claim
+	// them.
+	queued := 0
+	for _, r := range idle {
+		h, err := s.register(r.ID, r.Workspace, r.Harness)
+		if err != nil {
 			panic(err) // The server is not closed yet.
+		}
+		if err := s.replay(ctx, h, r.Status); err != nil {
+			s.Close()
+			return nil, fmt.Errorf("server: %w", err)
+		}
+		if r.Status == store.RunQueued {
+			queued++
 		}
 	}
 	for range workers {
 		s.wg.Go(s.work)
 	}
-	for range min(len(queued), workers) {
+	for range min(queued, workers) {
 		s.signal()
 	}
+	s.wg.Go(s.expire)
 	s.engine = s.routes()
 	return s, nil
 }
@@ -161,16 +178,16 @@ func (s *Server) Handler() http.Handler {
 
 // Close cancels every running run and waits until each has been recorded as
 // finished, then stops the MCP servers kept for conversations. No run is
-// queued after it. Event streams end with it; those of queued runs, which
-// the next server takes up, end without the run's end.
+// queued after it. Event streams end with it; those of queued and waiting
+// runs, which the next server takes up, end without the run's end.
 func (s *Server) Close() {
 	s.mu.Lock()
 	s.closed = true
 	s.mu.Unlock()
 	s.cancel()
 	s.wg.Wait()
-	// What is left are queued runs, which the next server takes up: their
-	// event streams end without an end.
+	// What is left are queued and waiting runs, which the next server takes
+	// up: their event streams end without an end.
 	s.mu.Lock()
 	for _, h := range s.runs {
 		h.stop()
@@ -346,11 +363,7 @@ func (s *Server) enqueue(r newRun) (store.Run, int, error) {
 // register gives the run id a hub, unless the server is stopping. Registering
 // under the lock Close takes means no run is queued once Close has begun.
 func (s *Server) register(id, workspace, harness string) (*hub, error) {
-	timeout := s.cfg.Operator.Approvals.Timeout
-	if timeout == 0 {
-		timeout = config.DefaultApprovalTimeout
-	}
-	h := newHub(workspace, harness, timeout)
+	h := newHub(workspace, harness)
 	h.runID = id
 	h.ctx, h.cancel = context.WithCancelCause(s.ctx)
 	s.mu.Lock()
@@ -456,6 +469,10 @@ type prepared struct {
 	conversation string
 	history      []model.Message
 	input        string
+	// resume, if set, resumes the run at a call that waited for approval,
+	// after own, the run's messages so far, instead of starting it on input.
+	resume *agent.Resumption
+	own    []model.Message
 }
 
 // prepare builds an agent for a claimed run's harness version, which starts
@@ -494,7 +511,7 @@ func (s *Server) prepare(h *hub, claimed store.ClaimedRun) (prepared, error) {
 		Model:      m,
 		Servers:    lease.Servers(),
 		Policy:     s.cfg.Operator.Policy,
-		Approver:   h,
+		Approver:   suspend{},
 		Audit:      runAudit{store: s.cfg.Store, hub: h},
 		Redactor:   s.cfg.Resolved.Redactor,
 		Transcript: runTranscript{store: s.cfg.Store, redact: s.cfg.Resolved.Redactor},
@@ -507,14 +524,103 @@ func (s *Server) prepare(h *hub, claimed store.ClaimedRun) (prepared, error) {
 	if err := s.cfg.Store.SetRunDigests(ctx, stored.ID, digest, historyDigest(history)); err != nil {
 		return prepared{}, errors.Join(err, a.Close(), lease.Return())
 	}
-	return prepared{
+	p := prepared{
 		agent:        a,
 		lease:        lease,
-		run:          a.StartAs(stored.ID),
 		conversation: stored.ConversationID,
 		history:      history,
-		input:        withLostState(stored.Input, lease.Fresh(), history),
-	}, nil
+	}
+	approval, waited, err := s.cfg.Store.LatestApproval(ctx, stored.ID)
+	if err == nil && waited {
+		err = s.resumption(ctx, &p, approval)
+	}
+	if err != nil {
+		return prepared{}, errors.Join(err, a.Close(), lease.Return())
+	}
+	if !waited {
+		p.run = a.StartAs(stored.ID)
+		p.input = withLostState(stored.Input, lease.Fresh(), history)
+	}
+	return p, nil
+}
+
+// resumption prepares p to resume its run at the call that waited for the
+// answered approval. The call runs only as it was asked for: if the
+// transcript does not hold the call as the approver saw it, as redaction
+// changed it, the answer is a rejection.
+func (s *Server) resumption(ctx context.Context, p *prepared, approval store.Approval) error {
+	if approval.Status == store.ApprovalPending || approval.Status == store.ApprovalWithdrawn {
+		return fmt.Errorf("run %s was taken up while its approval request is %s", approval.RunID, approval.Status)
+	}
+	transcript, err := s.cfg.Store.Transcript(ctx, approval.RunID)
+	if err != nil {
+		return err
+	}
+	records, err := s.cfg.Store.AuditRecords(ctx, approval.RunID)
+	if err != nil {
+		return err
+	}
+	altered := false
+	for _, m := range transcript {
+		p.own = append(p.own, m.Message)
+		altered = altered || m.Altered
+	}
+	answer := toolgateway.Approval{Approved: approval.Status == store.ApprovalApproved, Approver: approval.Approver, Reason: approval.Reason}
+	if !asked(p.own, approval) {
+		answer = toolgateway.Approval{Approver: approval.Approver, Reason: "the call cannot run as it was asked for: the model's call is not stored as it was"}
+	}
+	if altered {
+		// What the model saw differs from what is stored, so its replies
+		// are sent without their provider forms.
+		p.own = callsAsReplies(p.own)
+	}
+	audit := make([]toolgateway.Record, len(records))
+	for i, r := range records {
+		audit[i] = r.Record
+	}
+	p.run = p.agent.Restore(approval.RunID, audit)
+	p.resume = &agent.Resumption{
+		CallID:  approval.CallID,
+		Call:    approval.Call,
+		Results: approval.Results,
+		Answer:  answer,
+		Note:    lostState(p.lease.Fresh(), append(slices.Clip(p.history), p.own...)),
+	}
+	return nil
+}
+
+// asked reports whether the last of own, a run's messages, makes the call
+// approval was asked for, with the arguments the approver saw. A call waits
+// only if redaction left its arguments as they were, so they are stored as
+// the model made them.
+func asked(own []model.Message, approval store.Approval) bool {
+	if len(own) == 0 {
+		return false
+	}
+	calls := own[len(own)-1].ToolCalls
+	if approval.Call >= len(calls) {
+		return false
+	}
+	c := calls[approval.Call]
+	return c.Name == approval.Tool && jsonEqual(c.Args, approval.Args)
+}
+
+// jsonEqual reports whether a and b are the same JSON value.
+func jsonEqual(a, b json.RawMessage) bool {
+	var x, y any
+	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
+		return false
+	}
+	return reflect.DeepEqual(x, y)
+}
+
+// callsAsReplies drops the provider form of every message.
+func callsAsReplies(messages []model.Message) []model.Message {
+	out := slices.Clone(messages)
+	for i := range out {
+		out[i].Provider = nil
+	}
+	return out
 }
 
 // prior returns the earlier runs of the conversation run continues, as it
@@ -561,7 +667,25 @@ func (u cancelledBy) Error() string { return "cancelled by " + string(u) }
 // user cancelled it ended as cancelled.
 func (s *Server) execute(ctx context.Context, h *hub, p prepared) {
 	run := p.run
-	res, runErr := run.Continue(ctx, p.history, p.input)
+	var (
+		res    agent.Result
+		runErr error
+	)
+	if p.resume != nil {
+		res, runErr = run.Resume(ctx, p.history, p.own, *p.resume)
+	} else {
+		res, runErr = run.Continue(ctx, p.history, p.input)
+	}
+	var suspended *agent.Suspended
+	if errors.As(runErr, &suspended) && ctx.Err() == nil {
+		// The run waits holding nothing: its servers are kept for the
+		// conversation, as after a run that finished.
+		if err := errors.Join(p.agent.Close(), keep(ctx, p.lease, p.conversation)); err != nil {
+			s.cfg.Logger.Error("cannot keep a suspended run's tool servers", "run_id", run.ID(), "error", s.cfg.Resolved.Redactor.String(err.Error()))
+		}
+		s.suspend(ctx, h, res, suspended)
+		return
+	}
 	err := errors.Join(runErr, p.agent.Close(), keep(ctx, p.lease, p.conversation))
 	status, errMsg := store.RunSucceeded, ""
 	var by cancelledBy
@@ -575,6 +699,145 @@ func (s *Server) execute(ctx context.Context, h *hub, p prepared) {
 		status, errMsg = store.RunFailed, s.cfg.Resolved.Redactor.String(err.Error())
 	}
 	s.finish(ctx, h, run.ID(), status, res, errMsg)
+}
+
+// suspend records that the run waits for approval of the call suspended
+// names, and publishes the request. The run then waits, holding no worker,
+// until the request is answered or expires, either of which queues it. A run
+// that cannot be suspended fails.
+func (s *Server) suspend(ctx context.Context, h *hub, res agent.Result, suspended *agent.Suspended) {
+	// As precise as PostgreSQL keeps it, so the event and the stored request
+	// agree.
+	now := time.Now().Truncate(time.Microsecond)
+	a := store.NewApproval{
+		ID:        rand.Text(),
+		RunID:     res.RunID,
+		CallID:    suspended.CallID,
+		Call:      suspended.Call,
+		Results:   suspended.Results,
+		Tool:      suspended.Request.Tool,
+		Args:      suspended.Request.Args,
+		Reasons:   suspended.Reasons,
+		CreatedAt: now,
+		ExpiresAt: now.Add(s.approvalTimeout()),
+	}
+	if err := s.cfg.Store.SuspendRun(context.WithoutCancel(ctx), a); err != nil {
+		s.finish(ctx, h, res.RunID, store.RunFailed, res, s.cfg.Resolved.Redactor.String(err.Error()))
+		return
+	}
+	select {
+	case s.expiry <- struct{}{}:
+	default:
+	}
+	s.cfg.Logger.Info("run waits for approval", "harness", h.harness, "run_id", res.RunID, "tool", a.Tool)
+	h.publish(event{api.EventApproval, apiApproval(store.Approval{NewApproval: a, Harness: h.harness})})
+}
+
+// approvalTimeout is how long an approval request waits for an answer.
+func (s *Server) approvalTimeout() time.Duration {
+	return cmp.Or(s.cfg.Operator.Approvals.Timeout, config.DefaultApprovalTimeout)
+}
+
+// expire rejects approval requests nobody answered in time, which queues
+// their runs, as each request expires, until the server stops.
+func (s *Server) expire() {
+	reason := "no answer within " + duration(s.approvalTimeout())
+	for {
+		n, err := s.cfg.Store.ExpireApprovals(s.ctx, reason)
+		if err != nil && s.ctx.Err() == nil {
+			s.cfg.Logger.Error("cannot expire approval requests", "error", s.cfg.Resolved.Redactor.String(err.Error()))
+		}
+		for range min(n, cap(s.wake)) {
+			s.signal()
+		}
+		wait := claimRetry
+		if err == nil {
+			next, ok, err := s.cfg.Store.NextApprovalExpiry(s.ctx)
+			switch {
+			case err != nil && s.ctx.Err() == nil:
+				s.cfg.Logger.Error("cannot read when approval requests expire", "error", s.cfg.Resolved.Redactor.String(err.Error()))
+			case ok:
+				wait = time.Until(next)
+			default:
+				wait = -1
+			}
+		}
+		var timer <-chan time.Time
+		if wait >= 0 {
+			timer = time.After(wait)
+		}
+		select {
+		case <-timer:
+		case <-s.expiry:
+		case <-s.ctx.Done():
+			return
+		}
+	}
+}
+
+// replay publishes to a run's new hub what the run recorded so far: its
+// audit records and, if it waits, its approval request.
+func (s *Server) replay(ctx context.Context, h *hub, status store.RunStatus) error {
+	records, err := s.cfg.Store.AuditRecords(ctx, h.runID)
+	if err != nil {
+		return err
+	}
+	for _, r := range records {
+		h.publish(event{api.EventAudit, api.FromRecord(r.Record, r.RecordedAt)})
+	}
+	if status != store.RunWaiting {
+		return nil
+	}
+	a, ok, err := s.cfg.Store.LatestApproval(ctx, h.runID)
+	if err == nil && ok && a.Status == store.ApprovalPending {
+		h.publish(event{api.EventApproval, apiApproval(a)})
+	}
+	return err
+}
+
+// closeOut completes the record of a run that was cancelled while it waited
+// for approval, or to resume after one: the waiting call did not run, nor
+// did the calls after it in the model's reply. The audit log records the
+// call's approval as failed, and the transcript the results of the reply's
+// calls, so the conversation can continue from it.
+func (s *Server) closeOut(ctx context.Context, id string, by cancelledBy) error {
+	a, ok, err := s.cfg.Store.LatestApproval(ctx, id)
+	if err != nil || !ok {
+		return err
+	}
+	transcript, err := s.cfg.Store.Transcript(ctx, id)
+	if err != nil || len(transcript) == 0 {
+		return err
+	}
+	calls := transcript[len(transcript)-1].ToolCalls
+	if a.Call >= len(calls) {
+		// The run went on past the call before it was cancelled.
+		return nil
+	}
+	failed := "approval failed: " + by.Error()
+	rec := toolgateway.Record{RunID: id, CallID: a.CallID, Event: toolgateway.EventApproval, Tool: a.Tool, Args: a.Args, Decision: toolgateway.Deny, Reason: failed}
+	if _, err := s.cfg.Store.RecordAt(ctx, rec); err != nil {
+		return err
+	}
+	results := slices.Clone(a.Results)
+	for i, c := range calls[a.Call:] {
+		content := "Not run: the run was " + by.Error() + "."
+		if i == 0 {
+			content = fmt.Sprintf("%v: %s: %s", toolgateway.ErrDenied, c.Name, failed)
+		}
+		results = append(results, model.ToolResult{CallID: c.ID, Content: content, IsError: true})
+	}
+	return s.cfg.Store.AppendMessage(ctx, id, store.NewMessage{Position: len(transcript), Message: model.Message{Role: model.RoleUser, ToolResults: results}})
+}
+
+// suspend is the approver of every run: it never waits for an answer, but
+// suspends the run until one is given.
+type suspend struct{}
+
+var _ toolgateway.Approver = suspend{}
+
+func (suspend) Approve(context.Context, toolgateway.Request, []string) (toolgateway.Approval, error) {
+	return toolgateway.Approval{}, toolgateway.ErrSuspend
 }
 
 // finish records how the run id ended and publishes that as the last event

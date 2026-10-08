@@ -270,17 +270,19 @@ func TestRun_EndToEnd(t *testing.T) {
 		"decision files_read allow",
 		"result files_read allow",
 		"decision files_write require_approval",
+		// The run resumes once answered, and decides the call again.
+		"decision files_write require_approval",
 		"approval files_write allow",
 		"result files_write allow",
 	}, events(records))
-	assert.Equal(t, "alice", records[3].Approver, "the signed-in user approved")
+	assert.Equal(t, "alice", records[4].Approver, "the signed-in user approved")
 	transcript, err := f.store.Transcript(context.Background(), records[0].RunID)
 	require.NoError(t, err)
 	require.Len(t, transcript, 6)
 	require.NotNil(t, transcript[1].Provider, "the model's reply is stored in the provider's own form too")
 	assert.Equal(t, "anthropic", transcript[1].Provider.Name)
 	assert.Contains(t, string(transcript[1].Provider.Data), `"toolu_1"`)
-	assert.Equal(t, "approved at the terminal", records[3].Reason)
+	assert.Equal(t, "approved at the terminal", records[4].Reason)
 	assert.Contains(t, f.stderr.String(), "tool=files_write decision=require_approval", "debug logs show each tool call")
 	assert.Contains(t, f.stderr.String(), "run finished")
 	f.mu.Lock()
@@ -290,9 +292,10 @@ func TestRun_EndToEnd(t *testing.T) {
 		Env:     map[string]string{"FILES_TOKEN": filesToken},
 	}, f.configs["files"])
 	f.mu.Unlock()
-	assert.Equal(t, []string{"files"}, f.servers["files"].StartedAs)
+	// The files server stops with each run, so also while the run waits.
+	assert.Equal(t, []string{"files", "files"}, f.servers["files"].StartedAs)
 	assert.Empty(t, f.servers["mail"].StartedAs, "only servers whose tools the harness grants are started")
-	assert.Equal(t, 1, f.servers["files"].Closed, "servers are stopped when the run ends")
+	assert.Equal(t, 2, f.servers["files"].Closed, "servers are stopped when the run waits and when it ends")
 	assert.NotContains(t, f.stderr.String(), "WARN")
 }
 
@@ -383,7 +386,7 @@ func TestRun_Denials(t *testing.T) {
 			call:       toolUse(t, "toolu_1", "files_write", map[string]any{"path": "notes.md"}),
 			stdin:      "n\n",
 			tty:        true,
-			wantEvents: []string{"decision files_write require_approval", "approval files_write deny"},
+			wantEvents: []string{"decision files_write require_approval", "decision files_write require_approval", "approval files_write deny"},
 			wantReason: "approval rejected: rejected at the terminal",
 		},
 		{
@@ -391,7 +394,7 @@ func TestRun_Denials(t *testing.T) {
 			call:       toolUse(t, "toolu_1", "files_write", map[string]any{"path": "notes.md"}),
 			stdin:      "y\n",
 			tty:        false,
-			wantEvents: []string{"decision files_write require_approval", "approval files_write deny"},
+			wantEvents: []string{"decision files_write require_approval", "decision files_write require_approval", "approval files_write deny"},
 			wantReason: "approval rejected: stdin is not a terminal, so no one can approve",
 		},
 		{

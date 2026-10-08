@@ -1,20 +1,17 @@
 package server
 
 import (
-	"cmp"
 	"errors"
 	"fmt"
 	"maps"
 	"net/http"
 	"slices"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/jangraefen/agenty/internal/api"
 	"github.com/jangraefen/agenty/internal/policy"
 	"github.com/jangraefen/agenty/internal/store"
-	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
 // handlers implements the API's routes, as generated from its spec. Sign-in
@@ -239,8 +236,9 @@ func apiRun(r store.Run) api.Run {
 	return out
 }
 
-// CancelRun cancels a queued or running run of this server. A queued run
-// ends at once, a running one as soon as what it is doing stops; either is
+// CancelRun cancels a queued, waiting or running run of this server. A queued
+// or waiting run ends at once, a running one as soon as what it is doing
+// stops; either is
 // recorded as cancelled by the user. The response may come before that, so
 // the run's events tell when it ended.
 func (s handlers) CancelRun(c *gin.Context, workspace, id string) {
@@ -249,10 +247,13 @@ func (s handlers) CancelRun(c *gin.Context, workspace, id string) {
 		// A worker that claims the run from now on finds it cancelled.
 		h.cancel(by)
 		ctx := c.Request.Context()
-		switch cancelled, err := s.cfg.Store.CancelQueuedRun(ctx, id, by.Error()); {
+		switch cancelled, err := s.cfg.Store.CancelIdleRun(ctx, id, by.Error()); {
 		case err != nil:
-			s.cfg.Logger.Error("cannot cancel a queued run in the store", "run_id", id, "error", err)
+			s.cfg.Logger.Error("cannot cancel a queued or waiting run in the store", "run_id", id, "error", err)
 		case cancelled:
+			if err := s.closeOut(ctx, id, by); err != nil {
+				s.cfg.Logger.Error("cannot record the calls a cancelled run did not run", "run_id", id, "error", s.cfg.Resolved.Redactor.String(err.Error()))
+			}
 			s.publishEnd(ctx, h, store.Run{ID: id, Status: store.RunCancelled, Error: by.Error()})
 			s.unregister(id)
 		}
@@ -273,22 +274,24 @@ func (s handlers) CancelRun(c *gin.Context, workspace, id string) {
 // ListApprovals returns the approval requests the workspace's runs are
 // waiting for, oldest first.
 func (s handlers) ListApprovals(c *gin.Context, workspace string) {
-	s.mu.Lock()
-	var hubs []*hub
-	for _, h := range s.runs {
-		if h.workspace == workspace {
-			hubs = append(hubs, h)
-		}
+	pending, err := s.cfg.Store.PendingApprovals(c.Request.Context(), workspace)
+	if err != nil {
+		s.failStore(c, err)
+		return
 	}
-	s.mu.Unlock()
-	out := []api.ApprovalRequest{}
-	for _, h := range hubs {
-		out = append(out, h.waiting()...)
+	out := make([]api.ApprovalRequest, len(pending))
+	for i, a := range pending {
+		out[i] = apiApproval(a)
 	}
-	slices.SortFunc(out, func(a, b api.ApprovalRequest) int {
-		return cmp.Or(a.CreatedAt.Compare(b.CreatedAt), strings.Compare(a.ID, b.ID))
-	})
 	c.JSON(http.StatusOK, out)
+}
+
+// apiApproval is a stored approval request as the API shows it.
+func apiApproval(a store.Approval) api.ApprovalRequest {
+	return api.ApprovalRequest{
+		ID: a.ID, RunID: a.RunID, Harness: a.Harness, Tool: a.Tool, Args: a.Args, Reasons: a.Reasons,
+		CreatedAt: a.CreatedAt, ExpiresAt: a.ExpiresAt,
+	}
 }
 
 func (s handlers) GetRunAudit(c *gin.Context, workspace, id string) {
@@ -387,13 +390,14 @@ func (s handlers) replayEvents(c *gin.Context, workspace, id string) {
 	c.Writer.Flush()
 }
 
+// AnswerApproval answers a request a run waits for, which queues the run to
+// resume at the call. A request is answered once, and not once it expired.
 func (s handlers) AnswerApproval(c *gin.Context, workspace, id, approval string) {
 	var answer api.Answer
 	if err := decode(c, &answer); err != nil {
 		s.failDecode(c, err)
 		return
 	}
-	h := s.hub(workspace, id)
 	reason := answer.Reason
 	if reason == "" {
 		reason = "rejected through the API"
@@ -401,9 +405,14 @@ func (s handlers) AnswerApproval(c *gin.Context, workspace, id, approval string)
 			reason = "approved through the API"
 		}
 	}
-	if h == nil || !h.answer(approval, toolgateway.Approval{Approved: answer.Approved, Approver: c.GetString(userKey), Reason: reason}) {
+	answered, err := s.cfg.Store.AnswerApproval(c.Request.Context(), workspace, id, approval, store.Answer{Approved: answer.Approved, Approver: c.GetString(userKey), Reason: reason})
+	switch {
+	case err != nil:
+		s.failStore(c, err)
+	case !answered:
 		s.fail(c, http.StatusNotFound, fmt.Errorf("run %s is not waiting for approval %s", id, approval))
-		return
+	default:
+		s.signal()
+		c.Status(http.StatusNoContent)
 	}
-	c.Status(http.StatusNoContent)
 }

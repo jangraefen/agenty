@@ -13,6 +13,7 @@
 package toolgateway
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -197,6 +198,29 @@ func (g *Gateway) Start() *Run {
 	return g.StartAs(rand.Text())
 }
 
+// Restore is StartAs for a run that has made calls before, such as one that
+// resumes after it was suspended: its call counts are restored from records,
+// its audit log. Every call with a decision is an attempt, denied ones
+// included, and every call with a result was executed.
+func (g *Gateway) Restore(id string, records []Record) *Run {
+	r := g.StartAs(id)
+	attempted := map[string]bool{}
+	for _, rec := range records {
+		if rec.RunID != id {
+			continue
+		}
+		switch rec.Event {
+		case EventDecision:
+			attempted[rec.CallID] = true
+		case EventResult:
+			r.countExecuted(rec.Tool)
+		case EventApproval:
+		}
+	}
+	r.attempts = len(attempted)
+	return r
+}
+
 // StartAs is Start for a run whose ID was minted before, such as a run
 // stored before it executes. The run's call counts start at zero all the
 // same.
@@ -226,7 +250,8 @@ func (r *Run) ID() string {
 // Call runs one tool call through the gateway. A denied call returns an
 // error wrapping ErrDenied. A failure to record returns an error wrapping
 // ErrAudit; if only the result could not be recorded, the result is returned
-// with that error.
+// with that error. A call whose approver suspends the run returns a
+// *Suspended error; Resume runs it once it is answered.
 func (r *Run) Call(ctx context.Context, call ToolCall) (json.RawMessage, error) {
 	g := r.gateway
 	rec := Record{
@@ -236,17 +261,10 @@ func (r *Run) Call(ctx context.Context, call ToolCall) (json.RawMessage, error) 
 		Tool:   call.Name,
 		Args:   call.Args,
 	}
-	tool, verdict := r.decide(ctx, call)
-	rec.Decision, rec.Reason = verdict.Decision, verdict.Reason
-
-	auditErr := g.record(ctx, rec)
-	if rec.Decision == Deny {
-		return nil, errors.Join(denied(call.Name, g.redact.String(rec.Reason)), auditErr)
+	tool, verdict := r.decide(ctx, call, true)
+	if err := r.recordDecision(ctx, &rec, verdict); err != nil {
+		return nil, err
 	}
-	if auditErr != nil {
-		return nil, auditErr
-	}
-
 	if rec.Decision == RequireApproval {
 		// The approver is a person: show them the call, never a secret.
 		req := verdict.Request
@@ -256,27 +274,88 @@ func (r *Run) Call(ctx context.Context, call ToolCall) (json.RawMessage, error) 
 			reasons[i] = g.redact.String(reason)
 		}
 		approval, err := g.approver.Approve(ctx, req, reasons)
-		rec.Event, rec.Approver = EventApproval, approval.Approver
-		rec.Decision, rec.Reason = Allow, approval.Reason
-		switch {
-		case err != nil:
-			rec.Decision, rec.Reason = Deny, "approval failed: "+err.Error()
-		case ctx.Err() != nil:
-			// The run was cancelled while it waited: cancellation wins over
-			// an approval that arrived at the same moment.
-			rec.Decision, rec.Reason = Deny, "approval failed: "+context.Cause(ctx).Error()
-		case !approval.Approved:
-			rec.Decision, rec.Reason = Deny, "approval rejected: "+approval.Reason
+		if errors.Is(err, ErrSuspend) && ctx.Err() == nil {
+			// A suspended call runs later as it is stored, redacted, so one
+			// whose arguments hold a secret could not run as it was asked.
+			if !bytes.Equal(req.Args, call.Args) {
+				err = errHoldsSecret
+			} else {
+				return nil, &Suspended{CallID: rec.CallID, Request: req, Reasons: reasons}
+			}
 		}
-		auditErr := g.record(ctx, rec)
-		if rec.Decision == Deny {
-			return nil, errors.Join(denied(call.Name, g.redact.String(rec.Reason)), auditErr)
-		}
-		if auditErr != nil {
-			return nil, auditErr
+		if err := r.recordAnswer(ctx, &rec, approval, err); err != nil {
+			return nil, err
 		}
 	}
+	return r.execute(ctx, rec, tool, call)
+}
 
+// errHoldsSecret fails the approval of a call that cannot wait for it.
+var errHoldsSecret = errors.New("its arguments hold a secret, so it cannot wait for approval")
+
+// Resume runs the call a Call suspended, identified by callID, with the
+// answer a. It decides the call again, so policy as it is now applies, but
+// does not count it as another attempt, and records it under its own ID.
+// An answered call is no longer waiting for approval: approved, it runs
+// unless policy now denies it; rejected, it is denied.
+func (r *Run) Resume(ctx context.Context, callID string, call ToolCall, a Approval) (json.RawMessage, error) {
+	rec := Record{
+		RunID:  r.id,
+		CallID: callID,
+		Event:  EventDecision,
+		Tool:   call.Name,
+		Args:   call.Args,
+	}
+	tool, verdict := r.decide(ctx, call, false)
+	if err := r.recordDecision(ctx, &rec, verdict); err != nil {
+		return nil, err
+	}
+	if err := r.recordAnswer(ctx, &rec, a, nil); err != nil {
+		return nil, err
+	}
+	return r.execute(ctx, rec, tool, call)
+}
+
+// recordDecision records the decision on the call rec describes. It returns
+// an error wrapping ErrDenied for a denied call, and one wrapping ErrAudit if
+// the decision could not be recorded.
+func (r *Run) recordDecision(ctx context.Context, rec *Record, verdict decision) error {
+	g := r.gateway
+	rec.Decision, rec.Reason = verdict.Decision, verdict.Reason
+	auditErr := g.record(ctx, *rec)
+	if rec.Decision == Deny {
+		return errors.Join(denied(rec.Tool, g.redact.String(rec.Reason)), auditErr)
+	}
+	return auditErr
+}
+
+// recordAnswer records the approver's answer to the call rec describes, or
+// the error the approver failed with. Like recordDecision, it returns an
+// error for a call that does not go ahead.
+func (r *Run) recordAnswer(ctx context.Context, rec *Record, approval Approval, err error) error {
+	g := r.gateway
+	rec.Event, rec.Approver = EventApproval, approval.Approver
+	rec.Decision, rec.Reason = Allow, approval.Reason
+	switch {
+	case err != nil:
+		rec.Decision, rec.Reason = Deny, "approval failed: "+err.Error()
+	case ctx.Err() != nil:
+		// The run was cancelled while it waited: cancellation wins over
+		// an approval that arrived at the same moment.
+		rec.Decision, rec.Reason = Deny, "approval failed: "+context.Cause(ctx).Error()
+	case !approval.Approved:
+		rec.Decision, rec.Reason = Deny, "approval rejected: "+approval.Reason
+	}
+	auditErr := g.record(ctx, *rec)
+	if rec.Decision == Deny {
+		return errors.Join(denied(rec.Tool, g.redact.String(rec.Reason)), auditErr)
+	}
+	return auditErr
+}
+
+// execute runs an allowed call and records its result.
+func (r *Run) execute(ctx context.Context, rec Record, tool Tool, call ToolCall) (json.RawMessage, error) {
+	g := r.gateway
 	r.countExecuted(call.Name)
 	result, toolErr := tool.Call(ctx, call.Args)
 	result, toolErr = g.redact.JSON(result), g.redact.Error(toolErr)
@@ -300,11 +379,14 @@ type decision struct {
 
 // decide returns the tool to execute and the decision for call. The grant
 // comes first, so policy only ever sees granted calls and cannot grant
-// anything. Every attempt counts towards the run's call limit.
-func (r *Run) decide(ctx context.Context, call ToolCall) (Tool, decision) {
+// anything. Every attempt counts towards the run's call limit; deciding a
+// resumed call again is not another attempt.
+func (r *Run) decide(ctx context.Context, call ToolCall, attempt bool) (Tool, decision) {
 	g := r.gateway
 	r.mu.Lock()
-	r.attempts++
+	if attempt {
+		r.attempts++
+	}
 	attempts := r.attempts
 	counts := r.executed.clone()
 	r.mu.Unlock()

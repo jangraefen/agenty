@@ -198,7 +198,9 @@ func TestRun_Approvals(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newFixture(t, options{policy: needsApproval})
 			f.putNotes(t)
-			f.script(modeltest.CallTools(call("c1", "files_write", `{"path":"notes.md","content":"- milk"}`)), modeltest.Reply("done"))
+			f.script(modeltest.CallTools(call("c1", "files_write", `{"path":"notes.md","content":"- milk"}`)))
+			// The run resumes, once answered, on a model of its own.
+			f.script(modeltest.Reply("done"))
 			run := f.startRun(t, "tidy my notes")
 			events := f.events(t, run.ID)
 
@@ -215,7 +217,11 @@ func TestRun_Approvals(t *testing.T) {
 
 			require.Equal(t, http.StatusNoContent, f.doAs(t, tt.as, http.MethodPost, home+"/runs/"+run.ID+"/approvals/"+req.ID, tt.answer, nil))
 
+			again := decodeAs[api.AuditRecord](t, events.next())
+			assert.Equal(t, api.AuditEventDecision, again.Event, "the resumed call is decided again")
+			assert.Equal(t, decision.CallID, again.CallID)
 			approval := decodeAs[api.AuditRecord](t, events.next())
+			assert.Equal(t, decision.CallID, approval.CallID)
 			assert.Equal(t, api.AuditEventApproval, approval.Event)
 			assert.Equal(t, tt.wantDecision, approval.Decision)
 			assert.Equal(t, tt.wantApprover, approval.Approver, "the approver is the signed-in user")
@@ -336,8 +342,9 @@ func TestInvariant_ServerCredentialsNeverLeak(t *testing.T) {
 	f.putNotes(t)
 	f.read.Result = json.RawMessage(`{"token":"` + token + `"}`)
 	f.write.Err = errors.New("write failed with " + token)
+	f.script(modeltest.CallTools(call("c1", "files_read", `{"token":"`+token+`"}`), call("c2", "files_write", `{}`)))
+	// The run resumes, after its approval, on a model of its own.
 	f.script(
-		modeltest.CallTools(call("c1", "files_read", `{}`), call("c2", "files_write", `{"token":"`+token+`"}`)),
 		modeltest.Step{Response: model.Message{
 			Role:     model.RoleAssistant,
 			Text:     "the token is " + token,
@@ -374,7 +381,8 @@ func TestInvariant_ServerCredentialsNeverLeak(t *testing.T) {
 
 	assert.Equal(t, "the token is [redacted]", stored.Output)
 	assert.Equal(t, "the token is [redacted]", transcript[len(transcript)-1].Text)
-	assert.Contains(t, string(transcript[1].ToolCalls[1].Args), "[redacted]", "the model's own arguments are redacted too")
+	assert.Contains(t, string(transcript[1].ToolCalls[0].Args), "[redacted]", "the model's own arguments are redacted too")
+	assert.Equal(t, 1, f.write.Calls, "the approved call ran, and failed")
 	require.Equal(t, "scripted", transcript[len(transcript)-1].Provider.Name)
 	assert.JSONEq(t, `{"thinking":"I saw [redacted]"}`, string(transcript[len(transcript)-1].Provider.Data), "so is the provider's form of a reply")
 	for _, data := range append(seen, string(storedJSON), string(auditJSON), string(transcriptJSON), f.logs.String()) {
@@ -383,10 +391,10 @@ func TestInvariant_ServerCredentialsNeverLeak(t *testing.T) {
 	assert.Contains(t, strings.Join(seen, "\n"), "[redacted]")
 }
 
-func TestClose_FailsRunsWaitingForApproval(t *testing.T) {
+func TestClose_LeavesRunsWaitingForApproval(t *testing.T) {
 	f := newFixture(t, options{policy: []policy.Module{policy.RulesModule("central", `require_approval contains "writes need a human" if input.tool == "files_write"`)}})
 	f.putNotes(t)
-	f.script(modeltest.CallTools(call("c1", "files_write", `{}`)), modeltest.Reply("done"))
+	f.script(modeltest.CallTools(call("c1", "files_write", `{}`)))
 	run := f.startRun(t, "tidy my notes")
 	events := f.events(t, run.ID)
 	events.next()
@@ -394,14 +402,11 @@ func TestClose_FailsRunsWaitingForApproval(t *testing.T) {
 
 	f.server.Close()
 
-	rest := events.rest()
-	finished := decodeAs[api.Run](t, rest[len(rest)-1])
-	assert.Equal(t, api.RunStatusFailed, finished.Status)
-	assert.Contains(t, finished.Error, "context canceled")
+	assert.Empty(t, events.rest(), "the stream ends without the run's end")
 	assert.Zero(t, f.write.Calls)
 	stored, err := f.store.Run(context.Background(), "home", run.ID)
 	require.NoError(t, err)
-	assert.Equal(t, store.RunFailed, stored.Status, "how the run ended is stored although the server is stopping")
+	assert.Equal(t, store.RunWaiting, stored.Status, "the run still waits, for the next server")
 }
 
 func TestNew_FailsRunsOfAnEarlierServer(t *testing.T) {
@@ -675,7 +680,9 @@ func TestMe(t *testing.T) {
 func TestInvariant_WorkspacesAreSeparate(t *testing.T) {
 	f := newFixture(t, options{policy: []policy.Module{policy.RulesModule("central", `require_approval contains "writes need a human" if input.tool == "files_write"`)}})
 	f.putNotes(t)
-	f.script(modeltest.CallTools(call("c1", "files_write", `{}`)), modeltest.Reply("done"))
+	f.script(modeltest.CallTools(call("c1", "files_write", `{}`)))
+	// The run resumes, once answered, on a model of its own.
+	f.script(modeltest.Reply("done"))
 	run := f.startRun(t, "tidy my notes")
 	events := f.events(t, run.ID)
 	events.next()
@@ -868,7 +875,9 @@ func TestApprovals_ListedUntilAnswered(t *testing.T) {
 		approvalTimeout: 10 * time.Minute,
 	})
 	f.putNotes(t)
-	f.script(modeltest.CallTools(call("c1", "files_write", `{"path":"a.md"}`)), modeltest.Reply("done"))
+	f.script(modeltest.CallTools(call("c1", "files_write", `{"path":"a.md"}`)))
+	// The run resumes, once answered, on a model of its own.
+	f.script(modeltest.Reply("done"))
 	run := f.startRun(t, "tidy my notes")
 	events := f.events(t, run.ID)
 	events.next()
@@ -896,7 +905,9 @@ func TestApprovals_TimeOut(t *testing.T) {
 		approvalTimeout: 50 * time.Millisecond,
 	})
 	f.putNotes(t)
-	f.script(modeltest.CallTools(call("c1", "files_write", `{}`)), modeltest.Reply("done"))
+	f.script(modeltest.CallTools(call("c1", "files_write", `{}`)))
+	// The run resumes, once answered, on a model of its own.
+	f.script(modeltest.Reply("done"))
 	run := f.startRun(t, "tidy my notes")
 
 	events := f.events(t, run.ID).rest()

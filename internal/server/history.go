@@ -156,6 +156,15 @@ func ended(r store.Run, messages []store.TranscriptMessage) []store.TranscriptMe
 // records, not of the run's input as users see it; a run whose transcript
 // was lost is continued with the latter.
 func withLostState(input string, fresh []string, history []model.Message) string {
+	if note := lostState(fresh, history); note != "" {
+		return note + "\n\n" + input
+	}
+	return input
+}
+
+// lostState is the note withLostState puts before an input, or "" if no
+// server the conversation used was started anew.
+func lostState(fresh []string, history []model.Message) string {
 	var lost []string
 	for _, server := range fresh {
 		used := slices.ContainsFunc(history, func(m model.Message) bool {
@@ -167,11 +176,11 @@ func withLostState(input string, fresh []string, history []model.Message) string
 	}
 	switch len(lost) {
 	case 0:
-		return input
+		return ""
 	case 1:
-		return "[The tool server " + lost[0] + " was started anew since this conversation last used it: what it held from earlier, such as open files or pages, is gone.]\n\n" + input
+		return "[The tool server " + lost[0] + " was started anew since this conversation last used it: what it held from earlier, such as open files or pages, is gone.]"
 	}
-	return "[The tool servers " + strings.Join(lost, ", ") + " were started anew since this conversation last used them: what they held from earlier, such as open files or pages, is gone.]\n\n" + input
+	return "[The tool servers " + strings.Join(lost, ", ") + " were started anew since this conversation last used them: what they held from earlier, such as open files or pages, is gone.]"
 }
 
 // historyDigest identifies a history as it is sent to the model.

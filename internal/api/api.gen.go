@@ -75,6 +75,7 @@ const (
 	RunStatusQueued    RunStatus = "queued"
 	RunStatusRunning   RunStatus = "running"
 	RunStatusSucceeded RunStatus = "succeeded"
+	RunStatusWaiting   RunStatus = "waiting"
 )
 
 // Valid indicates whether the value is a known member of the RunStatus enum.
@@ -89,6 +90,8 @@ func (e RunStatus) Valid() bool {
 	case RunStatusRunning:
 		return true
 	case RunStatusSucceeded:
+		return true
+	case RunStatusWaiting:
 		return true
 	default:
 		return false

@@ -172,9 +172,10 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Cancel a queued or running run
-         * @description A queued run ends at once; a running one as soon as what it is doing
-         *     stops. Either ends as cancelled by the user; its events tell when.
+         * Cancel a queued, waiting or running run
+         * @description A queued run, or one waiting for approval, ends at once; a running
+         *     one as soon as what it is doing stops. Either ends as cancelled by
+         *     the user; its events tell when.
          */
         post: operations["cancelRun"];
         delete?: never;
@@ -267,7 +268,9 @@ export interface paths {
         put?: never;
         /**
          * Answer an approval request
-         * @description The signed-in user is recorded as the approver.
+         * @description The signed-in user is recorded as the approver. The answer queues the
+         *     run, which resumes at the call; a request is answered once, and not
+         *     after it expired, which rejected it.
          */
         post: operations["answerApproval"];
         delete?: never;
@@ -355,7 +358,7 @@ export interface components {
             input: string;
         };
         /** @enum {string} */
-        RunStatus: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+        RunStatus: "queued" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
         Run: {
             id: string;
             /**

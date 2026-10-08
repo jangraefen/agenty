@@ -6,14 +6,15 @@ export type RunStatus = Schemas["RunStatus"];
 export const runStatuses: readonly RunStatus[] = [
   "queued",
   "running",
+  "waiting",
   "succeeded",
   "failed",
   "cancelled",
 ];
 
-/** Whether a run with this status has yet to end: queued or running. */
+/** Whether a run with this status has yet to end: queued, running or waiting for approval. */
 export function unfinished(status: RunStatus): boolean {
-  return status === "queued" || status === "running";
+  return status === "queued" || status === "running" || status === "waiting";
 }
 
 export function isRunStatus(value: unknown): value is RunStatus {

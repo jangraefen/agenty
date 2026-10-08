@@ -1,0 +1,192 @@
+package server_test
+
+import (
+	"net/http"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/jangraefen/agenty/internal/api"
+	"github.com/jangraefen/agenty/internal/model/modeltest"
+	"github.com/jangraefen/agenty/internal/policy"
+)
+
+// writesNeedApproval is central policy that asks before every write.
+var writesNeedApproval = []policy.Module{policy.RulesModule("central", `require_approval contains "writes need a human" if input.tool == "files_write"`)}
+
+// waitForApproval starts a run whose model calls files_write, which waits for
+// approval, and returns the run and its request.
+func (f *fixture) waitForApproval(t *testing.T, steps ...modeltest.Step) (api.Run, api.ApprovalRequest) {
+	t.Helper()
+	f.script(append(steps, modeltest.CallTools(call("c1", "files_write", `{"path":"notes.md"}`)))...)
+	run := f.startRun(t, "write my notes")
+	events := f.events(t, run.ID)
+	for {
+		e := events.next()
+		if e.name == api.EventApproval {
+			return run, decodeAs[api.ApprovalRequest](t, e)
+		}
+	}
+}
+
+// answer answers req as alice.
+func (f *fixture) answer(t *testing.T, req api.ApprovalRequest, a api.Answer) {
+	t.Helper()
+	require.Equal(t, http.StatusNoContent, f.do(t, http.MethodPost, home+"/runs/"+req.RunID+"/approvals/"+req.ID, a, nil))
+}
+
+// audit returns the audit log of the run id.
+func (f *fixture) audit(t *testing.T, id string) []api.AuditRecord {
+	t.Helper()
+	var audit []api.AuditRecord
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+id+"/audit", nil, &audit))
+	return audit
+}
+
+func TestApprovals_AWaitingRunHoldsNoWorker(t *testing.T) {
+	f := newFixture(t, options{workers: 1, policy: writesNeedApproval})
+	f.putNotes(t)
+	waiting, req := f.waitForApproval(t)
+	f.script(modeltest.Reply("other"))
+
+	other := f.startRun(t, "something else")
+
+	assert.Equal(t, api.RunStatusSucceeded, f.finish(t, other.ID).Status, "the only worker is free while the run waits")
+	assert.Equal(t, api.RunStatusWaiting, f.status(t, waiting.ID))
+	f.script(modeltest.Reply("written"))
+	f.answer(t, req, api.Answer{Approved: true})
+	assert.Equal(t, "written", f.finish(t, waiting.ID).Output)
+	assert.Equal(t, 1, f.write.Calls)
+}
+
+func TestApprovals_OutliveARestart(t *testing.T) {
+	f := newFixture(t, options{policy: writesNeedApproval})
+	f.putNotes(t)
+	run, req := f.waitForApproval(t)
+
+	f.restart(t, options{policy: writesNeedApproval})
+
+	events := f.events(t, run.ID)
+	decision := decodeAs[api.AuditRecord](t, events.next())
+	assert.Equal(t, api.DecisionRequireApproval, decision.Decision, "the next server's stream replays what the run recorded")
+	replayed := decodeAs[api.ApprovalRequest](t, events.next())
+	assert.Equal(t, req, replayed, "and the request it waits for")
+	var pending []api.ApprovalRequest
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/approvals", nil, &pending))
+	assert.Equal(t, []api.ApprovalRequest{req}, pending)
+	m := f.script(modeltest.Reply("written"))
+	f.answer(t, req, api.Answer{Approved: true})
+	rest := events.rest()
+	finished := decodeAs[api.Run](t, rest[len(rest)-1])
+	assert.Equal(t, api.RunStatusSucceeded, finished.Status)
+	assert.Equal(t, "written", finished.Output)
+	assert.Equal(t, 2, finished.Steps, "the step before the restart counts")
+	assert.Equal(t, 1, f.write.Calls)
+	require.Len(t, m.Requests(), 1)
+	assert.Len(t, m.Requests()[0].Messages, 3, "the model sees the run so far and the call's result")
+}
+
+// TestInvariant_AnApprovalIsUsedOnce guards a trust-model guarantee: an
+// answer resumes the one call it was given for, once.
+func TestInvariant_AnApprovalIsUsedOnce(t *testing.T) {
+	f := newFixture(t, options{policy: writesNeedApproval})
+	f.putNotes(t)
+	run, req := f.waitForApproval(t)
+	m := f.script(modeltest.CallTools(call("c2", "files_write", `{"path":"other.md"}`)))
+	f.answer(t, req, api.Answer{Approved: true})
+	events := f.events(t, run.ID)
+	var second api.ApprovalRequest
+	for second.ID == "" {
+		if e := events.next(); e.name == api.EventApproval {
+			if r := decodeAs[api.ApprovalRequest](t, e); r.ID != req.ID {
+				second = r
+			}
+		}
+	}
+
+	var resp api.Error
+	assert.Equal(t, http.StatusNotFound, f.do(t, http.MethodPost, home+"/runs/"+run.ID+"/approvals/"+req.ID, api.Answer{Approved: true}, &resp), "an answer is given once")
+
+	assert.Equal(t, 1, f.write.Calls, "the second write waits for an answer of its own")
+	assert.JSONEq(t, `{"path":"other.md"}`, string(second.Args))
+	assert.Equal(t, api.RunStatusWaiting, f.status(t, run.ID))
+	require.Len(t, m.Requests(), 1)
+}
+
+// TestInvariant_ResumedCallsMeetTheCentralPolicyOfTheTime guards a
+// trust-model guarantee: an approved call is decided again as it resumes, so
+// a rule the operator added while it waited denies it.
+func TestInvariant_ResumedCallsMeetTheCentralPolicyOfTheTime(t *testing.T) {
+	f := newFixture(t, options{policy: writesNeedApproval})
+	f.putNotes(t)
+	run, req := f.waitForApproval(t)
+	frozen := append([]policy.Module{policy.RulesModule("frozen", `deny contains "writes are frozen" if input.tool == "files_write"`)}, writesNeedApproval...)
+	f.restart(t, options{policy: frozen})
+	f.script(modeltest.Reply("could not"))
+
+	f.answer(t, req, api.Answer{Approved: true})
+
+	assert.Equal(t, api.RunStatusSucceeded, f.finish(t, run.ID).Status)
+	assert.Zero(t, f.write.Calls, "the approval does not override the operator")
+	audit := f.audit(t, run.ID)
+	last := audit[len(audit)-1]
+	assert.Equal(t, req.Tool, last.Tool)
+	assert.Equal(t, api.AuditEventDecision, last.Event)
+	assert.Equal(t, api.DecisionDeny, last.Decision)
+	assert.Contains(t, last.Reason, "writes are frozen")
+}
+
+// TestInvariant_LimitsSurviveARestart guards a trust-model guarantee: a run
+// resumed by another server keeps counting the calls it made before, so its
+// limits are not reset.
+func TestInvariant_LimitsSurviveARestart(t *testing.T) {
+	f := newFixture(t, options{policy: writesNeedApproval})
+	limited := notes()
+	limited.Limits.MaxToolCalls = 2
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodPut, home+"/harnesses/notes", limited, nil))
+	f.script(modeltest.CallTools(call("c0", "files_read", `{"path":"notes.md"}`), call("c1", "files_write", `{"path":"notes.md"}`)))
+	run := f.startRun(t, "write my notes")
+	var req api.ApprovalRequest
+	for events := f.events(t, run.ID); req.ID == ""; {
+		if e := events.next(); e.name == api.EventApproval {
+			req = decodeAs[api.ApprovalRequest](t, e)
+		}
+	}
+	f.restart(t, options{policy: writesNeedApproval})
+	f.script(modeltest.CallTools(call("c2", "files_read", `{"path":"notes.md"}`)), modeltest.Reply("done"))
+
+	f.answer(t, req, api.Answer{Approved: true})
+
+	assert.Equal(t, api.RunStatusSucceeded, f.finish(t, run.ID).Status)
+	assert.Equal(t, 1, f.write.Calls)
+	assert.Equal(t, 1, f.read.Calls, "the third call is over the limit of two")
+	audit := f.audit(t, run.ID)
+	last := audit[len(audit)-1]
+	assert.Equal(t, "files_read", last.Tool)
+	assert.Equal(t, api.DecisionDeny, last.Decision)
+	assert.Contains(t, last.Reason, "tool call limit reached")
+}
+
+func TestApprovals_CancelAWaitingRun(t *testing.T) {
+	f := newFixture(t, options{policy: writesNeedApproval})
+	f.putNotes(t)
+	run, req := f.waitForApproval(t)
+
+	require.Equal(t, http.StatusAccepted, f.do(t, http.MethodPost, home+"/runs/"+run.ID+"/cancel", nil, nil))
+
+	cancelled := f.finish(t, run.ID)
+	assert.Equal(t, api.RunStatusCancelled, cancelled.Status)
+	assert.Equal(t, "cancelled by alice", cancelled.Error)
+	var pending []api.ApprovalRequest
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/approvals", nil, &pending))
+	assert.Empty(t, pending, "the request is withdrawn")
+	var resp api.Error
+	assert.Equal(t, http.StatusNotFound, f.do(t, http.MethodPost, home+"/runs/"+run.ID+"/approvals/"+req.ID, api.Answer{Approved: true}, &resp))
+	audit := f.audit(t, run.ID)
+	last := audit[len(audit)-1]
+	assert.Equal(t, api.AuditEventApproval, last.Event, "the audit log tells what became of the call")
+	assert.Equal(t, api.DecisionDeny, last.Decision)
+	assert.Equal(t, "approval failed: cancelled by alice", last.Reason)
+	assert.Zero(t, f.write.Calls)
+}

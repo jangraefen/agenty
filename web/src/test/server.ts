@@ -28,13 +28,15 @@ export const server = setupServer(conversationsHandler({ "": { conversations: []
 
 export const TOKEN = "a-test-token-of-at-least-32-characters";
 
-// Answers GET /v1/me with me for TOKEN and 401 for any other token.
-export function meHandler(me: Schemas["Me"]) {
+// Answers GET /v1/me with me, no auditor unless it says so, for TOKEN and 401
+// for any other token.
+export function meHandler(me: Omit<Schemas["Me"], "auditor"> & { auditor?: boolean }) {
   return http.get(`${apiUrl}/v1/me`, ({ request }) => {
     if (request.headers.get("Authorization") !== `Bearer ${TOKEN}`) {
-      return HttpResponse.json<Schemas["Error"]>({ error: "unauthorized" }, { status: 401 });
+      return HttpResponse.json({ error: "unauthorized" }, { status: 401 });
     }
-    return HttpResponse.json(me);
+    const full: Schemas["Me"] = { auditor: false, ...me };
+    return HttpResponse.json(full);
   });
 }
 
@@ -78,12 +80,11 @@ export function eventStream(events: { event: string; data: unknown }[]) {
   return response;
 }
 
-// Answers what a workspace's pages load with nothing: no runs, harnesses or
-// waiting approvals.
+// Answers what a workspace's pages load with nothing: no harnesses or waiting
+// approvals.
 export function emptyWorkspaceHandlers(workspace: string) {
   const base = `${apiUrl}/v1/workspaces/${workspace}`;
   return [
-    http.get(`${base}/runs`, () => HttpResponse.json<Schemas["RunList"]>({ runs: [] })),
     http.get(`${base}/harnesses`, () => HttpResponse.json([])),
     http.get(`${base}/approvals`, () => HttpResponse.json([])),
   ];

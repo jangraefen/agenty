@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link, useRouteContext } from "@tanstack/react-router";
+import { useRouteContext } from "@tanstack/react-router";
 import { useId, useState } from "react";
 import { ApiError, type Schemas, unwrap } from "@/api/client";
 import { approvalsQuery } from "@/api/queries";
@@ -20,12 +20,10 @@ type ApprovalRequest = Schemas["ApprovalRequest"];
 export function ApprovalCard({
   request,
   workspace,
-  showRun,
   onOutcome,
 }: {
   request: ApprovalRequest;
   workspace: string;
-  showRun: boolean;
   onOutcome: (outcome: AnswerOutcome) => void;
 }) {
   const { api } = useRouteContext({ from: "/_authed" });
@@ -67,15 +65,6 @@ export function ApprovalCard({
         <code id={`${id}-tool`} className="font-semibold">
           {tool}
         </code>
-        {showRun && (
-          <Link
-            to="/w/$workspace/runs/$runId"
-            params={{ workspace, runId: request.run_id }}
-            className="underline"
-          >
-            run of {request.harness}
-          </Link>
-        )}
         <span className="ml-auto text-muted-foreground">
           asked <time dateTime={request.created_at}>{formatTime(request.created_at)}</time>,{" "}
           <time dateTime={request.expires_at}>{formatRemaining(request.expires_at, now)}</time>

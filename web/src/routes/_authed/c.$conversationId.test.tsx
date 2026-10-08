@@ -208,7 +208,7 @@ describe("the conversation page", () => {
         return live.response();
       }),
     );
-    const { user } = renderApp(path, TOKEN);
+    renderApp(path, TOKEN);
     expect(await screen.findByText("running")).toBeInTheDocument();
     expect(screen.getByText("Working…")).toBeInTheDocument();
 
@@ -216,9 +216,6 @@ describe("the conversation page", () => {
       "audit",
       auditRecord({ event: "decision", decision: "allow", tool: "files_read_file" }),
     );
-    await user.click(screen.getByText("Audit log"));
-    const audit = screen.getByRole("list", { name: "Audit log" });
-    expect(await within(audit).findByText("files_read_file")).toBeInTheDocument();
 
     server.use(...conversationHandlers([run({ output: "All tidy." })]));
     live.send("audit", auditRecord({ event: "result", result: "the notes" }));
@@ -228,28 +225,7 @@ describe("the conversation page", () => {
     expect(await screen.findByText("All tidy.")).toBeInTheDocument();
     expect(screen.getByText("succeeded")).toBeInTheDocument();
     expect(screen.queryByText("Working…")).not.toBeInTheDocument();
-    expect(within(audit).getAllByRole("listitem")).toHaveLength(2);
     expect(authorization).toBe(`Bearer ${TOKEN}`);
-  });
-
-  test("shows an earlier run's audit log", async () => {
-    let asked = false;
-    server.use(
-      ...conversationHandlers([run(), second]),
-      finishedEvents("run-2", second),
-      http.get(`${base}/runs/run-1/audit`, () => {
-        asked = true;
-        return HttpResponse.json([auditRecord({ tool: "files_list" })]);
-      }),
-    );
-    const { user } = renderApp(path, TOKEN);
-
-    const chat = await screen.findByRole("list", { name: "Conversation" });
-    await within(chat).findByText("and sort them");
-    expect(asked).toBe(false);
-    await user.click(within(chat).getAllByText("Audit log")[0] as HTMLElement);
-
-    expect(await within(chat).findByText("files_list")).toBeInTheDocument();
   });
 
   test("a run response older than the run's end does not undo it", async () => {
@@ -331,11 +307,10 @@ describe("the conversation page", () => {
         ]),
       ),
     );
-    const { user } = renderApp(path, TOKEN);
+    renderApp(path, TOKEN);
 
     const chat = await screen.findByRole("list", { name: "Conversation" });
     await within(chat).findAllByText(html);
-    await user.click(within(chat).getByText("Audit log"));
     expect(document.querySelector("img")).toBeNull();
   });
 
@@ -509,9 +484,6 @@ describe("the conversation page", () => {
     await user.click(screen.getByRole("button", { name: "Reconnect" }));
 
     expect(await screen.findByText("succeeded")).toBeInTheDocument();
-    await user.click(screen.getByText("Audit log"));
-    const audit = screen.getByRole("list", { name: "Audit log" });
-    expect(within(audit).getAllByRole("listitem")).toHaveLength(1);
   });
 
   test("a conversation that is not in the user's workspaces is not found", async () => {
@@ -542,15 +514,6 @@ describe("the conversation page", () => {
     );
   });
 
-  test("a run's old page opens its conversation at the run", async () => {
-    server.use(...conversationHandlers([run(), second]), finishedEvents("run-2", second));
-    const { history } = renderApp("/w/notes/runs/run-2", TOKEN);
-
-    await screen.findByRole("heading", { name: "tidy my notes" });
-    expect(history.location.pathname).toBe("/c/run-1");
-    expect(history.location.hash).toBe("#run-run-2");
-  });
-
   test("shows the first run when the rest of the conversation cannot be loaded", async () => {
     server.use(
       http.get(`${base}/runs/run-1/conversation`, () =>
@@ -577,21 +540,10 @@ describe("the conversation page", () => {
       delete (Element.prototype as Partial<Element>).scrollIntoView;
     });
     server.use(...conversationHandlers([run(), second]), finishedEvents("run-2", second));
-    renderApp("/w/notes/runs/run-2", TOKEN);
+    renderApp("/c/run-1#run-run-2", TOKEN);
 
     await screen.findByRole("heading", { name: "tidy my notes" });
     await waitFor(() => expect(scrolled).toContain("run-run-2"));
-  });
-
-  test("a run that does not exist is not found", async () => {
-    server.use(
-      http.get(`${base}/runs/ghost`, () =>
-        HttpResponse.json({ error: "not found" }, { status: 404 }),
-      ),
-    );
-    renderApp("/w/notes/runs/ghost", TOKEN);
-
-    expect(await screen.findByRole("heading", { name: "Run not found" })).toBeInTheDocument();
   });
 });
 

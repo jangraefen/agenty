@@ -74,15 +74,6 @@ test("offers a new conversation, before editing", async () => {
   expect(history.location.search).toBe("?harness=notes%2Fnotes");
 });
 
-test("links to the harness's runs", async () => {
-  renderApp("/w/notes/harnesses/notes", TOKEN);
-
-  expect(await screen.findByRole("link", { name: "Runs of this harness" })).toHaveAttribute(
-    "href",
-    "/w/notes/runs?harness=notes",
-  );
-});
-
 test("a harness that does not exist is not found", async () => {
   server.use(
     http.get(`${base}/harnesses/missing`, () =>

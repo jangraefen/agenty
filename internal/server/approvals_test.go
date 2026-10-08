@@ -40,14 +40,6 @@ func (f *fixture) answer(t *testing.T, req api.ApprovalRequest, a api.Answer) {
 	require.Equal(t, http.StatusNoContent, f.do(t, http.MethodPost, home+"/runs/"+req.RunID+"/approvals/"+req.ID, a, nil))
 }
 
-// audit returns the audit log of the run id.
-func (f *fixture) audit(t *testing.T, id string) []api.AuditRecord {
-	t.Helper()
-	var audit []api.AuditRecord
-	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+id+"/audit", nil, &audit))
-	return audit
-}
-
 func TestApprovals_AWaitingRunHoldsNoWorker(t *testing.T) {
 	f := newFixture(t, options{workers: 1, policy: writesNeedApproval})
 	f.putNotes(t)

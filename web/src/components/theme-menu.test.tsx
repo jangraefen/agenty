@@ -20,7 +20,7 @@ afterEach(() => {
 describe("the theme menu", () => {
   test("is in the sidebar and switches to Dark, which is kept", async () => {
     fakeColorScheme("light");
-    const { user } = renderApp("/w/notes/runs", TOKEN);
+    const { user } = renderApp("/w/notes/harnesses", TOKEN);
 
     const sidebar = await screen.findByRole("complementary");
     await user.click(within(sidebar).getByRole("button", { name: "Theme: System" }));
@@ -34,7 +34,7 @@ describe("the theme menu", () => {
   test("marks the current choice", async () => {
     fakeColorScheme("light");
     localStorage.setItem("agenty.theme", "light");
-    const { user } = renderApp("/w/notes/runs", TOKEN);
+    const { user } = renderApp("/w/notes/harnesses", TOKEN);
 
     await user.click(await screen.findByRole("button", { name: "Theme: Light" }));
 

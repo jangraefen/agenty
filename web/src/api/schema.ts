@@ -54,12 +54,53 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * A conversation in one of the user's workspaces
-         * @description Any member of the conversation's workspace finds it, not only the
-         *     user who started it; in a workspace the user is not a member of, it
-         *     is not found. Only the ID of its first run names it.
+         * A conversation the user started, in one of their workspaces
+         * @description Only the user who started the conversation finds it, and only while
+         *     they are a member of its workspace. Only the ID of its first run
+         *     names it.
          */
         get: operations["getConversation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/audit/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The runs of every workspace, newest first, a page at a time, for auditors
+         * @description Only auditors may list them; anyone else is forbidden. A run shows
+         *     what happened, not what was said: neither its input nor its output.
+         */
+        get: operations["listAuditRuns"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/audit/runs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A run of any workspace with its audit records, for auditors
+         * @description Only auditors may read it; anyone else is forbidden.
+         */
+        get: operations["getAuditRun"];
         put?: never;
         post?: never;
         delete?: never;
@@ -122,8 +163,7 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** The runs, newest first, a page at a time */
-        get: operations["listRuns"];
+        get?: never;
         put?: never;
         /**
          * Start a run of a harness's latest version
@@ -143,6 +183,10 @@ export interface paths {
             header?: never;
             path: {
                 workspace: components["parameters"]["Workspace"];
+                /**
+                 * @description A run of a conversation the user started. Any other run, also one of
+                 *     another member's conversation, is not found.
+                 */
                 id: components["parameters"]["RunID"];
             };
             cookie?: never;
@@ -163,6 +207,10 @@ export interface paths {
             header?: never;
             path: {
                 workspace: components["parameters"]["Workspace"];
+                /**
+                 * @description A run of a conversation the user started. Any other run, also one of
+                 *     another member's conversation, is not found.
+                 */
                 id: components["parameters"]["RunID"];
             };
             cookie?: never;
@@ -192,6 +240,10 @@ export interface paths {
             header?: never;
             path: {
                 workspace: components["parameters"]["Workspace"];
+                /**
+                 * @description A run of a conversation the user started. Any other run, also one of
+                 *     another member's conversation, is not found.
+                 */
                 id: components["parameters"]["RunID"];
             };
             cookie?: never;
@@ -212,6 +264,10 @@ export interface paths {
             header?: never;
             path: {
                 workspace: components["parameters"]["Workspace"];
+                /**
+                 * @description A run of a conversation the user started. Any other run, also one of
+                 *     another member's conversation, is not found.
+                 */
                 id: components["parameters"]["RunID"];
             };
             cookie?: never;
@@ -231,32 +287,16 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/workspaces/{workspace}/runs/{id}/audit": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                workspace: components["parameters"]["Workspace"];
-                id: components["parameters"]["RunID"];
-            };
-            cookie?: never;
-        };
-        /** A run's audit records, in the order they were recorded */
-        get: operations["getRunAudit"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/workspaces/{workspace}/runs/{id}/transcript": {
         parameters: {
             query?: never;
             header?: never;
             path: {
                 workspace: components["parameters"]["Workspace"];
+                /**
+                 * @description A run of a conversation the user started. Any other run, also one of
+                 *     another member's conversation, is not found.
+                 */
                 id: components["parameters"]["RunID"];
             };
             cookie?: never;
@@ -277,6 +317,10 @@ export interface paths {
             header?: never;
             path: {
                 workspace: components["parameters"]["Workspace"];
+                /**
+                 * @description A run of a conversation the user started. Any other run, also one of
+                 *     another member's conversation, is not found.
+                 */
                 id: components["parameters"]["RunID"];
             };
             cookie?: never;
@@ -306,6 +350,10 @@ export interface paths {
             header?: never;
             path: {
                 workspace: components["parameters"]["Workspace"];
+                /**
+                 * @description A run of a conversation the user started. Any other run, also one of
+                 *     another member's conversation, is not found.
+                 */
                 id: components["parameters"]["RunID"];
                 approval: string;
             };
@@ -356,6 +404,8 @@ export interface components {
             user: string;
             /** @description The workspaces the user is a member of, sorted. */
             workspaces: string[];
+            /** @description Whether the user may read the audit log of every workspace. */
+            auditor: boolean;
         };
         /** @description A declarative definition of an agent. */
         Harness: {
@@ -464,10 +514,36 @@ export interface components {
              */
             cache_read_tokens: number;
         };
-        RunList: {
-            runs: components["schemas"]["Run"][];
+        /** @description A run as auditors see it, without what was said in it. */
+        AuditRun: {
+            id: string;
+            conversation_id: string;
+            follows?: string;
+            workspace: string;
+            harness: string;
+            harness_version: number;
+            started_by: string;
+            status: components["schemas"]["RunStatus"];
+            steps: number;
+            usage: components["schemas"]["Usage"];
+            /** @description Why the run failed, or who cancelled it. */
+            error?: string;
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: date-time
+             * @description Unset until the run has finished.
+             */
+            finished_at?: string;
+        };
+        AuditRunList: {
+            runs: components["schemas"]["AuditRun"][];
             /** @description The before parameter of the next page, which may be empty. */
             next?: string;
+        };
+        AuditRunDetail: {
+            run: components["schemas"]["AuditRun"];
+            records: components["schemas"]["AuditRecord"][];
         };
         ConversationSummary: {
             /** @description The ID of the conversation's first run, which names it. */
@@ -476,6 +552,8 @@ export interface components {
             harness: string;
             /** @description The first run's input, cut to its first 100 characters. */
             title: string;
+            /** @description The status of the conversation's latest run. */
+            status: components["schemas"]["RunStatus"];
         };
         ConversationList: {
             conversations: components["schemas"]["ConversationSummary"][];
@@ -579,6 +657,10 @@ export interface components {
     };
     parameters: {
         Workspace: string;
+        /**
+         * @description A run of a conversation the user started. Any other run, also one of
+         *     another member's conversation, is not found.
+         */
         RunID: string;
         /** @description The page size. */
         Limit: number;
@@ -660,6 +742,66 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    listAuditRuns: {
+        parameters: {
+            query?: {
+                /** @description Only the runs of this workspace. */
+                workspace?: string;
+                /** @description Only the runs of harnesses with this name. */
+                harness?: string;
+                /** @description Only the runs this user started. */
+                started_by?: string;
+                /** @description Only the runs with this status. */
+                status?: components["schemas"]["RunStatus"];
+                /** @description The page size. */
+                limit?: components["parameters"]["Limit"];
+                /**
+                 * @description Continue after the run with this ID, as AuditRunList.next gives
+                 *     it. A run that does not exist gives an empty page.
+                 */
+                before?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of runs. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditRunList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getAuditRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The run and its audit records, in the order they were recorded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditRunDetail"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     listHarnesses: {
         parameters: {
             query?: never;
@@ -735,41 +877,6 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    listRuns: {
-        parameters: {
-            query?: {
-                /** @description Only the runs of this harness. */
-                harness?: string;
-                /** @description Only the runs with this status. */
-                status?: components["schemas"]["RunStatus"];
-                /** @description The page size. */
-                limit?: components["parameters"]["Limit"];
-                /**
-                 * @description Continue after the run with this ID, as RunList.next gives it. A
-                 *     run that is not one of the workspace's gives an empty page.
-                 */
-                before?: string;
-            };
-            header?: never;
-            path: {
-                workspace: components["parameters"]["Workspace"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description A page of runs. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RunList"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
     createRun: {
         parameters: {
             query?: never;
@@ -803,6 +910,10 @@ export interface operations {
             header?: never;
             path: {
                 workspace: components["parameters"]["Workspace"];
+                /**
+                 * @description A run of a conversation the user started. Any other run, also one of
+                 *     another member's conversation, is not found.
+                 */
                 id: components["parameters"]["RunID"];
             };
             cookie?: never;
@@ -827,6 +938,10 @@ export interface operations {
             header?: never;
             path: {
                 workspace: components["parameters"]["Workspace"];
+                /**
+                 * @description A run of a conversation the user started. Any other run, also one of
+                 *     another member's conversation, is not found.
+                 */
                 id: components["parameters"]["RunID"];
             };
             cookie?: never;
@@ -855,6 +970,10 @@ export interface operations {
             header?: never;
             path: {
                 workspace: components["parameters"]["Workspace"];
+                /**
+                 * @description A run of a conversation the user started. Any other run, also one of
+                 *     another member's conversation, is not found.
+                 */
                 id: components["parameters"]["RunID"];
             };
             cookie?: never;
@@ -879,6 +998,10 @@ export interface operations {
             header?: never;
             path: {
                 workspace: components["parameters"]["Workspace"];
+                /**
+                 * @description A run of a conversation the user started. Any other run, also one of
+                 *     another member's conversation, is not found.
+                 */
                 id: components["parameters"]["RunID"];
             };
             cookie?: never;
@@ -895,36 +1018,16 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    getRunAudit: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                workspace: components["parameters"]["Workspace"];
-                id: components["parameters"]["RunID"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The audit records. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AuditRecord"][];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
     getRunTranscript: {
         parameters: {
             query?: never;
             header?: never;
             path: {
                 workspace: components["parameters"]["Workspace"];
+                /**
+                 * @description A run of a conversation the user started. Any other run, also one of
+                 *     another member's conversation, is not found.
+                 */
                 id: components["parameters"]["RunID"];
             };
             cookie?: never;
@@ -949,6 +1052,10 @@ export interface operations {
             header?: never;
             path: {
                 workspace: components["parameters"]["Workspace"];
+                /**
+                 * @description A run of a conversation the user started. Any other run, also one of
+                 *     another member's conversation, is not found.
+                 */
                 id: components["parameters"]["RunID"];
             };
             cookie?: never;
@@ -973,6 +1080,10 @@ export interface operations {
             header?: never;
             path: {
                 workspace: components["parameters"]["Workspace"];
+                /**
+                 * @description A run of a conversation the user started. Any other run, also one of
+                 *     another member's conversation, is not found.
+                 */
                 id: components["parameters"]["RunID"];
                 approval: string;
             };

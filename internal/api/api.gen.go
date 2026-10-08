@@ -145,6 +145,45 @@ type AuditRecord struct {
 	Tool   string `json:"tool"`
 }
 
+// AuditRun A run as auditors see it, without what was said in it.
+type AuditRun struct {
+	ConversationID string    `json:"conversation_id"`
+	CreatedAt      time.Time `json:"created_at"`
+
+	// Error Why the run failed, or who cancelled it.
+	Error string `json:"error,omitempty"`
+
+	// FinishedAt Unset until the run has finished.
+	FinishedAt     time.Time `json:"finished_at,omitempty,omitzero"`
+	Follows        string    `json:"follows,omitempty"`
+	Harness        string    `json:"harness"`
+	HarnessVersion int       `json:"harness_version"`
+	ID             string    `json:"id"`
+	StartedBy      string    `json:"started_by"`
+	Status         RunStatus `json:"status"`
+	Steps          int       `json:"steps"`
+
+	// Usage The tokens of model calls. Input the provider read from its prompt
+	// cache, or wrote to it, is counted apart from the rest of the input.
+	Usage     Usage  `json:"usage"`
+	Workspace string `json:"workspace"`
+}
+
+// AuditRunDetail defines model for AuditRunDetail.
+type AuditRunDetail struct {
+	Records []AuditRecord `json:"records"`
+
+	// Run A run as auditors see it, without what was said in it.
+	Run AuditRun `json:"run"`
+}
+
+// AuditRunList defines model for AuditRunList.
+type AuditRunList struct {
+	// Next The before parameter of the next page, which may be empty.
+	Next string     `json:"next,omitempty"`
+	Runs []AuditRun `json:"runs"`
+}
+
 // ConversationList defines model for ConversationList.
 type ConversationList struct {
 	Conversations []ConversationSummary `json:"conversations"`
@@ -159,6 +198,9 @@ type ConversationSummary struct {
 
 	// ID The ID of the conversation's first run, which names it.
 	ID string `json:"id"`
+
+	// Status The status of the conversation's latest run.
+	Status RunStatus `json:"status"`
 
 	// Title The first run's input, cut to its first 100 characters.
 	Title     string `json:"title"`
@@ -232,7 +274,9 @@ type Limits struct {
 
 // Me defines model for Me.
 type Me struct {
-	User string `json:"user"`
+	// Auditor Whether the user may read the audit log of every workspace.
+	Auditor bool   `json:"auditor"`
+	User    string `json:"user"`
 
 	// Workspaces The workspaces the user is a member of, sorted.
 	Workspaces []string `json:"workspaces"`
@@ -286,13 +330,6 @@ type Run struct {
 	// far. A call that failed, such as one whose reply was cut off, is
 	// not counted.
 	Usage Usage `json:"usage"`
-}
-
-// RunList defines model for RunList.
-type RunList struct {
-	// Next The before parameter of the next page, which may be empty.
-	Next string `json:"next,omitempty"`
-	Runs []Run  `json:"runs"`
 }
 
 // RunStatus defines model for RunStatus.
@@ -353,19 +390,16 @@ type RunID = string
 // Workspace defines model for Workspace.
 type Workspace = string
 
-// ListConversationsParams defines parameters for ListConversations.
-type ListConversationsParams struct {
-	// Limit The page size.
-	Limit Limit `form:"limit,omitempty" json:"limit,omitempty"`
+// ListAuditRunsParams defines parameters for ListAuditRuns.
+type ListAuditRunsParams struct {
+	// Workspace Only the runs of this workspace.
+	Workspace string `form:"workspace,omitempty" json:"workspace,omitempty"`
 
-	// Before Continue after the conversation this cursor names, as ConversationList.next gives it.
-	Before string `form:"before,omitempty" json:"before,omitempty"`
-}
-
-// ListRunsParams defines parameters for ListRuns.
-type ListRunsParams struct {
-	// Harness Only the runs of this harness.
+	// Harness Only the runs of harnesses with this name.
 	Harness string `form:"harness,omitempty" json:"harness,omitempty"`
+
+	// StartedBy Only the runs this user started.
+	StartedBy string `form:"started_by,omitempty" json:"started_by,omitempty"`
 
 	// Status Only the runs with this status.
 	Status RunStatus `form:"status,omitempty" json:"status,omitempty"`
@@ -373,8 +407,17 @@ type ListRunsParams struct {
 	// Limit The page size.
 	Limit Limit `form:"limit,omitempty" json:"limit,omitempty"`
 
-	// Before Continue after the run with this ID, as RunList.next gives it. A
-	// run that is not one of the workspace's gives an empty page.
+	// Before Continue after the run with this ID, as AuditRunList.next gives
+	// it. A run that does not exist gives an empty page.
+	Before string `form:"before,omitempty" json:"before,omitempty"`
+}
+
+// ListConversationsParams defines parameters for ListConversations.
+type ListConversationsParams struct {
+	// Limit The page size.
+	Limit Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Before Continue after the conversation this cursor names, as ConversationList.next gives it.
 	Before string `form:"before,omitempty" json:"before,omitempty"`
 }
 

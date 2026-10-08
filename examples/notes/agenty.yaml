@@ -25,6 +25,9 @@ mcp_servers:
 users:
   demo:
     token: {env: AGENTY_TOKEN}
+    # An auditor reads the audit log of every workspace; the demo user is
+    # one, to try it.
+    auditor: true
 # Harnesses and runs live in workspaces; only members see one.
 workspaces:
   notes:

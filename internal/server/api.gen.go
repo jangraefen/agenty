@@ -14,10 +14,16 @@ import (
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// ListAuditRuns The runs of every workspace, newest first, a page at a time, for auditors
+	// (GET /v1/audit/runs)
+	ListAuditRuns(c *gin.Context, params ListAuditRunsParams)
+	// GetAuditRun A run of any workspace with its audit records, for auditors
+	// (GET /v1/audit/runs/{id})
+	GetAuditRun(c *gin.Context, id string)
 	// ListConversations The conversations the user started, latest activity first, a page at a time
 	// (GET /v1/conversations)
 	ListConversations(c *gin.Context, params ListConversationsParams)
-	// GetConversation A conversation in one of the user's workspaces
+	// GetConversation A conversation the user started, in one of their workspaces
 	// (GET /v1/conversations/{id})
 	GetConversation(c *gin.Context, id string)
 	// GetMe The signed-in user and their workspaces
@@ -35,9 +41,6 @@ type ServerInterface interface {
 	// PutHarness Store a harness as its next version
 	// (PUT /v1/workspaces/{workspace}/harnesses/{name})
 	PutHarness(c *gin.Context, workspace Workspace, name string)
-	// ListRuns The runs, newest first, a page at a time
-	// (GET /v1/workspaces/{workspace}/runs)
-	ListRuns(c *gin.Context, workspace Workspace, params ListRunsParams)
 	// CreateRun Start a run of a harness's latest version
 	// (POST /v1/workspaces/{workspace}/runs)
 	CreateRun(c *gin.Context, workspace Workspace)
@@ -47,9 +50,6 @@ type ServerInterface interface {
 	// AnswerApproval Answer an approval request
 	// (POST /v1/workspaces/{workspace}/runs/{id}/approvals/{approval})
 	AnswerApproval(c *gin.Context, workspace Workspace, id RunID, approval string)
-	// GetRunAudit A run's audit records, in the order they were recorded
-	// (GET /v1/workspaces/{workspace}/runs/{id}/audit)
-	GetRunAudit(c *gin.Context, workspace Workspace, id RunID)
 	// CancelRun Cancel a queued, waiting or running run
 	// (POST /v1/workspaces/{workspace}/runs/{id}/cancel)
 	CancelRun(c *gin.Context, workspace Workspace, id RunID)
@@ -75,6 +75,98 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(c *gin.Context)
+
+// ListAuditRuns operation middleware
+func (siw *ServerInterfaceWrapper) ListAuditRuns(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListAuditRunsParams
+
+	// ------------- Optional query parameter "workspace" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "workspace", c.Request.URL.Query(), &params.Workspace, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter workspace: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "harness" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "harness", c.Request.URL.Query(), &params.Harness, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter harness: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "started_by" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "started_by", c.Request.URL.Query(), &params.StartedBy, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter started_by: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "status" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "status", c.Request.URL.Query(), &params.Status, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter status: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", c.Request.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter limit: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "before" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "before", c.Request.URL.Query(), &params.Before, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter before: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ListAuditRuns(c, params)
+}
+
+// GetAuditRun operation middleware
+func (siw *ServerInterfaceWrapper) GetAuditRun(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", c.Param("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter id: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetAuditRun(c, id)
+}
 
 // ListConversations operation middleware
 func (siw *ServerInterfaceWrapper) ListConversations(c *gin.Context) {
@@ -267,66 +359,6 @@ func (siw *ServerInterfaceWrapper) PutHarness(c *gin.Context) {
 	siw.Handler.PutHarness(c, workspace, name)
 }
 
-// ListRuns operation middleware
-func (siw *ServerInterfaceWrapper) ListRuns(c *gin.Context) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "workspace" -------------
-	var workspace Workspace
-
-	err = runtime.BindStyledParameterWithOptions("simple", "workspace", c.Param("workspace"), &workspace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter workspace: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params ListRunsParams
-
-	// ------------- Optional query parameter "harness" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "harness", c.Request.URL.Query(), &params.Harness, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter harness: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	// ------------- Optional query parameter "status" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "status", c.Request.URL.Query(), &params.Status, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter status: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	// ------------- Optional query parameter "limit" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", c.Request.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter limit: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	// ------------- Optional query parameter "before" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "before", c.Request.URL.Query(), &params.Before, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter before: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.ListRuns(c, workspace, params)
-}
-
 // CreateRun operation middleware
 func (siw *ServerInterfaceWrapper) CreateRun(c *gin.Context) {
 
@@ -427,40 +459,6 @@ func (siw *ServerInterfaceWrapper) AnswerApproval(c *gin.Context) {
 	}
 
 	siw.Handler.AnswerApproval(c, workspace, id, approval)
-}
-
-// GetRunAudit operation middleware
-func (siw *ServerInterfaceWrapper) GetRunAudit(c *gin.Context) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "workspace" -------------
-	var workspace Workspace
-
-	err = runtime.BindStyledParameterWithOptions("simple", "workspace", c.Param("workspace"), &workspace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter workspace: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	// ------------- Path parameter "id" -------------
-	var id RunID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "id", c.Param("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter id: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.GetRunAudit(c, workspace, id)
 }
 
 // CancelRun operation middleware
@@ -663,16 +661,16 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.GET(options.BaseURL+"/v1/me", wrapper.GetMe)
 	router.GET(options.BaseURL+"/v1/conversations", wrapper.ListConversations)
 	router.GET(options.BaseURL+"/v1/conversations/:id", wrapper.GetConversation)
+	router.GET(options.BaseURL+"/v1/audit/runs", wrapper.ListAuditRuns)
+	router.GET(options.BaseURL+"/v1/audit/runs/:id", wrapper.GetAuditRun)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace/harnesses", wrapper.ListHarnesses)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace/harnesses/:name", wrapper.GetHarness)
 	router.PUT(options.BaseURL+"/v1/workspaces/:workspace/harnesses/:name", wrapper.PutHarness)
-	router.GET(options.BaseURL+"/v1/workspaces/:workspace/runs", wrapper.ListRuns)
 	router.POST(options.BaseURL+"/v1/workspaces/:workspace/runs", wrapper.CreateRun)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace/runs/:id", wrapper.GetRun)
 	router.POST(options.BaseURL+"/v1/workspaces/:workspace/runs/:id/follow-up", wrapper.FollowUpRun)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace/runs/:id/conversation", wrapper.GetRunConversation)
 	router.POST(options.BaseURL+"/v1/workspaces/:workspace/runs/:id/cancel", wrapper.CancelRun)
-	router.GET(options.BaseURL+"/v1/workspaces/:workspace/runs/:id/audit", wrapper.GetRunAudit)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace/runs/:id/transcript", wrapper.GetRunTranscript)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace/runs/:id/events", wrapper.StreamRunEvents)
 	router.POST(options.BaseURL+"/v1/workspaces/:workspace/runs/:id/approvals/:approval", wrapper.AnswerApproval)

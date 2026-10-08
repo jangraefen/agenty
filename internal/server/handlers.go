@@ -27,7 +27,7 @@ var _ ServerInterface = handlers{}
 
 func (s handlers) GetMe(c *gin.Context) {
 	user := c.GetString(userKey)
-	c.JSON(http.StatusOK, api.Me{User: user, Workspaces: s.memberships(user)})
+	c.JSON(http.StatusOK, api.Me{User: user, Workspaces: s.memberships(user), Auditor: s.cfg.Operator.Users[user].Auditor})
 }
 
 // memberships are the workspaces user is a member of, sorted by name.
@@ -76,7 +76,8 @@ func (s handlers) ListConversations(c *gin.Context, params api.ListConversations
 
 // GetConversation finds a conversation in one of the user's workspaces.
 func (s handlers) GetConversation(c *gin.Context, id string) {
-	cv, err := s.cfg.Store.FindConversation(c.Request.Context(), s.memberships(c.GetString(userKey)), id)
+	user := c.GetString(userKey)
+	cv, err := s.cfg.Store.FindConversation(c.Request.Context(), user, s.memberships(user), id)
 	if err != nil {
 		s.failStore(c, err)
 		return
@@ -85,7 +86,7 @@ func (s handlers) GetConversation(c *gin.Context, id string) {
 }
 
 func apiConversation(cv store.ConversationSummary) api.ConversationSummary {
-	return api.ConversationSummary{ID: cv.ID, Workspace: cv.Workspace, Harness: cv.Harness, Title: cv.Title}
+	return api.ConversationSummary{ID: cv.ID, Workspace: cv.Workspace, Harness: cv.Harness, Title: cv.Title, Status: api.RunStatus(cv.Status)}
 }
 
 // conversationCursor names the conversation a page of them ends with, for
@@ -206,7 +207,24 @@ func (s handlers) startRun(c *gin.Context, r newRun) {
 // it started with; central policy applies as the server has it now. The
 // model sees the conversation as stored, redacted again with the secrets
 // known now.
+// ownRun finds the run with the given ID in workspace if the user started
+// its conversation, and answers not found itself otherwise, as for a run
+// that does not exist. Every handler of a run calls it first, before it
+// reads the request or touches the run, so another user's run gives nothing
+// away.
+func (s handlers) ownRun(c *gin.Context, workspace, id string) (store.Run, bool) {
+	run, err := s.cfg.Store.OwnRun(c.Request.Context(), workspace, c.GetString(userKey), id)
+	if err != nil {
+		s.failStore(c, err)
+		return store.Run{}, false
+	}
+	return run, true
+}
+
 func (s handlers) FollowUpRun(c *gin.Context, workspace, id string) {
+	if _, ok := s.ownRun(c, workspace, id); !ok {
+		return
+	}
 	var req api.FollowUp
 	if err := decode(c, &req); err != nil {
 		s.failDecode(c, err)
@@ -242,6 +260,9 @@ func (s handlers) FollowUpRun(c *gin.Context, workspace, id string) {
 // GetRunConversation lists the runs of the conversation a run belongs to,
 // oldest first.
 func (s handlers) GetRunConversation(c *gin.Context, workspace, id string) {
+	if _, ok := s.ownRun(c, workspace, id); !ok {
+		return
+	}
 	runs, err := s.cfg.Store.Conversation(c.Request.Context(), workspace, id)
 	if err != nil {
 		s.failStore(c, err)
@@ -254,43 +275,10 @@ func (s handlers) GetRunConversation(c *gin.Context, workspace, id string) {
 	c.JSON(http.StatusOK, out)
 }
 
-func (s handlers) ListRuns(c *gin.Context, workspace string, params api.ListRunsParams) {
-	if params.Status != "" && !params.Status.Valid() {
-		s.fail(c, http.StatusBadRequest, fmt.Errorf("status %q: must be running, succeeded, failed or cancelled", params.Status))
-		return
-	}
-	limit, ok := s.pageLimit(c, params.Limit)
-	if !ok {
-		return
-	}
-	runs, err := s.cfg.Store.Runs(c.Request.Context(), workspace, store.RunFilter{
-		Harness: params.Harness,
-		Status:  store.RunStatus(params.Status),
-		Before:  params.Before,
-		Limit:   limit,
-	})
-	if err != nil {
-		s.failStore(c, err)
-		return
-	}
-	out := api.RunList{Runs: make([]api.Run, len(runs))}
-	for i, r := range runs {
-		out.Runs[i] = apiRun(r)
-	}
-	// A full page may be the last: the next one is then empty.
-	if len(runs) == limit {
-		out.Next = runs[len(runs)-1].ID
-	}
-	c.JSON(http.StatusOK, out)
-}
-
 func (s handlers) GetRun(c *gin.Context, workspace, id string) {
-	run, err := s.cfg.Store.Run(c.Request.Context(), workspace, id)
-	if err != nil {
-		s.failStore(c, err)
-		return
+	if run, ok := s.ownRun(c, workspace, id); ok {
+		c.JSON(http.StatusOK, apiRun(run))
 	}
-	c.JSON(http.StatusOK, apiRun(run))
 }
 
 func apiRun(r store.Run) api.Run {
@@ -321,6 +309,10 @@ func apiRun(r store.Run) api.Run {
 // stops; either is recorded as cancelled by the user. The response may come
 // before that, so the run's events tell when it ended.
 func (s handlers) CancelRun(c *gin.Context, workspace, id string) {
+	run, ok := s.ownRun(c, workspace, id)
+	if !ok {
+		return
+	}
 	if h := s.hub(workspace, id); h != nil {
 		by := cancelledBy(c.GetString(userKey))
 		// A worker that claims the run from now on finds it cancelled.
@@ -329,10 +321,7 @@ func (s handlers) CancelRun(c *gin.Context, workspace, id string) {
 		c.Status(http.StatusAccepted)
 		return
 	}
-	run, err := s.cfg.Store.Run(c.Request.Context(), workspace, id)
 	switch {
-	case err != nil:
-		s.failStore(c, err)
 	case !run.Finished():
 		s.fail(c, http.StatusConflict, fmt.Errorf("run %s is running on another server", id))
 	default:
@@ -342,8 +331,9 @@ func (s handlers) CancelRun(c *gin.Context, workspace, id string) {
 
 // ListApprovals returns the approval requests the workspace's runs are
 // waiting for, oldest first.
+// ListApprovals lists the waiting requests of the user's own runs.
 func (s handlers) ListApprovals(c *gin.Context, workspace string) {
-	pending, err := s.cfg.Store.PendingApprovals(c.Request.Context(), workspace)
+	pending, err := s.cfg.Store.PendingApprovals(c.Request.Context(), workspace, c.GetString(userKey))
 	if err != nil {
 		s.failStore(c, err)
 		return
@@ -363,26 +353,8 @@ func apiApproval(a store.Approval) api.ApprovalRequest {
 	}
 }
 
-func (s handlers) GetRunAudit(c *gin.Context, workspace, id string) {
-	if _, err := s.cfg.Store.Run(c.Request.Context(), workspace, id); err != nil {
-		s.failStore(c, err)
-		return
-	}
-	records, err := s.cfg.Store.AuditRecords(c.Request.Context(), id)
-	if err != nil {
-		s.failStore(c, err)
-		return
-	}
-	out := make([]api.AuditRecord, len(records))
-	for i, r := range records {
-		out[i] = api.FromRecord(r.Record, r.RecordedAt)
-	}
-	c.JSON(http.StatusOK, out)
-}
-
 func (s handlers) GetRunTranscript(c *gin.Context, workspace, id string) {
-	if _, err := s.cfg.Store.Run(c.Request.Context(), workspace, id); err != nil {
-		s.failStore(c, err)
+	if _, ok := s.ownRun(c, workspace, id); !ok {
 		return
 	}
 	messages, err := s.cfg.Store.Transcript(c.Request.Context(), id)
@@ -401,9 +373,13 @@ func (s handlers) GetRunTranscript(c *gin.Context, workspace, id string) {
 // stream follows it until it finishes; a finished run's stream replays its
 // audit records and its end from the store.
 func (s handlers) StreamRunEvents(c *gin.Context, workspace, id string) {
+	run, ok := s.ownRun(c, workspace, id)
+	if !ok {
+		return
+	}
 	h := s.hub(workspace, id)
 	if h == nil {
-		s.replayEvents(c, workspace, id)
+		s.replayEvents(c, run)
 		return
 	}
 	c.Header("Content-Type", "text/event-stream")
@@ -431,13 +407,9 @@ func (s handlers) StreamRunEvents(c *gin.Context, workspace, id string) {
 	}
 }
 
-func (s handlers) replayEvents(c *gin.Context, workspace, id string) {
+func (s handlers) replayEvents(c *gin.Context, run store.Run) {
 	ctx := c.Request.Context()
-	run, err := s.cfg.Store.Run(ctx, workspace, id)
-	if err != nil {
-		s.failStore(c, err)
-		return
-	}
+	id := run.ID
 	if !run.Finished() {
 		// Every queued or running run of this server has a hub, New fails
 		// the running runs of earlier servers and takes up their queued
@@ -461,7 +433,12 @@ func (s handlers) replayEvents(c *gin.Context, workspace, id string) {
 
 // AnswerApproval answers a request a run waits for, which queues the run to
 // resume at the call. A request is answered once, and not once it expired.
+// AnswerApproval answers a request of the user's own run: no one else
+// answers it.
 func (s handlers) AnswerApproval(c *gin.Context, workspace, id, approval string) {
+	if _, ok := s.ownRun(c, workspace, id); !ok {
+		return
+	}
 	var answer api.Answer
 	if err := decode(c, &answer); err != nil {
 		s.failDecode(c, err)

@@ -120,7 +120,7 @@ func TestPutHarness_Rejects(t *testing.T) {
 
 func TestNotFound(t *testing.T) {
 	f := newFixture(t, options{})
-	for _, path := range []string{home + "/harnesses/ghost", home + "/runs/ghost", home + "/runs/ghost/audit", home + "/runs/ghost/events", home + "/runs/ghost/transcript"} {
+	for _, path := range []string{home + "/harnesses/ghost", home + "/runs/ghost", home + "/runs/ghost/events", home + "/runs/ghost/transcript"} {
 		var resp api.Error
 		assert.Equal(t, http.StatusNotFound, f.do(t, http.MethodGet, path, nil, &resp), path)
 		assert.Contains(t, resp.Error, "not found", path)
@@ -155,8 +155,7 @@ func TestRun_SucceedsAndStreamsItsEvents(t *testing.T) {
 	var stored api.Run
 	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+run.ID, nil, &stored))
 	assert.Equal(t, finished, stored)
-	var audit []api.AuditRecord
-	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+run.ID+"/audit", nil, &audit))
+	audit := f.audit(t, run.ID)
 	require.Len(t, audit, 2)
 	assert.Equal(t, decision, audit[0])
 	assert.Equal(t, []string{"files"}, f.files.StartedAs)
@@ -192,7 +191,7 @@ func TestRun_Approvals(t *testing.T) {
 		wantWrites   int
 	}{
 		{"approved", aliceToken, api.Answer{Approved: true}, api.DecisionAllow, "alice", "approved through the API", 1},
-		{"rejected with a reason, by another member", bobToken, api.Answer{Reason: "not today"}, api.DecisionDeny, "bob", "approval rejected: not today", 0},
+		{"rejected with a reason", aliceToken, api.Answer{Reason: "not today"}, api.DecisionDeny, "alice", "approval rejected: not today", 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -238,7 +237,9 @@ func TestRun_Approvals(t *testing.T) {
 }
 
 func TestAnswerApproval_Rejects(t *testing.T) {
-	f := newFixture(t, options{})
+	f := newFixture(t, options{policy: writesNeedApproval})
+	f.putNotes(t)
+	run, _ := f.waitForApproval(t)
 	tests := []struct {
 		name       string
 		body       any
@@ -247,12 +248,12 @@ func TestAnswerApproval_Rejects(t *testing.T) {
 	}{
 		{"not JSON", `{`, http.StatusBadRequest, "invalid request body"},
 		{"unknown field, such as a claimed approver", `{"approved":true,"approver":"mallory"}`, http.StatusBadRequest, "approver"},
-		{"no such run or approval", api.Answer{Approved: true}, http.StatusNotFound, "is not waiting for approval"},
+		{"no such approval", api.Answer{Approved: true}, http.StatusNotFound, "is not waiting for approval"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var resp api.Error
-			assert.Equal(t, tt.wantStatus, f.do(t, http.MethodPost, home+"/runs/r1/approvals/a1", tt.body, &resp))
+			assert.Equal(t, tt.wantStatus, f.do(t, http.MethodPost, home+"/runs/"+run.ID+"/approvals/a1", tt.body, &resp))
 			assert.Contains(t, resp.Error, tt.wantErr)
 		})
 	}
@@ -368,8 +369,7 @@ func TestInvariant_ServerCredentialsNeverLeak(t *testing.T) {
 	}
 	var stored api.Run
 	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+run.ID, nil, &stored))
-	var audit []api.AuditRecord
-	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+run.ID+"/audit", nil, &audit))
+	audit := f.audit(t, run.ID)
 	var transcript []api.TranscriptMessage
 	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+run.ID+"/transcript", nil, &transcript))
 	storedJSON, err := json.Marshal(stored)
@@ -603,7 +603,7 @@ func TestInvariant_ServerRequiresSignIn(t *testing.T) {
 		{http.MethodGet, home + "/harnesses/notes", ""},
 		{http.MethodPost, home + "/runs", `{"harness":"notes","input":"tidy"}`},
 		{http.MethodGet, home + "/runs/r1", ""},
-		{http.MethodGet, home + "/runs/r1/audit", ""},
+		{http.MethodGet, "/v1/audit/runs", ""},
 		{http.MethodGet, home + "/runs/r1/transcript", ""},
 		{http.MethodGet, home + "/runs/r1/events", ""},
 		{http.MethodPost, home + "/runs/r1/approvals/a1", `{"approved":true}`},
@@ -670,6 +670,7 @@ func TestMe(t *testing.T) {
 		{aliceToken, api.Me{User: "alice", Workspaces: []string{"home"}}},
 		{bobToken, api.Me{User: "bob", Workspaces: []string{"home", "work"}}},
 		{carolToken, api.Me{User: "carol", Workspaces: []string{}}},
+		{danaToken, api.Me{User: "dana", Workspaces: []string{"home"}, Auditor: true}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.want.User, func(t *testing.T) {
@@ -716,11 +717,9 @@ func TestInvariant_WorkspacesAreSeparate(t *testing.T) {
 			{carolToken, http.MethodPut, home + "/harnesses/notes", notes()},
 			{carolToken, http.MethodPost, home + "/runs", api.CreateRun{Harness: "notes", Input: "x"}},
 			{carolToken, http.MethodGet, home + "/runs/" + run.ID, nil},
-			{carolToken, http.MethodGet, home + "/runs/" + run.ID + "/audit", nil},
 			{carolToken, http.MethodGet, home + "/runs/" + run.ID + "/transcript", nil},
 			{carolToken, http.MethodGet, home + "/runs/" + run.ID + "/events", nil},
 			{carolToken, http.MethodPost, home + "/runs/" + run.ID + "/approvals/" + req.ID, api.Answer{Approved: true}},
-			{carolToken, http.MethodGet, home + "/runs", nil},
 			{carolToken, http.MethodPost, home + "/runs/" + run.ID + "/cancel", nil},
 			{carolToken, http.MethodPost, home + "/runs/" + run.ID + "/follow-up", api.FollowUp{Input: "x"}},
 			{carolToken, http.MethodGet, home + "/runs/" + run.ID + "/conversation", nil},
@@ -735,7 +734,7 @@ func TestInvariant_WorkspacesAreSeparate(t *testing.T) {
 		}
 	})
 	t.Run("a member of another workspace", func(t *testing.T) {
-		for _, path := range []string{"/runs/" + run.ID, "/runs/" + run.ID + "/audit", "/runs/" + run.ID + "/transcript", "/runs/" + run.ID + "/events", "/runs/" + run.ID + "/conversation", "/harnesses/notes"} {
+		for _, path := range []string{"/runs/" + run.ID, "/runs/" + run.ID + "/transcript", "/runs/" + run.ID + "/events", "/runs/" + run.ID + "/conversation", "/harnesses/notes"} {
 			var e api.Error
 			assert.Equal(t, http.StatusNotFound, f.doAs(t, bobToken, http.MethodGet, work+path, nil, &e), path)
 		}
@@ -746,14 +745,11 @@ func TestInvariant_WorkspacesAreSeparate(t *testing.T) {
 		var all []api.HarnessVersion
 		require.Equal(t, http.StatusOK, f.doAs(t, bobToken, http.MethodGet, work+"/harnesses", nil, &all))
 		assert.Empty(t, all)
-		var runs api.RunList
-		require.Equal(t, http.StatusOK, f.doAs(t, bobToken, http.MethodGet, work+"/runs", nil, &runs))
-		assert.Empty(t, runs.Runs)
 		var approvals []api.ApprovalRequest
 		require.Equal(t, http.StatusOK, f.doAs(t, bobToken, http.MethodGet, work+"/approvals", nil, &approvals))
 		assert.Empty(t, approvals)
 		var mine []api.ApprovalRequest
-		require.Equal(t, http.StatusOK, f.doAs(t, bobToken, http.MethodGet, home+"/approvals", nil, &mine))
+		require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/approvals", nil, &mine))
 		assert.Len(t, mine, 1, "the request is listed in its own workspace")
 	})
 
@@ -800,61 +796,6 @@ func TestUnknownRoute_NotFoundAfterSignIn(t *testing.T) {
 	assert.Equal(t, "GET /v1/no-such-route: no such route", resp.Error)
 }
 
-// runToEnd starts a run that replies at once and waits until it finished.
-func (f *fixture) runToEnd(t *testing.T, bearer, input string) api.Run {
-	t.Helper()
-	f.script(modeltest.Reply("done"))
-	var run api.Run
-	require.Equal(t, http.StatusCreated, f.doAs(t, bearer, http.MethodPost, home+"/runs", api.CreateRun{Harness: "notes", Input: input}, &run))
-	f.events(t, run.ID).rest()
-	return run
-}
-
-func TestListRuns(t *testing.T) {
-	f := newFixture(t, options{})
-	f.putNotes(t)
-	r1 := f.runToEnd(t, aliceToken, "one")
-	r2 := f.runToEnd(t, bobToken, "two")
-	f.script(modeltest.Fail(errors.New("model down")))
-	r3 := f.startRun(t, "three")
-	f.events(t, r3.ID).rest()
-
-	var all api.RunList
-	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs", nil, &all))
-	ids := func(l api.RunList) []string {
-		out := []string{}
-		for _, r := range l.Runs {
-			out = append(out, r.ID)
-		}
-		return out
-	}
-	assert.Equal(t, []string{r3.ID, r2.ID, r1.ID}, ids(all), "newest first")
-	assert.Empty(t, all.Next, "a short page is the last")
-	assert.Equal(t, "notes", all.Runs[0].Harness)
-	assert.Equal(t, 1, all.Runs[0].HarnessVersion)
-	assert.Equal(t, "bob", all.Runs[1].StartedBy)
-	assert.Equal(t, api.RunStatusFailed, all.Runs[0].Status)
-
-	var page1, page2 api.RunList
-	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs?limit=2", nil, &page1))
-	assert.Equal(t, []string{r3.ID, r2.ID}, ids(page1))
-	assert.Equal(t, r2.ID, page1.Next)
-	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs?limit=2&before="+page1.Next, nil, &page2))
-	assert.Equal(t, []string{r1.ID}, ids(page2))
-
-	var failed, ofOther api.RunList
-	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs?status=failed", nil, &failed))
-	assert.Equal(t, []string{r3.ID}, ids(failed))
-	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs?harness=other", nil, &ofOther))
-	assert.Equal(t, []string{}, ids(ofOther))
-
-	for _, q := range []string{"limit=0", "limit=201", "limit=x", "status=done"} {
-		var resp api.Error
-		assert.Equal(t, http.StatusBadRequest, f.do(t, http.MethodGet, home+"/runs?"+q, nil, &resp), q)
-		assert.NotEmpty(t, resp.Error, q)
-	}
-}
-
 func TestCancelRun(t *testing.T) {
 	f := newFixture(t, options{policy: []policy.Module{policy.RulesModule("central", `require_approval contains "writes need a human" if input.tool == "files_write"`)}})
 	f.putNotes(t)
@@ -864,18 +805,17 @@ func TestCancelRun(t *testing.T) {
 	events.next()
 	require.Equal(t, api.EventApproval, events.next().name)
 
-	require.Equal(t, http.StatusAccepted, f.doAs(t, bobToken, http.MethodPost, home+"/runs/"+run.ID+"/cancel", nil, nil), "any member may cancel")
+	require.Equal(t, http.StatusAccepted, f.do(t, http.MethodPost, home+"/runs/"+run.ID+"/cancel", nil, nil))
 
 	rest := events.rest()
 	finished := decodeAs[api.Run](t, rest[len(rest)-1])
 	assert.Equal(t, api.RunStatusCancelled, finished.Status)
-	assert.Equal(t, "cancelled by bob", finished.Error)
+	assert.Equal(t, "cancelled by alice", finished.Error)
 	assert.Zero(t, f.write.Calls, "the call waiting for approval never runs")
-	var audit []api.AuditRecord
-	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+run.ID+"/audit", nil, &audit))
+	audit := f.audit(t, run.ID)
 	require.Len(t, audit, 2)
 	assert.Equal(t, api.DecisionDeny, audit[1].Decision)
-	assert.Equal(t, "approval failed: cancelled by bob", audit[1].Reason, "the audit log says who cancelled")
+	assert.Equal(t, "approval failed: cancelled by alice", audit[1].Reason, "the audit log says who cancelled")
 	var stored api.Run
 	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+run.ID, nil, &stored))
 	assert.Equal(t, finished, stored)

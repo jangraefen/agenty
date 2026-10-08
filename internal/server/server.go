@@ -97,6 +97,8 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	case cfg.Logger == nil:
 		return nil, errors.New("server: logger is required")
 	}
+	// Whatever logger the server is given, it logs no credentials.
+	cfg.Logger = slog.New(cfg.Resolved.Redactor.Handler(cfg.Logger.Handler()))
 	if cfg.NewModel == nil {
 		cfg.NewModel = func(m harness.Model) (model.Model, error) {
 			if m.Provider != "anthropic" {
@@ -205,7 +207,7 @@ func (s *Server) Close() {
 	}
 	s.mu.Unlock()
 	if err := s.pool.Close(); err != nil {
-		s.cfg.Logger.Error("cannot stop the MCP servers of conversations", "error", s.cfg.Resolved.Redactor.String(err.Error()))
+		s.cfg.Logger.Error("cannot stop the MCP servers of conversations", "error", err)
 	}
 }
 
@@ -417,7 +419,7 @@ func (s *Server) work() {
 			claimed, ok, err := s.cfg.Store.ClaimRun(s.ctx)
 			if err != nil {
 				if s.ctx.Err() == nil {
-					s.cfg.Logger.Error("cannot claim a run", "error", s.cfg.Resolved.Redactor.String(err.Error()))
+					s.cfg.Logger.Error("cannot claim a run", "error", err)
 				}
 				select {
 				case <-time.After(claimRetry):
@@ -457,7 +459,7 @@ func (s *Server) take(claimed store.ClaimedRun) {
 		switch {
 		case errors.As(context.Cause(h.ctx), &by):
 			if err := s.closeOut(h.ctx, h, claimed.ID, by); err != nil {
-				s.cfg.Logger.Error("cannot record the calls a cancelled run did not run", "run_id", claimed.ID, "error", s.cfg.Resolved.Redactor.String(err.Error()))
+				s.cfg.Logger.Error("cannot record the calls a cancelled run did not run", "run_id", claimed.ID, "error", err)
 			}
 			s.finish(h.ctx, h, claimed.ID, store.RunCancelled, agent.Result{}, by.Error())
 		case s.ctx.Err() != nil:
@@ -699,7 +701,7 @@ func (s *Server) execute(ctx context.Context, h *hub, p prepared) {
 		// The run waits holding nothing: its servers are kept for the
 		// conversation, as after a run that finished.
 		if err := errors.Join(p.agent.Close(), keep(ctx, p.lease, p.conversation)); err != nil {
-			s.cfg.Logger.Error("cannot keep a suspended run's tool servers", "run_id", run.ID(), "error", s.cfg.Resolved.Redactor.String(err.Error()))
+			s.cfg.Logger.Error("cannot keep a suspended run's tool servers", "run_id", run.ID(), "error", err)
 		}
 		s.suspend(ctx, h, res, suspended)
 		return
@@ -715,7 +717,7 @@ func (s *Server) execute(ctx context.Context, h *hub, p prepared) {
 		s.cfg.Logger.Info("run cancelled", "run_id", run.ID(), "error", err)
 		if p.resume != nil {
 			if err := s.closeOut(ctx, h, run.ID(), by); err != nil {
-				s.cfg.Logger.Error("cannot record the calls a cancelled run did not run", "run_id", run.ID(), "error", s.cfg.Resolved.Redactor.String(err.Error()))
+				s.cfg.Logger.Error("cannot record the calls a cancelled run did not run", "run_id", run.ID(), "error", err)
 			}
 		}
 	case err != nil:
@@ -779,7 +781,7 @@ func (s *Server) expire() {
 	for {
 		n, err := s.cfg.Store.ExpireApprovals(s.ctx, reason)
 		if err != nil && s.ctx.Err() == nil {
-			s.cfg.Logger.Error("cannot expire approval requests", "error", s.cfg.Resolved.Redactor.String(err.Error()))
+			s.cfg.Logger.Error("cannot expire approval requests", "error", err)
 		}
 		for range min(n, cap(s.wake)) {
 			s.signal()
@@ -789,7 +791,7 @@ func (s *Server) expire() {
 			next, ok, err := s.cfg.Store.NextApprovalExpiry(s.ctx)
 			switch {
 			case err != nil && s.ctx.Err() == nil:
-				s.cfg.Logger.Error("cannot read when approval requests expire", "error", s.cfg.Resolved.Redactor.String(err.Error()))
+				s.cfg.Logger.Error("cannot read when approval requests expire", "error", err)
 			case ok:
 				wait = time.Until(next)
 			default:
@@ -892,7 +894,7 @@ func (s *Server) cancelIdle(ctx context.Context, h *hub, id string, by cancelled
 		s.cfg.Logger.Error("cannot cancel a queued or waiting run in the store", "run_id", id, "error", err)
 	case cancelled:
 		if err := s.closeOut(ctx, h, id, by); err != nil {
-			s.cfg.Logger.Error("cannot record the calls a cancelled run did not run", "run_id", id, "error", s.cfg.Resolved.Redactor.String(err.Error()))
+			s.cfg.Logger.Error("cannot record the calls a cancelled run did not run", "run_id", id, "error", err)
 		}
 		s.publishEnd(ctx, h, store.Run{ID: id, Status: store.RunCancelled, Error: by.Error()})
 		s.unregister(id)

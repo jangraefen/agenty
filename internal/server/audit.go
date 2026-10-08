@@ -142,7 +142,7 @@ func (s handlers) ExportAuditLog(c *gin.Context, params api.ExportAuditLogParams
 	for after := params.After; ; {
 		page, err := s.cfg.Store.AuditEvents(ctx, after, last, exportPage)
 		if err != nil {
-			s.cfg.Logger.Error("cannot export the audit log", "error", s.cfg.Resolved.Redactor.String(err.Error()))
+			s.cfg.Logger.Error("cannot export the audit log", "error", err)
 			return
 		}
 		if len(page) == 0 {

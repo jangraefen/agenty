@@ -183,10 +183,10 @@ func TestQueue_AQueuedRunsStreamEndsWithTheServer(t *testing.T) {
 	assert.Equal(t, api.RunStatusQueued, f.status(t, queued.ID))
 }
 
-// TestQueue_ARunFinishingAsItIsReadIsNotOnAnotherServer: a run that ends
-// while its events are asked for, or its cancel, is this server's: its
-// stream replays it, and its cancel finds it finished or cancels it.
-func TestQueue_ARunFinishingAsItIsReadIsNotOnAnotherServer(t *testing.T) {
+// TestQueue_ARunFinishingAsItIsReadIsThisServers: a run that ends while its
+// events are asked for, or its cancel, is this server's: its stream replays
+// it, and its cancel finds it finished or cancels it.
+func TestQueue_ARunFinishingAsItIsReadIsThisServers(t *testing.T) {
 	f := newFixture(t, options{})
 	f.putNotes(t)
 	for range 30 {

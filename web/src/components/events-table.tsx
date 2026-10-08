@@ -120,7 +120,8 @@ export function EventsTable({
 }
 
 // EventRow is an event in a row of its own; a toggle at its start shows
-// the whole of its details in a row below, as wide as the table.
+// the whole of its details in a row below, as wide as the table. The
+// toggle is named after the row's cells, so each one's name tells it apart.
 function EventRow({
   event,
   showActor,
@@ -143,6 +144,7 @@ function EventRow({
             type="button"
             aria-expanded={open}
             aria-controls={id}
+            aria-labelledby={`${id}-toggle ${id}-what ${id}-of ${id}-summary`}
             onClick={() => setOpen(!open)}
             className="rounded-sm p-1 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           >
@@ -150,14 +152,16 @@ function EventRow({
               aria-hidden="true"
               className={`size-4 transition-transform ${open ? "rotate-90" : ""}`}
             />
-            <span className="sr-only">Details</span>
+            <span id={`${id}-toggle`} className="sr-only">
+              Details of
+            </span>
           </button>
         </td>
         <td className="py-2 pr-4 whitespace-nowrap">
           <time dateTime={event.recorded_at}>{formatTime(event.recorded_at)}</time>
         </td>
         {showActor && (
-          <td className="py-2 pr-4">
+          <td className="py-2 pr-4 whitespace-nowrap">
             {event.actor === "" ? (
               <span className="text-muted-foreground">the server</span>
             ) : (
@@ -165,10 +169,16 @@ function EventRow({
             )}
           </td>
         )}
-        <td className="py-2 pr-4 whitespace-nowrap">{labels[event.action] ?? event.action}</td>
+        <td id={`${id}-what`} className="py-2 pr-4 whitespace-nowrap">
+          {labels[event.action] ?? event.action}
+        </td>
         {showWorkspace && <td className="py-2 pr-4">{event.workspace}</td>}
-        <td className="py-2 pr-4">{subject(event)}</td>
-        <td className="py-2 wrap-anywhere">{summary(event)}</td>
+        <td id={`${id}-of`} className="py-2 pr-4">
+          {subject(event)}
+        </td>
+        <td id={`${id}-summary`} className="py-2 wrap-anywhere">
+          {summary(event)}
+        </td>
       </tr>
       {open && (
         <tr id={id} className="border-b last:border-0">

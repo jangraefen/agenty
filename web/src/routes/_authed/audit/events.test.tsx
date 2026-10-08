@@ -52,6 +52,16 @@ test("lists every event, filtered, with links to runs", async () => {
   );
   expect(started).toHaveTextContent("Server started");
   expect(started).toHaveTextContent("the server");
+  await user.click(
+    within(finished as HTMLElement).getByRole("button", {
+      name: "Details of Run finished run-1 failed: boom",
+    }),
+  );
+  expect(
+    within(table)
+      .getByText(/"error": "boom"/)
+      .closest("td"),
+  ).toHaveAttribute("colspan", "6");
 
   await user.type(screen.getByRole("textbox", { name: "Who" }), "ana");
   await user.type(screen.getByRole("textbox", { name: "Action" }), "harness.changed");

@@ -57,6 +57,7 @@ func toolsByName(t *testing.T, s *mcptool.Session) map[string]toolgateway.Tool {
 func callTool(ctx context.Context, t *testing.T, tool toolgateway.Tool, args json.RawMessage) (json.RawMessage, error) {
 	t.Helper()
 	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+		RunID:        "r1",
 		Redactor:     gatewaytest.NoSecrets,
 		Granted:      []string{tool.Definition().Name},
 		Servers:      gatewaytest.Servers(tool),
@@ -65,7 +66,7 @@ func callTool(ctx context.Context, t *testing.T, tool toolgateway.Tool, args jso
 		Audit:        &gatewaytest.Audit{},
 	})
 	require.NoError(t, err)
-	return gw.Start().Call(ctx, toolgateway.ToolCall{Name: tool.Definition().Name, Args: args})
+	return gw.Call(ctx, toolgateway.ToolCall{Name: tool.Definition().Name, Args: args})
 }
 
 // jsonString encodes s as JSON. It runs while test tables are built, before
@@ -88,6 +89,7 @@ func TestTools_PrefixesNamesAndKeepsDefinitions(t *testing.T) {
 	assert.Equal(t, "Echoes its arguments.", def.Description)
 	assert.JSONEq(t, `{"type":"object"}`, string(def.InputSchema))
 	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+		RunID:        "r1",
 		Redactor:     gatewaytest.NoSecrets,
 		Granted:      slices.Collect(maps.Keys(tools)),
 		Servers:      gatewaytest.Servers(slices.Collect(maps.Values(tools))...),

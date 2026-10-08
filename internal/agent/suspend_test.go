@@ -12,7 +12,6 @@ import (
 	"github.com/jangraefen/agenty/internal/model/modeltest"
 	"github.com/jangraefen/agenty/internal/policy"
 	"github.com/jangraefen/agenty/internal/toolgateway"
-	"github.com/jangraefen/agenty/internal/toolgateway/gatewaytest"
 )
 
 // labelsNeedApproval is central policy that asks before every label.
@@ -20,13 +19,14 @@ var labelsNeedApproval = []policy.Module{{Name: "central.rego", Source: `package
 
 require_approval contains "labels need a human" if input.tool == "tickets_label"`}}
 
-// suspendingAgent is an agent for m whose approver suspends the run at every
-// call policy asks about, recording its transcript in tr.
-func (f *fixture) suspendingAgent(t *testing.T, m model.Model, tr *transcript) *agent.Agent {
+// suspendingAgent is an agent for m whose policy suspends the run at every
+// label, recording its transcript in tr. records, if any, are the run's
+// audit log so far, as for a run that resumes.
+func (f *fixture) suspendingAgent(t *testing.T, m model.Model, tr *transcript, records ...toolgateway.Record) *agent.Agent {
 	t.Helper()
 	cfg := f.config(m)
 	cfg.Policy = labelsNeedApproval
-	cfg.Approver = &gatewaytest.Approver{Err: toolgateway.ErrSuspend}
+	cfg.Records = records
 	if tr != nil {
 		cfg.Transcript = tr
 	}
@@ -39,7 +39,7 @@ func (f *fixture) suspendingAgent(t *testing.T, m model.Model, tr *transcript) *
 func (f *fixture) suspend(t *testing.T, tr *transcript) (agent.Result, *agent.Suspended) {
 	t.Helper()
 	m := modeltest.NewScripted(modeltest.CallTools(call("c1", "tickets_read"), call("c2", "tickets_label"), call("c3", "tickets_read")))
-	res, err := f.suspendingAgent(t, m, tr).Run(context.Background(), "ticket 7")
+	res, err := f.suspendingAgent(t, m, tr).Continue(context.Background(), nil, "ticket 7")
 	var suspended *agent.Suspended
 	require.ErrorAs(t, err, &suspended)
 	return res, suspended
@@ -70,9 +70,9 @@ func TestResume_ContinuesAtTheWaitingCall(t *testing.T) {
 	first, suspended := f.suspend(t, &transcript{failAt: -1})
 	tr := &transcript{failAt: -1}
 	m := modeltest.NewScripted(modeltest.Reply("labelled"))
-	a := f.suspendingAgent(t, m, tr)
+	a := f.suspendingAgent(t, m, tr, f.audit.Records...)
 
-	res, err := a.Restore(first.RunID, f.audit.Records).Resume(context.Background(), nil, first.Messages, agent.Resumption{
+	res, err := a.Resume(context.Background(), nil, first.Messages, agent.Resumption{
 		CallID:  suspended.CallID,
 		Call:    suspended.Call,
 		Results: suspended.Results,
@@ -81,7 +81,7 @@ func TestResume_ContinuesAtTheWaitingCall(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, first.RunID, res.RunID)
+	assert.Equal(t, "r1", a.ID())
 	assert.Equal(t, "labelled", res.Output)
 	assert.Equal(t, 2, res.Steps, "the step before the suspension counts")
 	assert.Equal(t, 1, f.label.Calls, "the approved call ran")
@@ -107,7 +107,7 @@ func TestResume_ReportsARejectedCallToTheModel(t *testing.T) {
 	first, suspended := f.suspend(t, &transcript{failAt: -1})
 	m := modeltest.NewScripted(modeltest.Reply("left as is"))
 
-	res, err := f.suspendingAgent(t, m, nil).Restore(first.RunID, f.audit.Records).Resume(context.Background(), nil, first.Messages, agent.Resumption{
+	res, err := f.suspendingAgent(t, m, nil, f.audit.Records...).Resume(context.Background(), nil, first.Messages, agent.Resumption{
 		CallID: suspended.CallID, Call: suspended.Call, Results: suspended.Results,
 		Answer: toolgateway.Approval{Approver: "ana", Reason: "no answer within 1h"},
 	})
@@ -122,12 +122,12 @@ func TestResume_ReportsARejectedCallToTheModel(t *testing.T) {
 func TestResume_SuspendsAgainAtTheNextWaitingCall(t *testing.T) {
 	f := newFixture(5)
 	m := modeltest.NewScripted(modeltest.CallTools(call("c1", "tickets_label"), call("c2", "tickets_label")))
-	first, err := f.suspendingAgent(t, m, nil).Run(context.Background(), "ticket 7")
+	first, err := f.suspendingAgent(t, m, nil).Continue(context.Background(), nil, "ticket 7")
 	var suspended *agent.Suspended
 	require.ErrorAs(t, err, &suspended)
 	require.Equal(t, 0, suspended.Call)
 
-	res, err := f.suspendingAgent(t, modeltest.NewScripted(), nil).Restore(first.RunID, f.audit.Records).Resume(context.Background(), nil, first.Messages, agent.Resumption{
+	res, err := f.suspendingAgent(t, modeltest.NewScripted(), nil, f.audit.Records...).Resume(context.Background(), nil, first.Messages, agent.Resumption{
 		CallID: suspended.CallID, Call: suspended.Call, Answer: toolgateway.Approval{Approved: true},
 	})
 
@@ -157,7 +157,7 @@ func TestResume_RejectsWhatItCannotResume(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			run := f.suspendingAgent(t, modeltest.NewScripted(), nil).Restore(first.RunID, f.audit.Records)
+			run := f.suspendingAgent(t, modeltest.NewScripted(), nil, f.audit.Records...)
 
 			_, err := run.Resume(context.Background(), nil, tt.own, agent.Resumption{CallID: suspended.CallID, Call: tt.call, Answer: toolgateway.Approval{Approved: true}})
 

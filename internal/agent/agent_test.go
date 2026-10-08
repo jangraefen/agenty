@@ -205,7 +205,7 @@ func TestRun_CancelledContextStopsFurtherSideEffects(t *testing.T) {
 	a, err := agent.New(context.Background(), f.config(m))
 	require.NoError(t, err)
 
-	res, err := a.Run(ctx, "ticket 7")
+	res, err := a.Continue(ctx, nil, "ticket 7")
 
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Equal(t, 1, f.read.Calls)
@@ -233,6 +233,7 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 		cfg     agent.Config
 		wantErr string
 	}{
+		{"no run ID", withConfig(func(c *agent.Config) { c.RunID = "" }), "run ID is required"},
 		{"nil harness", withConfig(func(c *agent.Config) { c.Harness = nil }), "harness is required"},
 		{"nil model", withConfig(func(c *agent.Config) { c.Model = nil }), "model is required"},
 		{"nil audit", withConfig(func(c *agent.Config) { c.Audit = nil }), "audit is required"},
@@ -259,45 +260,12 @@ func TestRun_RejectsEmptyInput(t *testing.T) {
 	a, err := agent.New(context.Background(), f.config(m))
 	require.NoError(t, err)
 
-	res, err := a.Run(context.Background(), "")
+	res, err := a.Continue(context.Background(), nil, "")
 
 	require.ErrorContains(t, err, "input is required")
 	assert.Zero(t, res)
 	assert.Empty(t, m.Requests())
 	assert.Empty(t, f.audit.Records)
-}
-
-func TestRun_EachRunHasItsOwnRunIDAndTranscript(t *testing.T) {
-	f := newFixture(3)
-	m := modeltest.NewScripted(
-		modeltest.CallTools(call("c1", "tickets_read")), modeltest.Reply("first done"),
-		modeltest.CallTools(call("c2", "tickets_read")), modeltest.Reply("second done"),
-	)
-	a, err := agent.New(context.Background(), f.config(m))
-	require.NoError(t, err)
-
-	first, err := a.Run(context.Background(), "ticket 7")
-	require.NoError(t, err)
-	second, err := a.Run(context.Background(), "ticket 8")
-	require.NoError(t, err)
-
-	require.NotEmpty(t, first.RunID)
-	require.NotEmpty(t, second.RunID)
-	assert.NotEqual(t, first.RunID, second.RunID)
-	require.Len(t, f.audit.Records, 4)
-	for i, r := range f.audit.Records {
-		want := first.RunID
-		if i >= 2 {
-			want = second.RunID
-		}
-		assert.Equal(t, want, r.RunID, "record %d", i)
-	}
-
-	reqs := m.Requests()
-	require.Len(t, reqs, 4)
-	assert.Equal(t, []model.Message{{Role: model.RoleUser, Text: "ticket 8"}}, reqs[2].Messages,
-		"a new run starts with a fresh transcript")
-	assert.Len(t, second.Messages, 4)
 }
 
 func TestNew_HarnessChangesAfterNewDoNotWidenGrants(t *testing.T) {
@@ -308,7 +276,7 @@ func TestNew_HarnessChangesAfterNewDoNotWidenGrants(t *testing.T) {
 
 	f.harness.Tools[1] = "tickets_delete"
 	f.harness.Limits.MaxSteps = 1
-	_, err = a.Run(context.Background(), "ticket 7")
+	_, err = a.Continue(context.Background(), nil, "ticket 7")
 
 	require.NoError(t, err, "max_steps is still the original 3")
 	assert.Zero(t, f.del.Calls)
@@ -320,21 +288,23 @@ func TestAgent_RunsServerToolsAndStopsServers(t *testing.T) {
 	f := newFixture(3)
 	f.harness.Tools = []string{"files_read"}
 	files := &gatewaytest.Server{Tools: []toolgateway.Tool{&gatewaytest.Tool{Name: "files_read", Result: json.RawMessage(`{"content":"x"}`)}}}
-	cfg := f.config(modeltest.NewScripted(
+	m := modeltest.NewScripted(
 		modeltest.CallTools(model.ToolCall{ID: "c1", Name: "files_read"}),
 		modeltest.Reply("done"),
-	))
+	)
+	cfg := f.config(m)
 	cfg.Servers = map[string]toolgateway.ToolServer{"files": files}
 	a, err := agent.New(context.Background(), cfg)
 	require.NoError(t, err)
 
-	res, err := a.Run(context.Background(), "read it")
+	res, err := a.Continue(context.Background(), nil, "read it")
 
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"content":"x"}`, res.Messages[2].ToolResults[0].Content)
 	assert.Equal(t, []string{"files"}, files.StartedAs)
-	require.Len(t, a.Tools(), 1)
-	assert.Equal(t, "files_read", a.Tools()[0].Name)
+	tools := m.Requests()[0].Tools
+	require.Len(t, tools, 1)
+	assert.Equal(t, "files_read", tools[0].Name)
 	require.NoError(t, a.Close())
 	assert.Equal(t, 1, files.Closed)
 }
@@ -364,38 +334,32 @@ func TestClose_ReportsServersThatDoNotStop(t *testing.T) {
 	require.ErrorIs(t, a.Close(), assert.AnError)
 }
 
-func TestStart_IDIsKnownBeforeExecuting(t *testing.T) {
+// TestAgent_RunsUnderTheGivenID: a run stored before it executes, such as
+// a queued one, runs under its stored ID, which every audit record and
+// transcript message of the run carries.
+func TestAgent_RunsUnderTheGivenID(t *testing.T) {
 	f := newFixture(3)
 	m := modeltest.NewScripted(modeltest.CallTools(call("c1", "tickets_read")), modeltest.Reply("done"))
-	a, err := agent.New(context.Background(), f.config(m))
+	tr := &transcript{failAt: -1}
+	cfg := f.config(m)
+	cfg.RunID = "queued-7"
+	cfg.Transcript = tr
+	a, err := agent.New(context.Background(), cfg)
 	require.NoError(t, err)
+	assert.Equal(t, "queued-7", a.ID())
+	assert.Empty(t, f.audit.Records, "building the run records nothing")
 
-	run := a.Start()
-	id := run.ID()
-	require.NotEmpty(t, id)
-	assert.Empty(t, f.audit.Records, "starting a run records nothing")
-	res, err := run.Execute(context.Background(), "ticket 7")
+	_, err = a.Continue(context.Background(), nil, "ticket 7")
 
 	require.NoError(t, err)
-	assert.Equal(t, id, res.RunID)
+	require.NotEmpty(t, f.audit.Records)
 	for _, r := range f.audit.Records {
-		assert.Equal(t, id, r.RunID)
+		assert.Equal(t, "queued-7", r.RunID)
 	}
-}
-
-func TestExecute_OnlyOnce(t *testing.T) {
-	f := newFixture(3)
-	m := modeltest.NewScripted(modeltest.Reply("done"), modeltest.Reply("again"))
-	a, err := agent.New(context.Background(), f.config(m))
-	require.NoError(t, err)
-	run := a.Start()
-	_, err = run.Execute(context.Background(), "ticket 7")
-	require.NoError(t, err)
-
-	_, err = run.Execute(context.Background(), "ticket 7")
-
-	require.ErrorContains(t, err, "run already executed", "a run's call counts and ID are not reused")
-	assert.Len(t, m.Requests(), 1)
+	require.NotEmpty(t, tr.runIDs)
+	for _, id := range tr.runIDs {
+		assert.Equal(t, "queued-7", id)
+	}
 }
 
 // TestRun_RecordsTheCallsOfTheLastStepAsNotRun: a run that reaches its step
@@ -409,7 +373,7 @@ func TestRun_RecordsTheCallsOfTheLastStepAsNotRun(t *testing.T) {
 	a, err := agent.New(context.Background(), cfg)
 	require.NoError(t, err)
 
-	res, err := a.Run(context.Background(), "ticket 7")
+	res, err := a.Continue(context.Background(), nil, "ticket 7")
 
 	require.ErrorIs(t, err, agent.ErrMaxSteps)
 	notRun := "Not run: the run reached its limit of 1 step."

@@ -477,7 +477,6 @@ const errStopped = "the server stopped before the run finished"
 type prepared struct {
 	agent *agent.Agent
 	lease *toolgateway.Lease
-	run   *agent.Run
 	// conversation names the conversation the run belongs to, and history
 	// is the conversation so far.
 	conversation string
@@ -489,7 +488,7 @@ type prepared struct {
 	own    []model.Message
 }
 
-// prepare builds an agent for a claimed run's harness version, which starts
+// prepare builds the agent of a claimed run, for its harness version, which starts
 // the MCP servers it needs or takes those its conversation keeps, and the
 // conversation so far. A run that does not go ahead gives the conversation
 // back the servers it took.
@@ -510,6 +509,16 @@ func (s *Server) prepare(h *hub, claimed store.ClaimedRun) (prepared, error) {
 	if err != nil {
 		return prepared{}, err
 	}
+	// A run that waited for approval resumes with its call counts restored
+	// from its audit log, which its agent is built with.
+	approval, waited, err := s.cfg.Store.LatestApproval(ctx, stored.ID)
+	var audit []toolgateway.Record
+	if err == nil && waited {
+		audit, err = s.answered(ctx, approval)
+	}
+	if err != nil {
+		return prepared{}, err
+	}
 	hv := v.Harness
 	m, err := s.cfg.NewModel(hv.Model)
 	if err != nil {
@@ -521,11 +530,12 @@ func (s *Server) prepare(h *hub, claimed store.ClaimedRun) (prepared, error) {
 	}
 	lease := s.pool.Lease(stored.ConversationID, servers)
 	a, err := agent.New(s.ctx, agent.Config{
+		RunID:      stored.ID,
+		Records:    audit,
 		Harness:    &hv,
 		Model:      m,
 		Servers:    lease.Servers(),
 		Policy:     s.cfg.Operator.Policy,
-		Approver:   suspend{},
 		Audit:      runAudit{store: s.cfg.Store, hub: h},
 		Redactor:   s.cfg.Resolved.Redactor,
 		Transcript: runTranscript{store: s.cfg.Store, redact: s.cfg.Resolved.Redactor},
@@ -544,18 +554,35 @@ func (s *Server) prepare(h *hub, claimed store.ClaimedRun) (prepared, error) {
 		conversation: stored.ConversationID,
 		history:      history,
 	}
-	approval, waited, err := s.cfg.Store.LatestApproval(ctx, stored.ID)
-	if err == nil && waited {
-		err = s.resumption(ctx, &p, approval)
+	if !waited {
+		p.input = withLostState(stored.Input, lease.Fresh(), history)
+		return p, nil
 	}
-	if err != nil {
+	if err := s.resumption(ctx, &p, approval); err != nil {
 		return prepared{}, errors.Join(err, a.Close(), lease.Return())
 	}
-	if !waited {
-		p.run = a.StartAs(stored.ID)
-		p.input = withLostState(stored.Input, lease.Fresh(), history)
-	}
 	return p, nil
+}
+
+// answered returns the audit log of the run that waited for the answered
+// approval, which the run resumes with. A run is taken up only for an
+// answered approval it has not used.
+func (s *Server) answered(ctx context.Context, approval store.Approval) ([]toolgateway.Record, error) {
+	if approval.Status == store.ApprovalPending || approval.Status == store.ApprovalWithdrawn {
+		return nil, fmt.Errorf("run %s was taken up while its approval request is %s", approval.RunID, approval.Status)
+	}
+	records, err := s.cfg.Store.AuditRecords(ctx, approval.RunID)
+	if err != nil {
+		return nil, err
+	}
+	if used(records, approval.CallID) {
+		return nil, fmt.Errorf("run %s was taken up for an approval it used", approval.RunID)
+	}
+	audit := make([]toolgateway.Record, len(records))
+	for i, r := range records {
+		audit[i] = r.Record
+	}
+	return audit, nil
 }
 
 // resumption prepares p to resume its run at the call that waited for the
@@ -563,19 +590,9 @@ func (s *Server) prepare(h *hub, claimed store.ClaimedRun) (prepared, error) {
 // transcript does not hold the call as the approver saw it, as redaction
 // changed it, the answer is a rejection.
 func (s *Server) resumption(ctx context.Context, p *prepared, approval store.Approval) error {
-	if approval.Status == store.ApprovalPending || approval.Status == store.ApprovalWithdrawn {
-		return fmt.Errorf("run %s was taken up while its approval request is %s", approval.RunID, approval.Status)
-	}
 	transcript, err := s.cfg.Store.Transcript(ctx, approval.RunID)
 	if err != nil {
 		return err
-	}
-	records, err := s.cfg.Store.AuditRecords(ctx, approval.RunID)
-	if err != nil {
-		return err
-	}
-	if used(records, approval.CallID) {
-		return fmt.Errorf("run %s was taken up for an approval it used", approval.RunID)
 	}
 	altered := false
 	for _, m := range transcript {
@@ -592,11 +609,6 @@ func (s *Server) resumption(ctx context.Context, p *prepared, approval store.App
 		p.own = callsAsReplies(p.own)
 		p.history = callsAsReplies(p.history)
 	}
-	audit := make([]toolgateway.Record, len(records))
-	for i, r := range records {
-		audit[i] = r.Record
-	}
-	p.run = p.agent.Restore(approval.RunID, audit)
 	p.resume = &agent.Resumption{
 		CallID:  approval.CallID,
 		Call:    approval.Call,
@@ -684,7 +696,7 @@ func (u cancelledBy) Error() string { return "cancelled by " + string(u) }
 // before, so a follow-up the end allows finds them. A run that fails after a
 // user cancelled it ended as cancelled.
 func (s *Server) execute(ctx context.Context, h *hub, p prepared) {
-	run := p.run
+	run := p.agent
 	var (
 		res    agent.Result
 		runErr error
@@ -701,7 +713,7 @@ func (s *Server) execute(ctx context.Context, h *hub, p prepared) {
 		if err := errors.Join(p.agent.Close(), keep(ctx, p.lease, p.conversation)); err != nil {
 			s.cfg.Logger.Error("cannot keep a suspended run's tool servers", "run_id", run.ID(), "error", s.cfg.Resolved.Redactor.String(err.Error()))
 		}
-		s.suspend(ctx, h, res, suspended)
+		s.suspend(ctx, h, run.ID(), res, suspended)
 		return
 	}
 	err := errors.Join(runErr, p.agent.Close(), keep(ctx, p.lease, p.conversation))
@@ -728,7 +740,7 @@ func (s *Server) execute(ctx context.Context, h *hub, p prepared) {
 // names, and publishes the request. The run then waits, holding no worker,
 // until the request is answered or expires, either of which queues it. A run
 // that cannot be suspended fails.
-func (s *Server) suspend(ctx context.Context, h *hub, res agent.Result, suspended *agent.Suspended) {
+func (s *Server) suspend(ctx context.Context, h *hub, id string, res agent.Result, suspended *agent.Suspended) {
 	// As precise as PostgreSQL keeps it, so the event and the stored request
 	// agree.
 	now := time.Now().Truncate(time.Microsecond)
@@ -739,7 +751,7 @@ func (s *Server) suspend(ctx context.Context, h *hub, res agent.Result, suspende
 	}
 	a := store.NewApproval{
 		ID:        rand.Text(),
-		RunID:     res.RunID,
+		RunID:     id,
 		CallID:    suspended.CallID,
 		Call:      suspended.Call,
 		Results:   results,
@@ -750,20 +762,20 @@ func (s *Server) suspend(ctx context.Context, h *hub, res agent.Result, suspende
 		ExpiresAt: now.Add(s.approvalTimeout()),
 	}
 	if err := s.cfg.Store.SuspendRun(context.WithoutCancel(ctx), a); err != nil {
-		s.finish(ctx, h, res.RunID, store.RunFailed, res, s.cfg.Resolved.Redactor.String(err.Error()))
+		s.finish(ctx, h, id, store.RunFailed, res, s.cfg.Resolved.Redactor.String(err.Error()))
 		return
 	}
 	// A cancel that came as the run suspended found it still running.
 	var by cancelledBy
 	if errors.As(context.Cause(ctx), &by) {
-		s.cancelIdle(ctx, h, res.RunID, by)
+		s.cancelIdle(ctx, h, id, by)
 		return
 	}
 	select {
 	case s.expiry <- struct{}{}:
 	default:
 	}
-	s.cfg.Logger.Info("run waits for approval", "harness", h.harness, "run_id", res.RunID, "tool", a.Tool)
+	s.cfg.Logger.Info("run waits for approval", "harness", h.harness, "run_id", id, "tool", a.Tool)
 	h.publish(event{api.EventApproval, apiApproval(store.Approval{NewApproval: a, Harness: h.harness})})
 }
 
@@ -916,16 +928,6 @@ func (s *Server) cancelLeft(ctx context.Context, h *hub, r store.IdleRun) error 
 		return fmt.Errorf("run %s: not queued or waiting, so not cancelled", r.ID)
 	}
 	return s.closeOut(ctx, h, r.ID, by)
-}
-
-// suspend is the approver of every run: it never waits for an answer, but
-// suspends the run until one is given.
-type suspend struct{}
-
-var _ toolgateway.Approver = suspend{}
-
-func (suspend) Approve(context.Context, toolgateway.Request, []string) (toolgateway.Approval, error) {
-	return toolgateway.Approval{}, toolgateway.ErrSuspend
 }
 
 // finish records how the run id ended and publishes that as the last event

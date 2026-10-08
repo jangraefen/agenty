@@ -35,6 +35,7 @@ func TestInvariant_DefaultDeny(t *testing.T) {
 			del := &gatewaytest.Tool{Name: "tickets_delete", Result: json.RawMessage(`{}`)}
 			audit := &gatewaytest.Audit{}
 			gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+				RunID:        "r1",
 				Redactor:     gatewaytest.NoSecrets,
 				MaxToolCalls: 100,
 				Policy:       &gatewaytest.Policy{},
@@ -43,9 +44,8 @@ func TestInvariant_DefaultDeny(t *testing.T) {
 				Audit:        audit,
 			})
 			require.NoError(t, err)
-			run := gw.Start()
 
-			result, err := run.Call(context.Background(), toolgateway.ToolCall{Name: tt.call})
+			result, err := gw.Call(context.Background(), toolgateway.ToolCall{Name: tt.call})
 
 			require.ErrorIs(t, err, toolgateway.ErrDenied)
 			require.ErrorContains(t, err, tt.reason)
@@ -59,10 +59,9 @@ func TestInvariant_DefaultDeny(t *testing.T) {
 	}
 
 	failClosed := []struct {
-		name     string
-		policy   *gatewaytest.Policy
-		approver toolgateway.Approver
-		reason   string
+		name   string
+		policy *gatewaytest.Policy
+		reason string
 	}{
 		{
 			name:   "policy error",
@@ -77,19 +76,11 @@ func TestInvariant_DefaultDeny(t *testing.T) {
 			reason: "policy: frozen; audit week",
 		},
 		{
-			name: "approval required without an approver",
-			policy: &gatewaytest.Policy{Verdicts: map[string]toolgateway.Verdict{
-				"tickets_read": {Decision: toolgateway.RequireApproval, Reasons: []string{"needs a human"}},
-			}},
-			reason: "no approver for required approval: needs a human",
-		},
-		{
 			name: "unknown policy decision",
 			policy: &gatewaytest.Policy{Verdicts: map[string]toolgateway.Verdict{
 				"tickets_read": {Decision: "maybe"},
 			}},
-			approver: &gatewaytest.Approver{Approval: toolgateway.Approval{Approved: true}},
-			reason:   `invalid policy decision "maybe"`,
+			reason: `invalid policy decision "maybe"`,
 		},
 	}
 	for _, tt := range failClosed {
@@ -97,18 +88,17 @@ func TestInvariant_DefaultDeny(t *testing.T) {
 			read := &gatewaytest.Tool{Name: "tickets_read", Result: json.RawMessage(`{}`)}
 			audit := &gatewaytest.Audit{}
 			gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+				RunID:        "r1",
 				Redactor:     gatewaytest.NoSecrets,
 				MaxToolCalls: 100,
 				Policy:       tt.policy,
-				Approver:     tt.approver,
 				Granted:      []string{"tickets_read"},
 				Servers:      gatewaytest.Servers(read),
 				Audit:        audit,
 			})
 			require.NoError(t, err)
-			run := gw.Start()
 
-			_, err = run.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_read"})
+			_, err = gw.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_read"})
 
 			require.ErrorIs(t, err, toolgateway.ErrDenied)
 			assert.Zero(t, read.Calls)
@@ -122,23 +112,28 @@ func TestInvariant_DefaultDeny(t *testing.T) {
 // TestInvariant_EveryCallAudited guards trust-model guarantee 6:
 // every tool call is recorded with its decision, approval (if one was needed)
 // and result, and a call whose decision or approval cannot be recorded is not
-// executed.
+// executed. A call that needs approval suspends the run with only its
+// decision recorded; once answered, Resume records the answer before the
+// call runs.
 func TestInvariant_EveryCallAudited(t *testing.T) {
 	args := json.RawMessage(`{"id":42}`)
 	toolErr := errors.New("ticket system unavailable")
 	needsApproval := toolgateway.Verdict{Decision: toolgateway.RequireApproval, Reasons: []string{"needs a human"}}
 
 	tests := []struct {
-		name        string
-		call        string
-		toolErr     error
-		failOn      toolgateway.Event
-		verdict     *toolgateway.Verdict
-		approver    *gatewaytest.Approver
-		wantCalls   int
-		wantResult  json.RawMessage
-		wantErrIs   []error
-		wantRecords []toolgateway.Record
+		name      string
+		call      string
+		toolErr   error
+		failOn    toolgateway.Event
+		verdict   *toolgateway.Verdict
+		cancelled bool
+		// answer, if set, answers the call, which must have suspended.
+		answer        *toolgateway.Approval
+		wantSuspended bool
+		wantCalls     int
+		wantResult    json.RawMessage
+		wantErrIs     []error
+		wantRecords   []toolgateway.Record
 	}{
 		{
 			name:       "allowed call records decision and result",
@@ -193,13 +188,23 @@ func TestInvariant_EveryCallAudited(t *testing.T) {
 			},
 		},
 		{
+			name:          "call that needs approval suspends with its decision recorded",
+			call:          "tickets_read",
+			verdict:       &needsApproval,
+			wantSuspended: true,
+			wantRecords: []toolgateway.Record{
+				{Event: toolgateway.EventDecision, Tool: "tickets_read", Args: args, Decision: toolgateway.RequireApproval, Reason: "policy: needs a human"},
+			},
+		},
+		{
 			name:       "approved call records decision, approval and result",
 			call:       "tickets_read",
 			verdict:    &needsApproval,
-			approver:   &gatewaytest.Approver{Approval: toolgateway.Approval{Approved: true, Approver: "alice", Reason: "looks fine"}},
+			answer:     &toolgateway.Approval{Approved: true, Approver: "alice", Reason: "looks fine"},
 			wantCalls:  1,
 			wantResult: json.RawMessage(`{"ok":true}`),
 			wantRecords: []toolgateway.Record{
+				{Event: toolgateway.EventDecision, Tool: "tickets_read", Args: args, Decision: toolgateway.RequireApproval, Reason: "policy: needs a human"},
 				{Event: toolgateway.EventDecision, Tool: "tickets_read", Args: args, Decision: toolgateway.RequireApproval, Reason: "policy: needs a human"},
 				{Event: toolgateway.EventApproval, Tool: "tickets_read", Args: args, Decision: toolgateway.Allow, Reason: "looks fine", Approver: "alice"},
 				{Event: toolgateway.EventResult, Tool: "tickets_read", Args: args, Decision: toolgateway.Allow, Reason: "looks fine", Approver: "alice", Result: json.RawMessage(`{"ok":true}`)},
@@ -209,32 +214,34 @@ func TestInvariant_EveryCallAudited(t *testing.T) {
 			name:      "rejected approval records the rejection",
 			call:      "tickets_read",
 			verdict:   &needsApproval,
-			approver:  &gatewaytest.Approver{Approval: toolgateway.Approval{Approved: false, Approver: "bob", Reason: "not today"}},
+			answer:    &toolgateway.Approval{Approved: false, Approver: "bob", Reason: "not today"},
 			wantErrIs: []error{toolgateway.ErrDenied},
 			wantRecords: []toolgateway.Record{
+				{Event: toolgateway.EventDecision, Tool: "tickets_read", Args: args, Decision: toolgateway.RequireApproval, Reason: "policy: needs a human"},
 				{Event: toolgateway.EventDecision, Tool: "tickets_read", Args: args, Decision: toolgateway.RequireApproval, Reason: "policy: needs a human"},
 				{Event: toolgateway.EventApproval, Tool: "tickets_read", Args: args, Decision: toolgateway.Deny, Reason: "approval rejected: not today", Approver: "bob"},
 			},
 		},
 		{
-			name:      "failed approval is a rejection",
+			name:      "call that cannot wait for approval records the failure",
 			call:      "tickets_read",
 			verdict:   &needsApproval,
-			approver:  &gatewaytest.Approver{Err: errors.New("approver unreachable")},
+			cancelled: true,
 			wantErrIs: []error{toolgateway.ErrDenied},
 			wantRecords: []toolgateway.Record{
 				{Event: toolgateway.EventDecision, Tool: "tickets_read", Args: args, Decision: toolgateway.RequireApproval, Reason: "policy: needs a human"},
-				{Event: toolgateway.EventApproval, Tool: "tickets_read", Args: args, Decision: toolgateway.Deny, Reason: "approval failed: approver unreachable"},
+				{Event: toolgateway.EventApproval, Tool: "tickets_read", Args: args, Decision: toolgateway.Deny, Reason: "approval failed: context canceled"},
 			},
 		},
 		{
 			name:      "unrecorded approval blocks execution",
 			call:      "tickets_read",
 			verdict:   &needsApproval,
-			approver:  &gatewaytest.Approver{Approval: toolgateway.Approval{Approved: true, Approver: "alice"}},
+			answer:    &toolgateway.Approval{Approved: true, Approver: "alice"},
 			failOn:    toolgateway.EventApproval,
 			wantErrIs: []error{toolgateway.ErrAudit, gatewaytest.ErrAuditDown},
 			wantRecords: []toolgateway.Record{
+				{Event: toolgateway.EventDecision, Tool: "tickets_read", Args: args, Decision: toolgateway.RequireApproval, Reason: "policy: needs a human"},
 				{Event: toolgateway.EventDecision, Tool: "tickets_read", Args: args, Decision: toolgateway.RequireApproval, Reason: "policy: needs a human"},
 			},
 		},
@@ -242,10 +249,11 @@ func TestInvariant_EveryCallAudited(t *testing.T) {
 			name:      "unrecorded rejection is still a denial",
 			call:      "tickets_read",
 			verdict:   &needsApproval,
-			approver:  &gatewaytest.Approver{Approval: toolgateway.Approval{Approved: false, Approver: "bob"}},
+			answer:    &toolgateway.Approval{Approved: false, Approver: "bob"},
 			failOn:    toolgateway.EventApproval,
 			wantErrIs: []error{toolgateway.ErrDenied, toolgateway.ErrAudit, gatewaytest.ErrAuditDown},
 			wantRecords: []toolgateway.Record{
+				{Event: toolgateway.EventDecision, Tool: "tickets_read", Args: args, Decision: toolgateway.RequireApproval, Reason: "policy: needs a human"},
 				{Event: toolgateway.EventDecision, Tool: "tickets_read", Args: args, Decision: toolgateway.RequireApproval, Reason: "policy: needs a human"},
 			},
 		},
@@ -262,25 +270,36 @@ func TestInvariant_EveryCallAudited(t *testing.T) {
 			if tt.verdict != nil {
 				policy.Verdicts = map[string]toolgateway.Verdict{"tickets_read": *tt.verdict}
 			}
-			var approver toolgateway.Approver
-			if tt.approver != nil {
-				approver = tt.approver
-			}
 			gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+				RunID:        "r1",
 				Redactor:     gatewaytest.NoSecrets,
 				MaxToolCalls: 100,
 				Policy:       policy,
-				Approver:     approver,
 				Granted:      []string{"tickets_read"},
 				Servers:      gatewaytest.Servers(read, del),
 				Audit:        audit,
 			})
 			require.NoError(t, err)
-			run := gw.Start()
 
-			result, err := run.Call(context.Background(), toolgateway.ToolCall{Name: tt.call, Args: args})
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if tt.cancelled {
+				cancel()
+			}
+			call := toolgateway.ToolCall{Name: tt.call, Args: args}
 
-			if len(tt.wantErrIs) == 0 {
+			result, err := gw.Call(ctx, call)
+			var suspended *toolgateway.Suspended
+			if tt.answer != nil {
+				require.ErrorAs(t, err, &suspended)
+				require.Zero(t, read.Calls, "a call that waits for approval does not run")
+				result, err = gw.Resume(ctx, suspended.CallID, call, *tt.answer)
+			}
+
+			if tt.wantSuspended {
+				require.ErrorAs(t, err, &suspended)
+				require.NotErrorIs(t, err, toolgateway.ErrDenied)
+			} else if len(tt.wantErrIs) == 0 {
 				require.NoError(t, err)
 			}
 			for _, target := range tt.wantErrIs {
@@ -290,7 +309,7 @@ func TestInvariant_EveryCallAudited(t *testing.T) {
 			assert.Equal(t, tt.wantCalls, read.Calls+del.Calls)
 			assert.Equal(t, tt.wantRecords, gatewaytest.WithoutIDs(audit.Records))
 			for _, r := range audit.Records {
-				assert.Equal(t, run.ID(), r.RunID, "records carry the run's ID")
+				assert.Equal(t, gw.ID(), r.RunID, "records carry the run's ID")
 				assert.Equal(t, audit.Records[0].CallID, r.CallID, "records of one call share a call ID")
 				assert.NotEmpty(t, r.CallID)
 			}

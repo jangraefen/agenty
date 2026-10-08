@@ -36,6 +36,7 @@ func TestAgent_RunsMCPToolsThroughTheGateway(t *testing.T) {
 		modeltest.Reply("done"),
 	)
 	a, err := agent.New(t.Context(), agent.Config{
+		RunID:    "r1",
 		Redactor: gatewaytest.NoSecrets,
 		Harness: &harness.Harness{
 			Name:         "triage",
@@ -51,7 +52,7 @@ func TestAgent_RunsMCPToolsThroughTheGateway(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, a.Close()) })
 
-	res, err := a.Run(t.Context(), "ticket 7")
+	res, err := a.Continue(t.Context(), nil, "ticket 7")
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"echo", "fail"}, log.calls(), "the ungranted tool never reached the server")

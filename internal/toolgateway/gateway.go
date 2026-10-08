@@ -1,10 +1,13 @@
 // Package toolgateway is the single path every tool call takes.
 //
-// For each call the gateway checks the grant, enforces the run's tool call
-// limit, asks policy, asks an approver when policy requires one, and records
-// each decision before it executes the tool and records the result. A call is
-// never executed unless its decision and approval have been recorded, and
-// anything short of a clear allow is a denial.
+// A Gateway serves one run. For each call it checks the grant, enforces the
+// run's tool call limit, asks policy, and records each decision before it
+// executes the tool and records the result. A call that policy marks as
+// requiring approval suspends the run instead: Call returns a *Suspended
+// error, and Resume runs the call once a person has answered it, after
+// recording the answer. A call is never executed unless its decision and
+// approval have been recorded, and anything short of a clear allow is a
+// denial.
 //
 // Every tool comes from a tool server, such as an MCP server. The gateway owns
 // them: it starts those that serve a granted tool and stops them on Close,
@@ -69,6 +72,17 @@ type ToolCall struct {
 
 // Config configures a Gateway.
 type Config struct {
+	// RunID identifies the run, the gateway's only one, in audit records and
+	// policy input. It is required.
+	RunID string
+	// Records is the audit log of a run that made calls before, such as one
+	// resumed after it was suspended: its call counts are restored from them,
+	// so the run's limit and policy see the calls it made before. Every call
+	// with a decision is an attempt, denied ones included, and every call
+	// with a result was executed. Records of other runs are ignored. A call
+	// whose result could not be recorded ended its run, which is then not
+	// resumed.
+	Records []Record
 	// Harness names the harness of the run, for policy.
 	Harness string
 	// Granted names the tools the harness may call. Anything else is denied.
@@ -77,14 +91,11 @@ type Config struct {
 	// Servers are tool servers, by name. The gateway starts those that serve
 	// a granted tool, calls their tools, and stops them on Close.
 	Servers map[string]ToolServer
-	// MaxToolCalls bounds the calls of each run, denied ones included. It is
+	// MaxToolCalls bounds the calls of the run, denied ones included. It is
 	// required.
 	MaxToolCalls int
 	// Policy decides on granted calls. It is required.
 	Policy Policy
-	// Approver answers calls that policy marks as requiring approval. Without
-	// one, such calls are denied.
-	Approver Approver
 	// Audit records every decision, approval and result. It is required.
 	Audit Audit
 	// Redactor holds the credentials that must never reach the model, an
@@ -96,32 +107,39 @@ type Config struct {
 	Redactor *secret.Redactor
 }
 
-// Gateway holds what every run of a harness shares: grants, tools, policy,
-// approver, audit and secrets. It is built and validated once; each run then
-// starts with Start and calls tools through the returned Run.
+// Gateway is one run's path to the tools: its grants, tools, policy, audit
+// and secrets, and the run's ID and call counts. Each run gets a gateway of
+// its own, so runs never share counts, and one run's calls cannot affect
+// another's limit or policy input.
 type Gateway struct {
+	id      string
 	harness string
 	// tools are the granted tools; every other call is denied.
 	tools        map[string]Tool
 	defs         []Definition
 	maxToolCalls int
 	policy       Policy
-	approver     Approver
 	audit        Audit
 	redact       *secret.Redactor
 
+	// mu guards what follows. A run's calls are sequential, but Close may
+	// come at any time.
 	mu       sync.Mutex
 	sessions []namedSession
 	// closed is set by Close.
-	closed bool
+	closed   bool
+	attempts int
+	executed CallCounts
 }
 
-// New returns a Gateway for cfg, after starting the servers that serve a
-// granted tool. A grant that no server serves is an error. The grants are
-// copied, so later changes to cfg do not affect the gateway. Close stops the
-// servers.
+// New returns the Gateway of the run cfg.RunID, after starting the servers
+// that serve a granted tool. A grant that no server serves is an error. The
+// grants are copied, so later changes to cfg do not affect the gateway.
+// Close stops the servers.
 func New(ctx context.Context, cfg Config) (*Gateway, error) {
 	switch {
+	case cfg.RunID == "":
+		return nil, errors.New("toolgateway: run ID is required")
 	case cfg.Audit == nil:
 		return nil, errors.New("toolgateway: audit is required")
 	case cfg.Policy == nil:
@@ -150,14 +168,15 @@ func New(ctx context.Context, cfg Config) (*Gateway, error) {
 		return nil, err
 	}
 	g := &Gateway{
+		id:           cfg.RunID,
 		harness:      cfg.Harness,
 		tools:        make(map[string]Tool, len(granted)),
 		maxToolCalls: cfg.MaxToolCalls,
 		policy:       cfg.Policy,
-		approver:     cfg.Approver,
 		audit:        cfg.Audit,
 		redact:       cfg.Redactor,
 		sessions:     sessions,
+		executed:     CallCounts{ByTool: map[string]int{}},
 	}
 	for _, tool := range served {
 		if def := tool.Definition(); granted[def.Name] {
@@ -172,7 +191,33 @@ func New(ctx context.Context, cfg Config) (*Gateway, error) {
 		}
 	}
 	slices.SortFunc(g.defs, func(a, b Definition) int { return strings.Compare(a.Name, b.Name) })
+	g.restore(cfg.Records)
 	return g, nil
+}
+
+// restore restores the run's call counts from records, its audit log; see
+// Config.Records.
+func (g *Gateway) restore(records []Record) {
+	attempted := map[string]bool{}
+	for _, rec := range records {
+		if rec.RunID != g.id {
+			continue
+		}
+		switch rec.Event {
+		case EventDecision:
+			attempted[rec.CallID] = true
+		case EventResult:
+			g.executed.Total++
+			g.executed.ByTool[rec.Tool]++
+		case EventApproval:
+		}
+	}
+	g.attempts = len(attempted)
+}
+
+// ID identifies the run in audit records and policy input.
+func (g *Gateway) ID() string {
+	return g.id
 }
 
 // Close stops the gateway's servers and reports every one that failed to
@@ -185,85 +230,28 @@ func (g *Gateway) Close() error {
 	return closeSessions(sessions)
 }
 
-// Definitions describes the tools runs may call: the granted ones, sorted by
-// name.
+// Definitions describes the tools the run may call: the granted ones, sorted
+// by name.
 func (g *Gateway) Definitions() []Definition {
 	return slices.Clone(g.defs)
-}
-
-// Start begins a run: it mints the run's ID, which every audit record of the
-// run carries, and starts the run's call counts at zero. Runs never share
-// counts, so one run's calls cannot affect another's limit or policy input.
-func (g *Gateway) Start() *Run {
-	return g.StartAs(rand.Text())
-}
-
-// Restore is StartAs for a run that has made calls before, such as one that
-// resumes after it was suspended: its call counts are restored from records,
-// its audit log. Every call with a decision is an attempt, denied ones
-// included, and every call with a result was executed. A call whose result
-// could not be recorded ended its run, which is then not restored.
-func (g *Gateway) Restore(id string, records []Record) *Run {
-	r := g.StartAs(id)
-	attempted := map[string]bool{}
-	for _, rec := range records {
-		if rec.RunID != id {
-			continue
-		}
-		switch rec.Event {
-		case EventDecision:
-			attempted[rec.CallID] = true
-		case EventResult:
-			r.countExecuted(rec.Tool)
-		case EventApproval:
-		}
-	}
-	r.attempts = len(attempted)
-	return r
-}
-
-// StartAs is Start for a run whose ID was minted before, such as a run
-// stored before it executes. The run's call counts start at zero all the
-// same.
-func (g *Gateway) StartAs(id string) *Run {
-	return &Run{
-		gateway:  g,
-		id:       id,
-		executed: CallCounts{ByTool: map[string]int{}},
-	}
-}
-
-// Run is one run's path to the tools: its ID and its call counts.
-type Run struct {
-	gateway *Gateway
-	id      string
-
-	mu       sync.Mutex
-	attempts int
-	executed CallCounts
-}
-
-// ID identifies the run in audit records and policy input.
-func (r *Run) ID() string {
-	return r.id
 }
 
 // Call runs one tool call through the gateway. A denied call returns an
 // error wrapping ErrDenied. A failure to record returns an error wrapping
 // ErrAudit; if only the result could not be recorded, the result is returned
-// with that error. A call whose approver suspends the run returns a
-// *Suspended error; Resume runs it once it is answered.
-func (r *Run) Call(ctx context.Context, call ToolCall) (json.RawMessage, error) {
-	g := r.gateway
+// with that error. A call that policy marks as requiring approval does not
+// run: it returns a *Suspended error, and the run stops at the call until it
+// is answered, when Resume runs it, or not.
+func (g *Gateway) Call(ctx context.Context, call ToolCall) (json.RawMessage, error) {
 	rec := Record{
-		RunID:  r.id,
+		RunID:  g.id,
 		CallID: rand.Text(),
 		Event:  EventDecision,
 		Tool:   call.Name,
 		Args:   call.Args,
 	}
-	tool, verdict := r.decide(ctx, call, true)
-	if err := r.recordDecision(ctx, &rec, verdict); err != nil {
+	tool, verdict := g.decide(ctx, call, true)
+	if err := g.recordDecision(ctx, &rec, verdict); err != nil {
 		return nil, err
 	}
 	if rec.Decision == RequireApproval {
@@ -274,9 +262,8 @@ func (r *Run) Call(ctx context.Context, call ToolCall) (json.RawMessage, error) 
 		for i, reason := range verdict.Reasons {
 			reasons[i] = g.redact.String(reason)
 		}
-		approval, err := g.approver.Approve(ctx, req, reasons)
+		var err error
 		switch {
-		case !errors.Is(err, ErrSuspend):
 		case ctx.Err() != nil:
 			// A cancelled run is not suspended: it ends.
 			err = context.Cause(ctx)
@@ -287,11 +274,9 @@ func (r *Run) Call(ctx context.Context, call ToolCall) (json.RawMessage, error) 
 		default:
 			return nil, &Suspended{CallID: rec.CallID, Request: req, Reasons: reasons}
 		}
-		if err := r.recordAnswer(ctx, &rec, approval, err); err != nil {
-			return nil, err
-		}
+		return nil, g.recordAnswer(ctx, &rec, Approval{}, err)
 	}
-	return r.execute(ctx, rec, tool, call)
+	return g.execute(ctx, rec, tool, call)
 }
 
 // errHoldsSecret fails the approval of a call that cannot wait for it.
@@ -302,29 +287,28 @@ var errHoldsSecret = errors.New("its arguments hold a secret, so it cannot wait 
 // does not count it as another attempt, and records it under its own ID.
 // An answered call is no longer waiting for approval: approved, it runs
 // unless policy now denies it; rejected, it is denied.
-func (r *Run) Resume(ctx context.Context, callID string, call ToolCall, a Approval) (json.RawMessage, error) {
+func (g *Gateway) Resume(ctx context.Context, callID string, call ToolCall, a Approval) (json.RawMessage, error) {
 	rec := Record{
-		RunID:  r.id,
+		RunID:  g.id,
 		CallID: callID,
 		Event:  EventDecision,
 		Tool:   call.Name,
 		Args:   call.Args,
 	}
-	tool, verdict := r.decide(ctx, call, false)
-	if err := r.recordDecision(ctx, &rec, verdict); err != nil {
+	tool, verdict := g.decide(ctx, call, false)
+	if err := g.recordDecision(ctx, &rec, verdict); err != nil {
 		return nil, err
 	}
-	if err := r.recordAnswer(ctx, &rec, a, nil); err != nil {
+	if err := g.recordAnswer(ctx, &rec, a, nil); err != nil {
 		return nil, err
 	}
-	return r.execute(ctx, rec, tool, call)
+	return g.execute(ctx, rec, tool, call)
 }
 
 // recordDecision records the decision on the call rec describes. It returns
 // an error wrapping ErrDenied for a denied call, and one wrapping ErrAudit if
 // the decision could not be recorded.
-func (r *Run) recordDecision(ctx context.Context, rec *Record, verdict decision) error {
-	g := r.gateway
+func (g *Gateway) recordDecision(ctx context.Context, rec *Record, verdict decision) error {
 	rec.Decision, rec.Reason = verdict.Decision, verdict.Reason
 	auditErr := g.record(ctx, *rec)
 	if rec.Decision == Deny {
@@ -333,11 +317,10 @@ func (r *Run) recordDecision(ctx context.Context, rec *Record, verdict decision)
 	return auditErr
 }
 
-// recordAnswer records the approver's answer to the call rec describes, or
-// the error the approver failed with. Like recordDecision, it returns an
-// error for a call that does not go ahead.
-func (r *Run) recordAnswer(ctx context.Context, rec *Record, approval Approval, err error) error {
-	g := r.gateway
+// recordAnswer records the answer to the call rec describes, or err, why
+// the call could not wait for one. Like recordDecision, it returns an error
+// for a call that does not go ahead.
+func (g *Gateway) recordAnswer(ctx context.Context, rec *Record, approval Approval, err error) error {
 	rec.Event, rec.Approver = EventApproval, approval.Approver
 	rec.Decision, rec.Reason = Allow, approval.Reason
 	switch {
@@ -358,9 +341,8 @@ func (r *Run) recordAnswer(ctx context.Context, rec *Record, approval Approval, 
 }
 
 // execute runs an allowed call and records its result.
-func (r *Run) execute(ctx context.Context, rec Record, tool Tool, call ToolCall) (json.RawMessage, error) {
-	g := r.gateway
-	r.countExecuted(call.Name)
+func (g *Gateway) execute(ctx context.Context, rec Record, tool Tool, call ToolCall) (json.RawMessage, error) {
+	g.countExecuted(call.Name)
 	result, toolErr := tool.Call(ctx, call.Args)
 	result, toolErr = g.redact.JSON(result), g.redact.Error(toolErr)
 
@@ -385,18 +367,12 @@ type decision struct {
 // comes first, so policy only ever sees granted calls and cannot grant
 // anything. Every attempt counts towards the run's call limit; deciding a
 // resumed call again is not another attempt.
-func (r *Run) decide(ctx context.Context, call ToolCall, attempt bool) (Tool, decision) {
-	g := r.gateway
-	r.mu.Lock()
-	if attempt {
-		r.attempts++
-	}
-	attempts := r.attempts
-	counts := r.executed.clone()
-	r.mu.Unlock()
-
+func (g *Gateway) decide(ctx context.Context, call ToolCall, attempt bool) (Tool, decision) {
 	g.mu.Lock()
-	closed := g.closed
+	if attempt {
+		g.attempts++
+	}
+	attempts, counts, closed := g.attempts, g.executed.clone(), g.closed
 	g.mu.Unlock()
 	if closed {
 		return nil, deny("the run's tool servers were stopped")
@@ -410,7 +386,7 @@ func (r *Run) decide(ctx context.Context, call ToolCall, attempt bool) (Tool, de
 	}
 
 	req := Request{
-		RunID:   r.id,
+		RunID:   g.id,
 		Harness: g.harness,
 		Tool:    call.Name,
 		Args:    call.Args,
@@ -427,20 +403,17 @@ func (r *Run) decide(ctx context.Context, call ToolCall, attempt bool) (Tool, de
 	case Deny:
 		return nil, deny("policy: " + reasons)
 	case RequireApproval:
-		if g.approver == nil {
-			return nil, deny("no approver for required approval: " + reasons)
-		}
 		return tool, decision{Decision: RequireApproval, Reason: "policy: " + reasons, Request: req, Reasons: verdict.Reasons}
 	default:
 		return nil, deny(fmt.Sprintf("invalid policy decision %q", verdict.Decision))
 	}
 }
 
-func (r *Run) countExecuted(name string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.executed.Total++
-	r.executed.ByTool[name]++
+func (g *Gateway) countExecuted(name string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.executed.Total++
+	g.executed.ByTool[name]++
 }
 
 // record writes rec to the audit log, with secrets redacted.

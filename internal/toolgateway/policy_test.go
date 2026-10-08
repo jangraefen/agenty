@@ -20,6 +20,7 @@ func TestCall_PolicySeesTheCallAndExecutedCounts(t *testing.T) {
 		"tickets_close": {Decision: toolgateway.Deny, Reasons: []string{"no closing"}},
 	}}
 	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+		RunID:        "r1",
 		Redactor:     gatewaytest.NoSecrets,
 		Harness:      "triage",
 		MaxToolCalls: 100,
@@ -29,23 +30,22 @@ func TestCall_PolicySeesTheCallAndExecutedCounts(t *testing.T) {
 		Audit:        &gatewaytest.Audit{},
 	})
 	require.NoError(t, err)
-	run := gw.Start()
 
 	ctx := context.Background()
-	_, err = run.Call(ctx, toolgateway.ToolCall{Name: "tickets_read", Args: json.RawMessage(`{"id":1}`)})
+	_, err = gw.Call(ctx, toolgateway.ToolCall{Name: "tickets_read", Args: json.RawMessage(`{"id":1}`)})
 	require.NoError(t, err)
-	_, err = run.Call(ctx, toolgateway.ToolCall{Name: "tickets_close"})
+	_, err = gw.Call(ctx, toolgateway.ToolCall{Name: "tickets_close"})
 	require.ErrorIs(t, err, toolgateway.ErrDenied)
-	_, err = run.Call(ctx, toolgateway.ToolCall{Name: "tickets_label"})
+	_, err = gw.Call(ctx, toolgateway.ToolCall{Name: "tickets_label"})
 	require.Error(t, err, "the tool fails, but it was executed")
-	_, err = run.Call(ctx, toolgateway.ToolCall{Name: "tickets_nope"})
+	_, err = gw.Call(ctx, toolgateway.ToolCall{Name: "tickets_nope"})
 	require.ErrorIs(t, err, toolgateway.ErrDenied)
-	_, err = run.Call(ctx, toolgateway.ToolCall{Name: "tickets_read", Args: json.RawMessage(`{"id":2}`)})
+	_, err = gw.Call(ctx, toolgateway.ToolCall{Name: "tickets_read", Args: json.RawMessage(`{"id":2}`)})
 	require.NoError(t, err)
 
 	require.Len(t, policy.Inputs, 4, "ungranted calls never reach policy")
 	first := policy.Inputs[0]
-	assert.Equal(t, run.ID(), first.RunID)
+	assert.Equal(t, gw.ID(), first.RunID)
 	assert.Equal(t, "triage", first.Harness)
 	assert.Equal(t, "tickets_read", first.Tool)
 	assert.JSONEq(t, `{"id":1}`, string(first.Args))
@@ -57,37 +57,41 @@ func TestCall_PolicySeesTheCallAndExecutedCounts(t *testing.T) {
 	}, policy.Inputs[3].Calls, "policy sees executed calls only, failed executions included")
 }
 
-func TestCall_ApproverSeesTheRequest(t *testing.T) {
-	approver := &gatewaytest.Approver{Approval: toolgateway.Approval{Approved: true, Approver: "alice"}}
+// TestCall_ASuspensionCarriesThePolicyRequest: whoever answers a call that
+// waits for approval sees the same request as policy, and the reasons policy
+// gave.
+func TestCall_ASuspensionCarriesThePolicyRequest(t *testing.T) {
+	label := &gatewaytest.Tool{Name: "tickets_label"}
+	policy := &gatewaytest.Policy{Verdicts: map[string]toolgateway.Verdict{
+		"tickets_label": {Decision: toolgateway.RequireApproval, Reasons: []string{"writes need a human", "label is public"}},
+	}}
 	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+		RunID:        "r1",
 		Redactor:     gatewaytest.NoSecrets,
 		Harness:      "triage",
 		MaxToolCalls: 100,
-		Policy: &gatewaytest.Policy{Verdicts: map[string]toolgateway.Verdict{
-			"tickets_label": {Decision: toolgateway.RequireApproval, Reasons: []string{"writes need a human", "label is public"}},
-		}},
-		Approver: approver,
-		Granted:  []string{"tickets_label"},
-		Servers:  gatewaytest.Servers(&gatewaytest.Tool{Name: "tickets_label"}),
-		Audit:    &gatewaytest.Audit{},
+		Policy:       policy,
+		Granted:      []string{"tickets_label"},
+		Servers:      gatewaytest.Servers(label),
+		Audit:        &gatewaytest.Audit{},
 	})
 	require.NoError(t, err)
-	run := gw.Start()
 
-	_, err = run.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_label", Args: json.RawMessage(`{"label":"urgent"}`)})
-	require.NoError(t, err)
+	_, err = gw.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_label", Args: json.RawMessage(`{"label":"urgent"}`)})
 
-	require.Len(t, approver.Calls, 1)
-	assert.Equal(t, gatewaytest.ApprovalCall{
-		Request: toolgateway.Request{
-			RunID:   run.ID(),
-			Harness: "triage",
-			Tool:    "tickets_label",
-			Args:    json.RawMessage(`{"label":"urgent"}`),
-			Calls:   toolgateway.CallCounts{ByTool: map[string]int{}},
-		},
-		Reasons: []string{"writes need a human", "label is public"},
-	}, approver.Calls[0], "the approver sees the same request as policy")
+	var suspended *toolgateway.Suspended
+	require.ErrorAs(t, err, &suspended)
+	assert.Zero(t, label.Calls)
+	require.Len(t, policy.Inputs, 1)
+	assert.Equal(t, toolgateway.Request{
+		RunID:   "r1",
+		Harness: "triage",
+		Tool:    "tickets_label",
+		Args:    json.RawMessage(`{"label":"urgent"}`),
+		Calls:   toolgateway.CallCounts{ByTool: map[string]int{}},
+	}, suspended.Request, "the approver sees the same request as policy")
+	assert.Equal(t, policy.Inputs[0], suspended.Request)
+	assert.Equal(t, []string{"writes need a human", "label is public"}, suspended.Reasons)
 }
 
 func TestCall_ToolCallLimitCountsEveryAttempt(t *testing.T) {
@@ -95,6 +99,7 @@ func TestCall_ToolCallLimitCountsEveryAttempt(t *testing.T) {
 	policy := &gatewaytest.Policy{}
 	audit := &gatewaytest.Audit{}
 	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+		RunID:        "r1",
 		Redactor:     gatewaytest.NoSecrets,
 		MaxToolCalls: 2,
 		Policy:       policy,
@@ -103,14 +108,13 @@ func TestCall_ToolCallLimitCountsEveryAttempt(t *testing.T) {
 		Audit:        audit,
 	})
 	require.NoError(t, err)
-	run := gw.Start()
 
 	ctx := context.Background()
-	_, err = run.Call(ctx, toolgateway.ToolCall{Name: "tickets_delete"})
+	_, err = gw.Call(ctx, toolgateway.ToolCall{Name: "tickets_delete"})
 	require.ErrorIs(t, err, toolgateway.ErrDenied, "attempt 1: denied, but counted")
-	_, err = run.Call(ctx, toolgateway.ToolCall{Name: "tickets_read"})
+	_, err = gw.Call(ctx, toolgateway.ToolCall{Name: "tickets_read"})
 	require.NoError(t, err, "attempt 2: within the limit")
-	_, err = run.Call(ctx, toolgateway.ToolCall{Name: "tickets_read"})
+	_, err = gw.Call(ctx, toolgateway.ToolCall{Name: "tickets_read"})
 	require.ErrorIs(t, err, toolgateway.ErrDenied, "attempt 3: over the limit")
 	require.ErrorContains(t, err, "tool call limit reached")
 
@@ -120,45 +124,40 @@ func TestCall_ToolCallLimitCountsEveryAttempt(t *testing.T) {
 	assert.Equal(t, "tool call limit reached", audit.Records[3].Reason)
 }
 
-// approveAfterCancel cancels the run's context, then approves: an answer
-// that raced the run's cancellation.
-type approveAfterCancel struct {
-	cancel context.CancelCauseFunc
-}
-
-func (a approveAfterCancel) Approve(context.Context, toolgateway.Request, []string) (toolgateway.Approval, error) {
-	a.cancel(errors.New("cancelled by bob"))
-	return toolgateway.Approval{Approved: true, Approver: "alice", Reason: "ok"}, nil
-}
-
-// TestCall_CancellationWinsOverAnApproval: a call is never executed once its
-// run is cancelled, even if an approval arrives at the same moment.
-func TestCall_CancellationWinsOverAnApproval(t *testing.T) {
-	ctx, cancel := context.WithCancelCause(context.Background())
-	defer cancel(nil)
+// TestResume_CancellationWinsOverAnApproval: a call is never executed once
+// its run is cancelled, even if it resumes with an approval that arrived at
+// the same moment.
+func TestResume_CancellationWinsOverAnApproval(t *testing.T) {
 	label := &gatewaytest.Tool{Name: "tickets_label"}
 	audit := &gatewaytest.Audit{}
 	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+		RunID:        "r1",
 		Redactor:     gatewaytest.NoSecrets,
 		Harness:      "triage",
 		MaxToolCalls: 100,
 		Policy: &gatewaytest.Policy{Verdicts: map[string]toolgateway.Verdict{
 			"tickets_label": {Decision: toolgateway.RequireApproval, Reasons: []string{"writes need a human"}},
 		}},
-		Approver: approveAfterCancel{cancel: cancel},
-		Granted:  []string{"tickets_label"},
-		Servers:  gatewaytest.Servers(label),
-		Audit:    audit,
+		Granted: []string{"tickets_label"},
+		Servers: gatewaytest.Servers(label),
+		Audit:   audit,
 	})
 	require.NoError(t, err)
+	call := toolgateway.ToolCall{Name: "tickets_label", Args: json.RawMessage(`{}`)}
+	_, err = gw.Call(context.Background(), call)
+	var suspended *toolgateway.Suspended
+	require.ErrorAs(t, err, &suspended)
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(errors.New("cancelled by bob"))
 
-	_, err = gw.Start().Call(ctx, toolgateway.ToolCall{Name: "tickets_label", Args: json.RawMessage(`{}`)})
+	_, err = gw.Resume(ctx, suspended.CallID, call, toolgateway.Approval{Approved: true, Approver: "alice", Reason: "ok"})
 
 	require.ErrorIs(t, err, toolgateway.ErrDenied)
 	assert.Zero(t, label.Calls, "nothing runs after the run was cancelled")
-	require.Len(t, audit.Records, 2)
-	assert.Equal(t, toolgateway.EventApproval, audit.Records[1].Event)
-	assert.Equal(t, toolgateway.Deny, audit.Records[1].Decision)
-	assert.Equal(t, "approval failed: cancelled by bob", audit.Records[1].Reason)
-	assert.Equal(t, "alice", audit.Records[1].Approver, "who answered is still recorded")
+	require.Len(t, audit.Records, 3)
+	last := audit.Records[2]
+	assert.Equal(t, toolgateway.EventApproval, last.Event)
+	assert.Equal(t, toolgateway.Deny, last.Decision)
+	assert.Equal(t, "approval failed: cancelled by bob", last.Reason)
+	assert.Equal(t, "alice", last.Approver, "who answered is still recorded")
 }

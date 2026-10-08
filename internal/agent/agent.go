@@ -1,7 +1,7 @@
-// Package agent runs harnesses. An Agent holds a harness and its wiring; each
-// Run gets a fresh run ID and its own tool gateway, built from the harness
-// grants. The agent never calls a tool itself: every tool call the model makes
-// goes through that gateway.
+// Package agent runs harnesses. An Agent is one run of a harness, under the
+// run ID its caller minted, with a tool gateway of its own built from the
+// harness grants. The agent never calls a tool itself: every tool call the
+// model makes goes through that gateway.
 package agent
 
 import (
@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"sync/atomic"
 
 	"github.com/jangraefen/agenty/internal/harness"
 	"github.com/jangraefen/agenty/internal/model"
@@ -28,8 +27,15 @@ import (
 // step the harness allows.
 var ErrMaxSteps = errors.New("max steps reached")
 
-// Config wires a harness to a model, tools and an audit log.
+// Config wires one run of a harness to a model, tools and an audit log.
 type Config struct {
+	// RunID identifies the run; every audit record of the run carries it. It
+	// is required.
+	RunID string
+	// Records is the audit log of a run that resumes after it stopped at a
+	// call waiting for approval: the run's call counts are restored from it,
+	// so its limits and policy see the calls it made before.
+	Records []toolgateway.Record
 	Harness *harness.Harness
 	Model   model.Model
 	// Servers are tool servers, such as MCP servers, by name. Every granted
@@ -39,10 +45,7 @@ type Config struct {
 	// Policy is central policy. It applies to every run, and the harness
 	// policy, if any, can only tighten it.
 	Policy []policy.Module
-	// Approver answers calls that policy marks as requiring approval. Without
-	// one, such calls are denied.
-	Approver toolgateway.Approver
-	Audit    toolgateway.Audit
+	Audit  toolgateway.Audit
 	// Redactor holds credentials, such as the model API key and MCP server
 	// tokens, that the gateway redacts from everything it hands on. It is
 	// required.
@@ -62,29 +65,34 @@ type Transcript interface {
 	Append(ctx context.Context, runID string, index int, msg model.Message) error
 }
 
-// Agent runs one harness. It holds the harness, the model and the tool gateway,
-// but no run state, so it can run many times, also at once.
+// Agent is one run of a harness: it holds what the run needs of the harness,
+// the model and the run's tool gateway. Run it once, with Continue, or
+// with Resume if the run stopped at a call waiting for approval, then Close
+// it.
 type Agent struct {
-	harness    harness.Harness
-	model      model.Model
-	gateway    *toolgateway.Gateway
-	transcript Transcript
+	// modelName, instructions and maxSteps are the harness's.
+	modelName    harness.Model
+	instructions string
+	maxSteps     int
+	model        model.Model
+	gateway      *toolgateway.Gateway
+	transcript   Transcript
 }
 
 // Result is the outcome of a run. On error it holds what happened up to the
 // failure.
 type Result struct {
-	RunID    string
 	Output   string
 	Steps    int
 	Messages []model.Message
 }
 
 // New validates cfg, compiles central and harness policy as separate layers,
-// builds the tool gateway from the harness grants, which starts the tool
-// servers they need, and returns an Agent. Close the Agent to stop them. The
-// harness is copied and the gateway copies the grants, so later changes to the
-// harness do not affect the agent.
+// builds the run's tool gateway from the harness grants, which starts the
+// tool servers they need, and returns an Agent. Close the Agent to stop them.
+// The agent keeps the harness's model, instructions and step limit, the
+// gateway its grants and tool call limit, and policy is compiled here, so
+// later changes to the harness do not affect the agent.
 func New(ctx context.Context, cfg Config) (*Agent, error) {
 	switch {
 	case cfg.Harness == nil:
@@ -106,27 +114,35 @@ func New(ctx context.Context, cfg Config) (*Agent, error) {
 		return nil, fmt.Errorf("agent: %w", err)
 	}
 	gw, err := toolgateway.New(ctx, toolgateway.Config{
+		RunID:        cfg.RunID,
+		Records:      cfg.Records,
 		Harness:      cfg.Harness.Name,
 		Granted:      cfg.Harness.Tools,
 		Servers:      cfg.Servers,
 		MaxToolCalls: cfg.Harness.Limits.MaxToolCalls,
 		Policy:       engine,
-		Approver:     cfg.Approver,
 		Audit:        cfg.Audit,
 		Redactor:     cfg.Redactor,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("agent: %w", err)
 	}
-	return &Agent{harness: *cfg.Harness, model: cfg.Model, gateway: gw, transcript: cfg.Transcript}, nil
+	return &Agent{
+		modelName:    cfg.Harness.Model,
+		instructions: cfg.Harness.Instructions,
+		maxSteps:     cfg.Harness.Limits.MaxSteps,
+		model:        cfg.Model,
+		gateway:      gw,
+		transcript:   cfg.Transcript,
+	}, nil
 }
 
-// Tools describes the tools runs may call: the granted ones, sorted by name.
-func (a *Agent) Tools() []toolgateway.Definition {
-	return a.gateway.Definitions()
+// ID identifies the run; every audit record of the run carries it.
+func (a *Agent) ID() string {
+	return a.gateway.ID()
 }
 
-// PromptDigest identifies what every run of the agent sends the model before
+// PromptDigest identifies what the run sends the model before
 // the conversation: the model, the instructions and the tools. Two agents
 // with the same digest send the same. The model is identified by its name:
 // a name whose model the provider changes is taken as the same model, which
@@ -138,7 +154,7 @@ func (a *Agent) PromptDigest() string {
 		Model        harness.Model
 		Instructions string
 		Tools        []tool
-	}{Model: a.harness.Model, Instructions: a.harness.Instructions}
+	}{Model: a.modelName, Instructions: a.instructions}
 	for _, def := range a.gateway.Definitions() {
 		prompt.Tools = append(prompt.Tools, tool{def.Name, def.Description, string(def.InputSchema)})
 	}
@@ -153,31 +169,6 @@ func (a *Agent) Close() error {
 		return fmt.Errorf("agent: %w", err)
 	}
 	return nil
-}
-
-// Run starts a run and executes it on input; see Run.Execute.
-func (a *Agent) Run(ctx context.Context, input string) (Result, error) {
-	return a.Start().Execute(ctx, input)
-}
-
-// Start begins a run without executing it. Its ID is known before it
-// executes, so a caller can store the run before any audit record refers to
-// it.
-func (a *Agent) Start() *Run {
-	return &Run{agent: a, gateway: a.gateway.Start()}
-}
-
-// StartAs is Start for a run whose ID was minted before, such as a run
-// stored before it executes.
-func (a *Agent) StartAs(id string) *Run {
-	return &Run{agent: a, gateway: a.gateway.StartAs(id)}
-}
-
-// Restore is StartAs for a run that stopped at a call waiting for approval:
-// its call counts are restored from records, its audit log, so the run's
-// limits and policy see the calls it made before. Resume it with Run.Resume.
-func (a *Agent) Restore(id string, records []toolgateway.Record) *Run {
-	return &Run{agent: a, gateway: a.gateway.Restore(id, records)}
 }
 
 // Suspended is the error a run returns when it stops at a call that waits
@@ -207,59 +198,42 @@ type Resumption struct {
 	Note string
 }
 
-// Run is one run of an agent, in a gateway run of its own.
-type Run struct {
-	agent    *Agent
-	gateway  *toolgateway.Run
-	executed atomic.Bool
-}
-
-// ID identifies the run; every audit record of the run carries it.
-func (r *Run) ID() string {
-	return r.gateway.ID()
-}
-
-// Execute executes the agent loop for input, once. Each step is one model
-// call. Tool calls go through the run's gateway; denials and tool errors are
-// reported back to the model, while model errors, audit failures and
-// cancellation end the run. If the model still asks for tools on the last
-// allowed step, those calls are not executed, which the transcript records
-// as their results, and Execute returns ErrMaxSteps.
-func (r *Run) Execute(ctx context.Context, input string) (Result, error) {
-	return r.Continue(ctx, nil, input)
-}
-
-// Continue executes the run as the next turn of a conversation: the model
-// sees history, the messages of the earlier runs, before input. The history
-// must start with an input and end with the model's answer, a reply without
-// tool calls. Only this run's messages are recorded and returned, and the
-// harness's limits count this run's steps and tool calls alone. Otherwise it
-// is Execute.
-func (r *Run) Continue(ctx context.Context, history []model.Message, input string) (Result, error) {
+// Continue executes the agent loop for input, as the next turn of a
+// conversation: the model sees history, the messages of the earlier runs, if
+// any, before input. The history must start with an input and end with the
+// model's answer, a reply without tool calls. Only this run's messages are
+// recorded and returned, and the harness's limits count this run's steps and
+// tool calls alone.
+//
+// Each step is one model call. Tool calls go through the run's gateway;
+// denials and tool errors are reported back to the model, while model
+// errors, audit failures and cancellation end the run, and a call that waits
+// for approval stops it with a *Suspended error. If the model still asks for
+// tools on the last allowed step, those calls are not executed, which the
+// transcript records as their results, and Continue returns ErrMaxSteps.
+func (a *Agent) Continue(ctx context.Context, history []model.Message, input string) (Result, error) {
 	if input == "" {
 		return Result{}, errors.New("agent: input is required")
 	}
 	if err := checkHistory(history); err != nil {
 		return Result{}, err
 	}
-	if r.executed.Swap(true) {
-		return Result{}, errors.New("agent: run already executed")
-	}
-	res := Result{RunID: r.gateway.ID()}
-	add := r.adder(ctx, &res)
+	var res Result
+	add := a.adder(ctx, &res)
 	if err := add(model.Message{Role: model.RoleUser, Text: input}); err != nil {
 		return res, err
 	}
-	return r.loop(ctx, history, &res, add, 1)
+	return a.loop(ctx, history, &res, add, 1)
 }
 
 // Resume executes a run that stopped at a call waiting for approval, as
 // Continue returned it with a *Suspended error, once the call is answered.
 // own holds the run's messages so far, which end with the reply whose call
 // waits; the call runs, or not, as s says, then the calls after it, and the
-// run goes on from there. The harness's limits count the run's steps and tool
-// calls before the suspension too, if the run was restored with Restore.
-func (r *Run) Resume(ctx context.Context, history, own []model.Message, s Resumption) (Result, error) {
+// run goes on from there. The harness's limits count the run's steps before
+// the suspension too, and its tool calls if the agent was built with the
+// run's audit log as Config.Records.
+func (a *Agent) Resume(ctx context.Context, history, own []model.Message, s Resumption) (Result, error) {
 	if err := checkHistory(history); err != nil {
 		return Result{}, err
 	}
@@ -273,18 +247,15 @@ func (r *Run) Resume(ctx context.Context, history, own []model.Message, s Resump
 	case s.Call < 0 || s.Call >= len(last.ToolCalls):
 		return Result{}, fmt.Errorf("agent: the run's last reply has no call %d", s.Call)
 	}
-	if r.executed.Swap(true) {
-		return Result{}, errors.New("agent: run already executed")
-	}
-	res := Result{RunID: r.gateway.ID(), Messages: slices.Clone(own)}
+	res := Result{Messages: slices.Clone(own)}
 	for _, msg := range own {
 		if msg.Role == model.RoleAssistant {
 			res.Steps++
 		}
 	}
-	add := r.adder(ctx, &res)
+	add := a.adder(ctx, &res)
 	c := last.ToolCalls[s.Call]
-	out, err := r.gateway.Resume(ctx, s.CallID, toolgateway.ToolCall{Name: c.Name, Args: c.Args}, s.Answer)
+	out, err := a.gateway.Resume(ctx, s.CallID, toolgateway.ToolCall{Name: c.Name, Args: c.Args}, s.Answer)
 	if errors.Is(err, toolgateway.ErrAudit) {
 		return res, fmt.Errorf("agent: step %d: %w", res.Steps, err)
 	}
@@ -292,26 +263,25 @@ func (r *Run) Resume(ctx context.Context, history, own []model.Message, s Resump
 	if s.Note != "" {
 		result.Content += "\n\n" + s.Note
 	}
-	results, err := callTools(ctx, r.gateway, last.ToolCalls, s.Call+1, append(slices.Clone(s.Results), result))
+	results, err := callTools(ctx, a.gateway, last.ToolCalls, s.Call+1, append(slices.Clone(s.Results), result))
 	if err != nil {
 		return res, fmt.Errorf("agent: step %d: %w", res.Steps, err)
 	}
 	if err := add(model.Message{Role: model.RoleUser, ToolResults: results}); err != nil {
 		return res, err
 	}
-	return r.loop(ctx, history, &res, add, res.Steps+1)
+	return a.loop(ctx, history, &res, add, res.Steps+1)
 }
 
 // adder returns a function that appends a message to the run's conversation
 // in res and records it.
-func (r *Run) adder(ctx context.Context, res *Result) func(model.Message) error {
-	a := r.agent
+func (a *Agent) adder(ctx context.Context, res *Result) func(model.Message) error {
 	return func(msg model.Message) error {
 		res.Messages = append(res.Messages, msg)
 		if a.transcript == nil {
 			return nil
 		}
-		if err := a.transcript.Append(ctx, r.gateway.ID(), len(res.Messages)-1, msg); err != nil {
+		if err := a.transcript.Append(ctx, a.gateway.ID(), len(res.Messages)-1, msg); err != nil {
 			return fmt.Errorf("agent: transcript: %w", err)
 		}
 		return nil
@@ -321,17 +291,16 @@ func (r *Run) adder(ctx context.Context, res *Result) func(model.Message) error 
 // loop runs the agent loop from step first on: it asks the model, after
 // history and the run's messages in res, and runs the tool calls it makes,
 // until it answers or the harness's step limit is reached.
-func (r *Run) loop(ctx context.Context, history []model.Message, res *Result, add func(model.Message) error, first int) (Result, error) {
-	a, run := r.agent, r.gateway
+func (a *Agent) loop(ctx context.Context, history []model.Message, res *Result, add func(model.Message) error, first int) (Result, error) {
 	tools := a.gateway.Definitions()
 	if len(tools) == 0 {
 		history = callsAsText(history)
 	}
-	maxSteps := a.harness.Limits.MaxSteps
+	maxSteps := a.maxSteps
 
 	for step := first; step <= maxSteps; step++ {
 		msg, err := a.model.Generate(ctx, model.Request{
-			System:   a.harness.Instructions,
+			System:   a.instructions,
 			Messages: append(slices.Clip(history), res.Messages...),
 			Tools:    tools,
 			History:  len(history),
@@ -357,7 +326,7 @@ func (r *Run) loop(ctx context.Context, history []model.Message, res *Result, ad
 			}
 			break
 		}
-		results, err := callTools(ctx, run, msg.ToolCalls, 0, nil)
+		results, err := callTools(ctx, a.gateway, msg.ToolCalls, 0, nil)
 		if err != nil {
 			return *res, fmt.Errorf("agent: step %d: %w", step, err)
 		}
@@ -433,13 +402,13 @@ func callsAsText(history []model.Message) []model.Message {
 // error results for the model; audit failures and cancellation stop the run
 // before any further call, and a call that waits for approval suspends it
 // with a *Suspended error.
-func callTools(ctx context.Context, run *toolgateway.Run, calls []model.ToolCall, from int, results []model.ToolResult) ([]model.ToolResult, error) {
+func callTools(ctx context.Context, gw *toolgateway.Gateway, calls []model.ToolCall, from int, results []model.ToolResult) ([]model.ToolResult, error) {
 	for i := from; i < len(calls); i++ {
 		c := calls[i]
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		out, err := run.Call(ctx, toolgateway.ToolCall{Name: c.Name, Args: c.Args})
+		out, err := gw.Call(ctx, toolgateway.ToolCall{Name: c.Name, Args: c.Args})
 		var suspended *toolgateway.Suspended
 		switch {
 		case errors.Is(err, toolgateway.ErrAudit):

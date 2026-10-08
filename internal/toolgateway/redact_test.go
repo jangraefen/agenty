@@ -20,9 +20,10 @@ const (
 	quoted   = `pa"ss\word-123`
 )
 
-func newRedactingRun(t *testing.T, tool *gatewaytest.Tool, audit *gatewaytest.Audit) *toolgateway.Run {
+func newRedactingGateway(t *testing.T, tool *gatewaytest.Tool, audit *gatewaytest.Audit) *toolgateway.Gateway {
 	t.Helper()
 	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+		RunID:        "r1",
 		Granted:      []string{tool.Name},
 		Servers:      gatewaytest.Servers(tool),
 		MaxToolCalls: 100,
@@ -31,7 +32,7 @@ func newRedactingRun(t *testing.T, tool *gatewaytest.Tool, audit *gatewaytest.Au
 		Redactor:     redactor(t, apiKey, apiKeyV2, quoted),
 	})
 	require.NoError(t, err)
-	return gw.Start()
+	return gw
 }
 
 func TestCall_RedactsSecretsFromResults(t *testing.T) {
@@ -50,9 +51,9 @@ func TestCall_RedactsSecretsFromResults(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			audit := &gatewaytest.Audit{}
-			run := newRedactingRun(t, &gatewaytest.Tool{Name: "vault_read", Result: tt.result}, audit)
+			gw := newRedactingGateway(t, &gatewaytest.Tool{Name: "vault_read", Result: tt.result}, audit)
 
-			got, err := run.Call(context.Background(), toolgateway.ToolCall{Name: "vault_read"})
+			got, err := gw.Call(context.Background(), toolgateway.ToolCall{Name: "vault_read"})
 
 			require.NoError(t, err)
 			assert.JSONEq(t, tt.want, string(got))
@@ -64,6 +65,7 @@ func TestCall_RedactsSecretsFromResults(t *testing.T) {
 
 func TestCall_RedactedResultThatIsNoLongerJSONBecomesAString(t *testing.T) {
 	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+		RunID:        "r1",
 		Granted:      []string{"vault_read"},
 		Servers:      gatewaytest.Servers(&gatewaytest.Tool{Name: "vault_read", Result: json.RawMessage(`{"pin":12345678}`)}),
 		MaxToolCalls: 100,
@@ -72,9 +74,8 @@ func TestCall_RedactedResultThatIsNoLongerJSONBecomesAString(t *testing.T) {
 		Redactor:     redactor(t, "12345678"),
 	})
 	require.NoError(t, err)
-	run := gw.Start()
 
-	got, err := run.Call(context.Background(), toolgateway.ToolCall{Name: "vault_read"})
+	got, err := gw.Call(context.Background(), toolgateway.ToolCall{Name: "vault_read"})
 
 	require.NoError(t, err)
 	assert.JSONEq(t, `"{\"pin\":[redacted]}"`, string(got))
@@ -83,9 +84,9 @@ func TestCall_RedactedResultThatIsNoLongerJSONBecomesAString(t *testing.T) {
 func TestCall_RedactsSecretsFromToolErrorsAndArgs(t *testing.T) {
 	cause := errors.New("login failed for " + apiKey)
 	audit := &gatewaytest.Audit{}
-	run := newRedactingRun(t, &gatewaytest.Tool{Name: "vault_read", Err: cause}, audit)
+	gw := newRedactingGateway(t, &gatewaytest.Tool{Name: "vault_read", Err: cause}, audit)
 
-	_, err := run.Call(context.Background(), toolgateway.ToolCall{Name: "vault_read", Args: json.RawMessage(`{"key":"` + apiKey + `"}`)})
+	_, err := gw.Call(context.Background(), toolgateway.ToolCall{Name: "vault_read", Args: json.RawMessage(`{"key":"` + apiKey + `"}`)})
 
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), apiKey)
@@ -107,6 +108,7 @@ func TestCall_RedactsSecretsWithHTMLCharacters(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+				RunID:        "r1",
 				Granted:      []string{"vault_read"},
 				Servers:      gatewaytest.Servers(&gatewaytest.Tool{Name: "vault_read", Result: result}),
 				MaxToolCalls: 100,
@@ -115,9 +117,8 @@ func TestCall_RedactsSecretsWithHTMLCharacters(t *testing.T) {
 				Redactor:     redactor(t, htmlSecret),
 			})
 			require.NoError(t, err)
-			run := gw.Start()
 
-			got, err := run.Call(context.Background(), toolgateway.ToolCall{Name: "vault_read"})
+			got, err := gw.Call(context.Background(), toolgateway.ToolCall{Name: "vault_read"})
 
 			require.NoError(t, err)
 			assert.JSONEq(t, `{"v":"[redacted]"}`, string(got))
@@ -125,27 +126,34 @@ func TestCall_RedactsSecretsWithHTMLCharacters(t *testing.T) {
 	}
 }
 
-func TestCall_ApproverSeesRedactedArgsAndReasons(t *testing.T) {
-	approver := &gatewaytest.Approver{Approval: toolgateway.Approval{Approved: true, Approver: "alice"}}
+// TestCall_ASuspensionHoldsNoSecret: the approver is a person, so the
+// request a suspended call waits with names no secret, neither in its
+// arguments nor in the reasons policy gave. A secret in the arguments
+// denies the call instead, see TestInvariant_ACallHoldingASecretNeverWaits.
+func TestCall_ASuspensionHoldsNoSecret(t *testing.T) {
+	audit := &gatewaytest.Audit{}
 	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+		RunID:        "r1",
 		Granted:      []string{"vault_write"},
 		Servers:      gatewaytest.Servers(&gatewaytest.Tool{Name: "vault_write"}),
 		MaxToolCalls: 100,
 		Policy: &gatewaytest.Policy{Verdicts: map[string]toolgateway.Verdict{
 			"vault_write": {Decision: toolgateway.RequireApproval, Reasons: []string{"writes " + apiKey + " to the vault"}},
 		}},
-		Approver: approver,
-		Audit:    &gatewaytest.Audit{},
+		Audit:    audit,
 		Redactor: redactor(t, apiKey),
 	})
 	require.NoError(t, err)
 
-	_, err = gw.Start().Call(context.Background(), toolgateway.ToolCall{Name: "vault_write", Args: json.RawMessage(`{"key":"` + apiKey + `"}`)})
+	_, err = gw.Call(context.Background(), toolgateway.ToolCall{Name: "vault_write", Args: json.RawMessage(`{"key":"vault-key-7"}`)})
 
-	require.NoError(t, err)
-	require.Len(t, approver.Calls, 1)
-	assert.JSONEq(t, `{"key":"[redacted]"}`, string(approver.Calls[0].Request.Args), "a person sees the arguments, never the secret")
-	assert.Equal(t, []string{"writes [redacted] to the vault"}, approver.Calls[0].Reasons)
+	var suspended *toolgateway.Suspended
+	require.ErrorAs(t, err, &suspended)
+	assert.JSONEq(t, `{"key":"vault-key-7"}`, string(suspended.Request.Args))
+	assert.Equal(t, []string{"writes [redacted] to the vault"}, suspended.Reasons, "a person sees the reasons, never the secret")
+	assert.NotContains(t, suspended.Error(), apiKey)
+	require.Len(t, audit.Records, 1)
+	assert.Equal(t, "policy: writes [redacted] to the vault", audit.Records[0].Reason)
 }
 
 // redactor returns a Redactor for secrets.

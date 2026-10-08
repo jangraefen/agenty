@@ -53,6 +53,20 @@ test("lists what the user did, newest first, and loads more", async () => {
   expect(started).toHaveTextContent("notes v2");
   expect(within(table).queryByRole("columnheader", { name: "Who" })).not.toBeInTheDocument();
 
+  if (approval === undefined) {
+    throw new Error("no row for the approval");
+  }
+  const toggle = within(approval).getByRole("button", { name: "Details" });
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  expect(within(table).queryByText(/"call_id": "c1"/)).not.toBeInTheDocument();
+  await user.click(toggle);
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
+  const details = within(table).getByText(/"call_id": "c1"/);
+  expect(details.closest("td")).toHaveAttribute("colspan", "5");
+  expect(within(table).getAllByRole("row")[2]).toContainElement(details);
+  await user.click(toggle);
+  expect(within(table).queryByText(/"call_id": "c1"/)).not.toBeInTheDocument();
+
   await user.click(screen.getByRole("button", { name: "Load more" }));
   expect(await within(table).findByText("Harness changed")).toBeInTheDocument();
   expect(within(table).getByText("version 2")).toBeInTheDocument();

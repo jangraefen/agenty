@@ -140,7 +140,7 @@ function Header({
             · {workspace}
           </p>
         </div>
-        {running && (
+        {running && !readOnly && (
           <span className="ml-auto">
             <Button
               variant="destructive"

@@ -319,3 +319,39 @@ func TestApprovals_LeavingCancelsTheRunsOfWhoLeft(t *testing.T) {
 	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+alices.ID, nil, &read), "alice still reads her run")
 	assert.Equal(t, api.RunStatusCancelled, read.Status)
 }
+
+// TestApprovals_LeavingCancelsQueuedRuns: a queued run of someone who left,
+// and one in a workspace the config no longer has, are cancelled at the
+// start, and no agent ever runs them.
+func TestApprovals_LeavingCancelsQueuedRuns(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, options{})
+	f.putNotes(t)
+	v, err := f.store.Harness(ctx, "home", "notes")
+	require.NoError(t, err)
+	gone, err := f.store.PutHarness(ctx, "gone", "bob", notes())
+	require.NoError(t, err)
+	// Queued while no server runs, so none takes them up before the start.
+	f.server.Close()
+	f.http.Close()
+	for _, r := range []store.NewRun{
+		{ID: "alices", HarnessVersionID: v.ID, Input: "x", StartedBy: "alice"},
+		{ID: "bobs-gone", HarnessVersionID: gone.ID, Input: "x", StartedBy: "bob"},
+	} {
+		_, err := f.store.CreateRun(ctx, r)
+		require.NoError(t, err)
+	}
+	m := f.script(modeltest.Reply("never"))
+	f.serve(t, options{workspaces: map[string]config.Workspace{"home": {Members: []string{"bob", "dana"}}}})
+
+	for _, tt := range []struct{ workspace, id, why string }{
+		{"home", "alices", "alice is no longer a member of home"},
+		{"gone", "bobs-gone", "bob is no longer a member of gone"},
+	} {
+		run, err := f.store.Run(ctx, tt.workspace, tt.id)
+		require.NoError(t, err)
+		assert.Equal(t, store.RunCancelled, run.Status, tt.id)
+		assert.Contains(t, run.Error, tt.why)
+	}
+	assert.Empty(t, m.Requests(), "no agent ran")
+}

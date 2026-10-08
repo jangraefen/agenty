@@ -800,10 +800,13 @@ func TestInvariant_WorkspacesAreSeparate(t *testing.T) {
 		}
 		var inGone api.Run
 		assert.Equal(t, http.StatusOK, f.do(t, http.MethodGet, "/v1/workspaces/gone/runs/alices-gone", nil, &inGone), "a workspace the config no longer has is left too")
-		for _, path := range []string{home + "/runs/" + run.ID, home + "/runs/" + run.ID + "/transcript", "/v1/workspaces/ghost/runs/carols", "/v1/workspaces/gone/runs/alices-gone"} {
-			var e api.Error
-			assert.Equal(t, http.StatusNotFound, f.doAs(t, carolToken, http.MethodGet, path, nil, &e), path)
-			assert.Equal(t, "workspace "+strings.Split(path, "/")[3]+": not found", e.Error, "as for any non-member: %s", path)
+		for _, run := range []string{home + "/runs/" + run.ID, "/v1/workspaces/ghost/runs/carols", "/v1/workspaces/gone/runs/alices-gone"} {
+			for _, read := range []string{"", "/conversation", "/transcript", "/events"} {
+				path := run + read
+				var e api.Error
+				assert.Equal(t, http.StatusNotFound, f.doAs(t, carolToken, http.MethodGet, path, nil, &e), path)
+				assert.Equal(t, "workspace "+strings.Split(path, "/")[3]+": not found", e.Error, "as for any non-member: %s", path)
+			}
 		}
 	})
 

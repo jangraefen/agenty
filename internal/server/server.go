@@ -902,9 +902,11 @@ func (s *Server) cancelIdle(ctx context.Context, h *hub, id string, by cancelled
 // cancelLeft cancels the queued or waiting run r, at a start, as its owner
 // is no longer a member of its workspace, and records the calls it did not
 // run, so the conversation can go on if they come back. It fails unless the
-// run was cancelled and recorded: the server must not start with it still
-// to be taken up.
+// run was cancelled: the server must not start with it still to be taken
+// up. A failure to record the calls, once the run is cancelled, is not
+// retried at the next start.
 func (s *Server) cancelLeft(ctx context.Context, h *hub, r store.IdleRun) error {
+	defer h.cancel(nil)
 	defer s.unregister(r.ID)
 	by := cancelledBy("the server, as " + r.Owner + " is no longer a member of " + r.Workspace)
 	switch cancelled, err := s.cfg.Store.CancelIdleRun(ctx, r.ID, by.Error()); {

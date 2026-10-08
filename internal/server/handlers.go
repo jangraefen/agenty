@@ -315,11 +315,12 @@ func apiRun(r store.Run) api.Run {
 // stops; either is recorded as cancelled by the user. The response may come
 // before that, so the run's events tell when it ended.
 func (s handlers) CancelRun(c *gin.Context, workspace, id string) {
+	h := s.hub(workspace, id) // before the run: see StreamRunEvents
 	run, ok := s.ownRun(c, workspace, id)
 	if !ok {
 		return
 	}
-	if h := s.hub(workspace, id); h != nil {
+	if h != nil {
 		// A cancel stops an agent: it goes ahead even when the log cannot
 		// record the request. How the run ended, and by whom, is recorded
 		// as it ends.
@@ -385,11 +386,14 @@ func (s handlers) GetRunTranscript(c *gin.Context, workspace, id string) {
 // stream follows it until it finishes; a finished run's stream replays its
 // audit records and its end from the store.
 func (s handlers) StreamRunEvents(c *gin.Context, workspace, id string) {
+	// The hub is looked up before the run is read: a run's end is stored
+	// before its hub is unregistered, so a run without a hub is read as
+	// finished, unless another server runs it.
+	h := s.hub(workspace, id)
 	run, ok := s.ownRun(c, workspace, id)
 	if !ok {
 		return
 	}
-	h := s.hub(workspace, id)
 	if h == nil {
 		s.replayEvents(c, run)
 		return

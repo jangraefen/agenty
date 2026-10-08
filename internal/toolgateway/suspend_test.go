@@ -3,6 +3,7 @@ package toolgateway_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -204,4 +205,19 @@ func TestRestore_IgnoresOtherRuns(t *testing.T) {
 	_, err = restored.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_read"})
 
 	require.NoError(t, err, "another run's calls do not count")
+}
+
+func TestCall_ACancelledRunIsNotSuspended(t *testing.T) {
+	s := newSuspending(t, 10, gatewaytest.NoSecrets)
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(errors.New("cancelled by ana"))
+
+	_, err := s.gw.Start().Call(ctx, toolgateway.ToolCall{Name: "tickets_close", Args: json.RawMessage(`{}`)})
+
+	require.ErrorIs(t, err, toolgateway.ErrDenied)
+	var suspended *toolgateway.Suspended
+	require.NotErrorAs(t, err, &suspended)
+	last := s.audit.Records[len(s.audit.Records)-1]
+	assert.Equal(t, toolgateway.EventApproval, last.Event)
+	assert.Equal(t, "approval failed: cancelled by ana", last.Reason, "the cancellation is the cause")
 }

@@ -201,7 +201,8 @@ func (g *Gateway) Start() *Run {
 // Restore is StartAs for a run that has made calls before, such as one that
 // resumes after it was suspended: its call counts are restored from records,
 // its audit log. Every call with a decision is an attempt, denied ones
-// included, and every call with a result was executed.
+// included, and every call with a result was executed. A call whose result
+// could not be recorded ended its run, which is then not restored.
 func (g *Gateway) Restore(id string, records []Record) *Run {
 	r := g.StartAs(id)
 	attempted := map[string]bool{}
@@ -274,14 +275,17 @@ func (r *Run) Call(ctx context.Context, call ToolCall) (json.RawMessage, error) 
 			reasons[i] = g.redact.String(reason)
 		}
 		approval, err := g.approver.Approve(ctx, req, reasons)
-		if errors.Is(err, ErrSuspend) && ctx.Err() == nil {
+		switch {
+		case !errors.Is(err, ErrSuspend):
+		case ctx.Err() != nil:
+			// A cancelled run is not suspended: it ends.
+			err = context.Cause(ctx)
+		case !bytes.Equal(req.Args, call.Args):
 			// A suspended call runs later as it is stored, redacted, so one
 			// whose arguments hold a secret could not run as it was asked.
-			if !bytes.Equal(req.Args, call.Args) {
-				err = errHoldsSecret
-			} else {
-				return nil, &Suspended{CallID: rec.CallID, Request: req, Reasons: reasons}
-			}
+			err = errHoldsSecret
+		default:
+			return nil, &Suspended{CallID: rec.CallID, Request: req, Reasons: reasons}
 		}
 		if err := r.recordAnswer(ctx, &rec, approval, err); err != nil {
 			return nil, err

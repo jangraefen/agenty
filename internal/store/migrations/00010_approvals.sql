@@ -37,9 +37,11 @@ CREATE INDEX approvals_of_run ON approvals (run_id, created_at);
 
 -- +goose Down
 
-DROP TABLE approvals;
+-- A run that waited, or is queued to resume after an answer, cannot resume
+-- without its request.
 UPDATE runs SET status = 'failed', error = 'waiting for approval at a downgrade', finished_at = now()
-WHERE status = 'waiting';
+WHERE status = 'waiting' OR (status = 'queued' AND id IN (SELECT run_id FROM approvals));
+DROP TABLE approvals;
 ALTER TABLE runs DROP CONSTRAINT runs_status_check;
 ALTER TABLE runs ADD CONSTRAINT runs_status_check
     CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled'));

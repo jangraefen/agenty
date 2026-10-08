@@ -324,9 +324,12 @@ func (s *Store) CancelIdleRun(ctx context.Context, id, why string) (bool, error)
 		return false, fmt.Errorf("store: run %s: %w", id, err)
 	}
 	q := s.queries.WithTx(tx)
-	n, err := q.CancelIdleRun(ctx, db.CancelIdleRunParams{ID: id, Error: why})
-	if err == nil && n > 0 {
-		err = q.WithdrawApprovals(ctx, db.WithdrawApprovalsParams{RunID: id, Reason: why})
+	// The request first, then the run, as AnswerApproval and
+	// ExpireApprovals lock them.
+	err = q.WithdrawApprovals(ctx, db.WithdrawApprovalsParams{RunID: id, Reason: why})
+	var n int64
+	if err == nil {
+		n, err = q.CancelIdleRun(ctx, db.CancelIdleRunParams{ID: id, Error: why})
 	}
 	if err != nil {
 		return false, errors.Join(fmt.Errorf("store: run %s: %w", id, err), tx.Rollback(ctx))

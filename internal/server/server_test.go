@@ -385,7 +385,13 @@ func TestInvariant_ServerCredentialsNeverLeak(t *testing.T) {
 	assert.Equal(t, 1, f.write.Calls, "the approved call ran, and failed")
 	require.Equal(t, "scripted", transcript[len(transcript)-1].Provider.Name)
 	assert.JSONEq(t, `{"thinking":"I saw [redacted]"}`, string(transcript[len(transcript)-1].Provider.Data), "so is the provider's form of a reply")
-	for _, data := range append(seen, string(storedJSON), string(auditJSON), string(transcriptJSON), f.logs.String()) {
+	approval, ok, err := f.store.LatestApproval(context.Background(), run.ID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	approvalJSON, err := json.Marshal(approval)
+	require.NoError(t, err)
+	assert.Contains(t, string(approvalJSON), "[redacted]", "the results the request keeps are redacted")
+	for _, data := range append(seen, string(storedJSON), string(auditJSON), string(transcriptJSON), string(approvalJSON), f.logs.String()) {
 		assert.NotContains(t, data, token)
 	}
 	assert.Contains(t, strings.Join(seen, "\n"), "[redacted]")

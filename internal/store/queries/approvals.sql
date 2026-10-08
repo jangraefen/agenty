@@ -54,6 +54,10 @@ ORDER BY expires_at
 LIMIT 1;
 
 -- name: WithdrawApprovals :exec
+-- Withdraws the pending request of a run that is queued or waiting. It locks
+-- the request before the run, as answering and expiring do, so they never
+-- wait for each other in a circle.
 UPDATE approvals
 SET status = 'withdrawn', reason = $2, answered_at = now()
-WHERE run_id = $1 AND status = 'pending';
+WHERE run_id = $1 AND status = 'pending'
+  AND run_id IN (SELECT id FROM runs WHERE id = $1 AND status IN ('queued', 'waiting'));

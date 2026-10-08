@@ -1,13 +1,17 @@
 package server_test
 
 import (
+	"encoding/json"
 	"net/http"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jangraefen/agenty/internal/api"
+	"github.com/jangraefen/agenty/internal/harness"
+	"github.com/jangraefen/agenty/internal/model"
 	"github.com/jangraefen/agenty/internal/model/modeltest"
 	"github.com/jangraefen/agenty/internal/policy"
 )
@@ -189,4 +193,88 @@ func TestApprovals_CancelAWaitingRun(t *testing.T) {
 	assert.Equal(t, api.DecisionDeny, last.Decision)
 	assert.Equal(t, "approval failed: cancelled by alice", last.Reason)
 	assert.Zero(t, f.write.Calls)
+}
+
+// TestApprovals_ACancelAsTheRunResumesRecordsTheCallAsNotRun: a run cancelled
+// after a worker took it up to resume, before the call ran, ends with the
+// call recorded as not run, in its audit log and its transcript.
+func TestApprovals_ACancelAsTheRunResumesRecordsTheCallAsNotRun(t *testing.T) {
+	var (
+		mu       sync.Mutex
+		models   int
+		resuming = make(chan struct{})
+		proceed  = make(chan struct{})
+	)
+	f := newFixture(t, options{policy: writesNeedApproval, newModel: func(harness.Model) (model.Model, error) {
+		mu.Lock()
+		models++
+		first := models == 1
+		mu.Unlock()
+		if first {
+			return modeltest.NewScripted(modeltest.CallTools(call("c0", "files_read", `{"path":"notes.md"}`), call("c1", "files_write", `{"path":"notes.md"}`))), nil
+		}
+		close(resuming)
+		<-proceed
+		return modeltest.NewScripted(), nil
+	}})
+	f.putNotes(t)
+	run := f.startRun(t, "write my notes")
+	var req api.ApprovalRequest
+	for events := f.events(t, run.ID); req.ID == ""; {
+		if e := events.next(); e.name == api.EventApproval {
+			req = decodeAs[api.ApprovalRequest](t, e)
+		}
+	}
+	f.answer(t, req, api.Answer{Approved: true})
+	<-resuming
+
+	require.Equal(t, http.StatusAccepted, f.do(t, http.MethodPost, home+"/runs/"+run.ID+"/cancel", nil, nil))
+	close(proceed)
+
+	assert.Equal(t, api.RunStatusCancelled, f.finish(t, run.ID).Status)
+	assert.Zero(t, f.write.Calls)
+	audit := f.audit(t, run.ID)
+	last := audit[len(audit)-1]
+	assert.Equal(t, api.AuditEventApproval, last.Event)
+	assert.Equal(t, "approval failed: cancelled by alice", last.Reason)
+	var transcript []api.TranscriptMessage
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+run.ID+"/transcript", nil, &transcript))
+	results := transcript[len(transcript)-1].ToolResults
+	require.Len(t, results, 2, "the transcript holds the reply's results")
+	assert.False(t, results[0].IsError, "the read before the write ran")
+	assert.Contains(t, results[1].Content, "approval failed: cancelled by alice")
+}
+
+// TestInvariant_AWaitingCallNeverHoldsACredential guards trust-model
+// guarantee 5 for durable approvals: a call that needs approval and whose
+// arguments hold a credential is denied, so no request, event or stored
+// approval ever holds the credential, nor waits for an answer it could not
+// be run by.
+func TestInvariant_AWaitingCallNeverHoldsACredential(t *testing.T) {
+	f := newFixture(t, options{policy: writesNeedApproval})
+	f.putNotes(t)
+	f.script(modeltest.CallTools(call("c1", "files_write", `{"token":"`+token+`"}`)), modeltest.Reply("could not"))
+
+	run := f.startRun(t, "write the token")
+	events := f.events(t, run.ID).rest()
+
+	assert.Equal(t, api.RunStatusSucceeded, decodeAs[api.Run](t, events[len(events)-1]).Status)
+	for _, e := range events {
+		assert.NotEqual(t, api.EventApproval, e.name, "nothing waits")
+		assert.NotContains(t, e.data, token)
+	}
+	assert.Zero(t, f.write.Calls)
+	audit := f.audit(t, run.ID)
+	last := audit[len(audit)-1]
+	assert.Equal(t, api.DecisionDeny, last.Decision)
+	assert.Contains(t, last.Reason, "its arguments hold a secret")
+	var pending []api.ApprovalRequest
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/approvals", nil, &pending))
+	assert.Empty(t, pending)
+	_, stored, err := f.store.LatestApproval(t.Context(), run.ID)
+	require.NoError(t, err)
+	assert.False(t, stored, "no approval is stored")
+	auditJSON, err := json.Marshal(audit)
+	require.NoError(t, err)
+	assert.NotContains(t, string(auditJSON), token)
 }

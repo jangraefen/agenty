@@ -241,6 +241,7 @@ const withdrawApprovals = `-- name: WithdrawApprovals :exec
 UPDATE approvals
 SET status = 'withdrawn', reason = $2, answered_at = now()
 WHERE run_id = $1 AND status = 'pending'
+  AND run_id IN (SELECT id FROM runs WHERE id = $1 AND status IN ('queued', 'waiting'))
 `
 
 type WithdrawApprovalsParams struct {
@@ -248,6 +249,9 @@ type WithdrawApprovalsParams struct {
 	Reason string
 }
 
+// Withdraws the pending request of a run that is queued or waiting. It locks
+// the request before the run, as answering and expiring do, so they never
+// wait for each other in a circle.
 func (q *Queries) WithdrawApprovals(ctx context.Context, arg WithdrawApprovalsParams) error {
 	_, err := q.db.Exec(ctx, withdrawApprovals, arg.RunID, arg.Reason)
 	return err

@@ -445,6 +445,9 @@ func (s *Server) take(claimed store.ClaimedRun) {
 		var by cancelledBy
 		switch {
 		case errors.As(context.Cause(h.ctx), &by):
+			if err := s.closeOut(h.ctx, h, claimed.ID, by); err != nil {
+				s.cfg.Logger.Error("cannot record the calls a cancelled run did not run", "run_id", claimed.ID, "error", s.cfg.Resolved.Redactor.String(err.Error()))
+			}
 			s.finish(h.ctx, h, claimed.ID, store.RunCancelled, agent.Result{}, by.Error())
 		case s.ctx.Err() != nil:
 			s.finish(h.ctx, h, claimed.ID, store.RunFailed, agent.Result{}, errStopped)
@@ -560,6 +563,9 @@ func (s *Server) resumption(ctx context.Context, p *prepared, approval store.App
 	if err != nil {
 		return err
 	}
+	if used(records, approval.CallID) {
+		return fmt.Errorf("run %s was taken up for an approval it used", approval.RunID)
+	}
 	altered := false
 	for _, m := range transcript {
 		p.own = append(p.own, m.Message)
@@ -571,8 +577,9 @@ func (s *Server) resumption(ctx context.Context, p *prepared, approval store.App
 	}
 	if altered {
 		// What the model saw differs from what is stored, so its replies
-		// are sent without their provider forms.
+		// are sent without their provider forms, nor are those before them.
 		p.own = callsAsReplies(p.own)
+		p.history = callsAsReplies(p.history)
 	}
 	audit := make([]toolgateway.Record, len(records))
 	for i, r := range records {
@@ -695,6 +702,11 @@ func (s *Server) execute(ctx context.Context, h *hub, p prepared) {
 		// a server that did not stop, is logged.
 		status, errMsg = store.RunCancelled, by.Error()
 		s.cfg.Logger.Info("run cancelled", "run_id", run.ID(), "error", err)
+		if p.resume != nil {
+			if err := s.closeOut(ctx, h, run.ID(), by); err != nil {
+				s.cfg.Logger.Error("cannot record the calls a cancelled run did not run", "run_id", run.ID(), "error", s.cfg.Resolved.Redactor.String(err.Error()))
+			}
+		}
 	case err != nil:
 		status, errMsg = store.RunFailed, s.cfg.Resolved.Redactor.String(err.Error())
 	}
@@ -709,12 +721,17 @@ func (s *Server) suspend(ctx context.Context, h *hub, res agent.Result, suspende
 	// As precise as PostgreSQL keeps it, so the event and the stored request
 	// agree.
 	now := time.Now().Truncate(time.Microsecond)
+	// The gateway redacted them already; the store gets nothing it did not.
+	results := slices.Clone(suspended.Results)
+	for i := range results {
+		results[i].Content = s.cfg.Resolved.Redactor.String(results[i].Content)
+	}
 	a := store.NewApproval{
 		ID:        rand.Text(),
 		RunID:     res.RunID,
 		CallID:    suspended.CallID,
 		Call:      suspended.Call,
-		Results:   suspended.Results,
+		Results:   results,
 		Tool:      suspended.Request.Tool,
 		Args:      suspended.Request.Args,
 		Reasons:   suspended.Reasons,
@@ -723,6 +740,12 @@ func (s *Server) suspend(ctx context.Context, h *hub, res agent.Result, suspende
 	}
 	if err := s.cfg.Store.SuspendRun(context.WithoutCancel(ctx), a); err != nil {
 		s.finish(ctx, h, res.RunID, store.RunFailed, res, s.cfg.Resolved.Redactor.String(err.Error()))
+		return
+	}
+	// A cancel that came as the run suspended found it still running.
+	var by cancelledBy
+	if errors.As(context.Cause(ctx), &by) {
+		s.cancelIdle(ctx, h, res.RunID, by)
 		return
 	}
 	select {
@@ -799,26 +822,37 @@ func (s *Server) replay(ctx context.Context, h *hub, status store.RunStatus) err
 // for approval, or to resume after one: the waiting call did not run, nor
 // did the calls after it in the model's reply. The audit log records the
 // call's approval as failed, and the transcript the results of the reply's
-// calls, so the conversation can continue from it.
-func (s *Server) closeOut(ctx context.Context, id string, by cancelledBy) error {
+// calls, so the conversation can continue from it. A run that has no such
+// call, as its waiting call was answered in the gateway, is left as it is.
+func (s *Server) closeOut(ctx context.Context, h *hub, id string, by cancelledBy) error {
+	ctx = context.WithoutCancel(ctx)
 	a, ok, err := s.cfg.Store.LatestApproval(ctx, id)
 	if err != nil || !ok {
 		return err
 	}
 	transcript, err := s.cfg.Store.Transcript(ctx, id)
-	if err != nil || len(transcript) == 0 {
+	if err != nil {
 		return err
 	}
-	calls := transcript[len(transcript)-1].ToolCalls
-	if a.Call >= len(calls) {
-		// The run went on past the call before it was cancelled.
+	records, err := s.cfg.Store.AuditRecords(ctx, id)
+	if err != nil {
+		return err
+	}
+	own := make([]model.Message, len(transcript))
+	for i, m := range transcript {
+		own[i] = m.Message
+	}
+	if used(records, a.CallID) || !asked(own, a) {
 		return nil
 	}
+	calls := own[len(own)-1].ToolCalls
 	failed := "approval failed: " + by.Error()
 	rec := toolgateway.Record{RunID: id, CallID: a.CallID, Event: toolgateway.EventApproval, Tool: a.Tool, Args: a.Args, Decision: toolgateway.Deny, Reason: failed}
-	if _, err := s.cfg.Store.RecordAt(ctx, rec); err != nil {
+	at, err := s.cfg.Store.RecordAt(ctx, rec)
+	if err != nil {
 		return err
 	}
+	h.publish(event{api.EventAudit, api.FromRecord(rec, at)})
 	results := slices.Clone(a.Results)
 	for i, c := range calls[a.Call:] {
 		content := "Not run: the run was " + by.Error() + "."
@@ -828,6 +862,30 @@ func (s *Server) closeOut(ctx context.Context, id string, by cancelledBy) error 
 		results = append(results, model.ToolResult{CallID: c.ID, Content: content, IsError: true})
 	}
 	return s.cfg.Store.AppendMessage(ctx, id, store.NewMessage{Position: len(transcript), Message: model.Message{Role: model.RoleUser, ToolResults: results}})
+}
+
+// used reports whether the call callID was answered in the gateway already,
+// as its run resumed at it, so its approval is used.
+func used(records []store.AuditRecord, callID string) bool {
+	return slices.ContainsFunc(records, func(r store.AuditRecord) bool {
+		return r.CallID == callID && r.Event == toolgateway.EventApproval
+	})
+}
+
+// cancelIdle cancels the queued or waiting run id in the store, and if it was
+// one, completes its record, publishes its end and unregisters its hub h.
+func (s *Server) cancelIdle(ctx context.Context, h *hub, id string, by cancelledBy) {
+	ctx = context.WithoutCancel(ctx)
+	switch cancelled, err := s.cfg.Store.CancelIdleRun(ctx, id, by.Error()); {
+	case err != nil:
+		s.cfg.Logger.Error("cannot cancel a queued or waiting run in the store", "run_id", id, "error", err)
+	case cancelled:
+		if err := s.closeOut(ctx, h, id, by); err != nil {
+			s.cfg.Logger.Error("cannot record the calls a cancelled run did not run", "run_id", id, "error", s.cfg.Resolved.Redactor.String(err.Error()))
+		}
+		s.publishEnd(ctx, h, store.Run{ID: id, Status: store.RunCancelled, Error: by.Error()})
+		s.unregister(id)
+	}
 }
 
 // suspend is the approver of every run: it never waits for an answer, but

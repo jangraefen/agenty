@@ -238,25 +238,14 @@ func apiRun(r store.Run) api.Run {
 
 // CancelRun cancels a queued, waiting or running run of this server. A queued
 // or waiting run ends at once, a running one as soon as what it is doing
-// stops; either is
-// recorded as cancelled by the user. The response may come before that, so
-// the run's events tell when it ended.
+// stops; either is recorded as cancelled by the user. The response may come
+// before that, so the run's events tell when it ended.
 func (s handlers) CancelRun(c *gin.Context, workspace, id string) {
 	if h := s.hub(workspace, id); h != nil {
 		by := cancelledBy(c.GetString(userKey))
 		// A worker that claims the run from now on finds it cancelled.
 		h.cancel(by)
-		ctx := c.Request.Context()
-		switch cancelled, err := s.cfg.Store.CancelIdleRun(ctx, id, by.Error()); {
-		case err != nil:
-			s.cfg.Logger.Error("cannot cancel a queued or waiting run in the store", "run_id", id, "error", err)
-		case cancelled:
-			if err := s.closeOut(ctx, id, by); err != nil {
-				s.cfg.Logger.Error("cannot record the calls a cancelled run did not run", "run_id", id, "error", s.cfg.Resolved.Redactor.String(err.Error()))
-			}
-			s.publishEnd(ctx, h, store.Run{ID: id, Status: store.RunCancelled, Error: by.Error()})
-			s.unregister(id)
-		}
+		s.cancelIdle(c.Request.Context(), h, id, by)
 		c.Status(http.StatusAccepted)
 		return
 	}

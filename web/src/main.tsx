@@ -3,6 +3,10 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { Session } from "./auth/session";
 import "./styles.css";
+import { Theme } from "./theme/theme";
+
+// public/theme.js has applied the stored theme before the first paint.
+const theme = new Theme(localStorage, window);
 
 const root = document.getElementById("root");
 if (root === null) {
@@ -10,6 +14,6 @@ if (root === null) {
 }
 createRoot(root).render(
   <StrictMode>
-    <App session={new Session(localStorage)} />
+    <App session={new Session(localStorage)} theme={theme} />
   </StrictMode>,
 );

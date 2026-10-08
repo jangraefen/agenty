@@ -652,7 +652,7 @@ func TestMain_Usage(t *testing.T) {
 		{"unknown flag", []string{"run", "--nope"}, 2, "flag provided but not defined"},
 		{"no input", []string{"run", "notes"}, 2, "expected 2 arguments, got 1"},
 		{"three arguments", []string{"run", "notes", "a", "b"}, 2, "expected 2 arguments, got 3"},
-		{"no file", []string{"apply"}, 2, "expected 1 arguments, got 0"},
+		{"no file", []string{"apply"}, 2, "expected 1 argument, got 0"},
 		{"bad log level", []string{"run", "--log-level", "loud", "notes", "tidy"}, 2, `invalid value "loud" for flag -log-level`},
 		{"run usage after a problem", []string{"run", "tidy"}, 2, "-server URL"},
 	}

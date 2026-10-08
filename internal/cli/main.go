@@ -8,6 +8,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -109,6 +110,9 @@ type command struct {
 	// client gives the command the flags of a client of the server and
 	// requires a token; workspace also requires a workspace.
 	client, workspace bool
+	// signer, if set, names whose token the command needs, such as "an
+	// auditor's"; a user's otherwise.
+	signer string
 	// define, if set, adds the command's own flags.
 	define func(*flag.FlagSet)
 }
@@ -164,11 +168,15 @@ func parseFlags(cmd command, args []string, env Env) (f clientFlags, rest []stri
 	missing := ""
 	switch {
 	case fs.NArg() != cmd.nargs:
-		missing = fmt.Sprintf("expected %d arguments, got %d; quote an argument that has spaces", cmd.nargs, fs.NArg())
+		arguments := "arguments"
+		if cmd.nargs == 1 {
+			arguments = "argument"
+		}
+		missing = fmt.Sprintf("expected %d %s, got %d; quote an argument that has spaces", cmd.nargs, arguments, fs.NArg())
 	case cmd.workspace && f.workspace == "":
 		missing = "--workspace or AGENTY_WORKSPACE is required"
 	case cmd.client && f.token == "":
-		missing = tokenVar + " is not set: sign in with a user's token"
+		missing = tokenVar + " is not set: sign in with " + cmp.Or(cmd.signer, "a user's") + " token"
 	}
 	if missing != "" {
 		// Reported the way the flag package reports a bad flag.

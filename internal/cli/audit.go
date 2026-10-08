@@ -56,7 +56,7 @@ func printAuditUsage(w io.Writer, msg string, code int) int {
 
 func auditExport(ctx context.Context, args []string, env Env) int {
 	var after int64
-	flags, _, code, ok := parseFlags(command{name: "audit export", usage: auditUsage, client: true, define: func(fs *flag.FlagSet) {
+	flags, _, code, ok := parseFlags(command{name: "audit export", usage: auditUsage, client: true, signer: "an auditor's", define: func(fs *flag.FlagSet) {
 		fs.Int64Var(&after, "after", 0, "start after the event with this `id`")
 	}}, args, env)
 	if !ok {

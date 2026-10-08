@@ -110,7 +110,7 @@ func TestServe_Failures(t *testing.T) {
 		{"malformed address", []string{"--addr", "127.0.0.1"}, nil, 1, "--addr"},
 		{"no database", nil, func(f *fixture) {
 			f.writeFile(t, "agenty.yaml", strings.Replace(strings.Replace(configYAML, "%s", f.api.URL, 1), "database:\n  url: {env: DATABASE_URL}\n", "", 1))
-		}, 1, "database.url"},
+		}, 1, "database.url\\\": is required"},
 		{"no users", nil, func(f *fixture) {
 			cfg := strings.Replace(configYAML, "%s", f.api.URL, 1)
 			f.writeFile(t, "agenty.yaml", cfg[:strings.Index(cfg, "users:")]+cfg[strings.Index(cfg, "policy:"):])

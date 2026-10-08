@@ -222,6 +222,7 @@ func TestResolve_Errors(t *testing.T) {
 		{"missing variable", nil, "ANTHROPIC_API_KEY", []string{"provider.anthropic.api_key"}, "ANTHROPIC_API_KEY is not set"},
 		{"empty variable", map[string]string{"ANTHROPIC_API_KEY": ""}, "", []string{"provider.anthropic.api_key"}, "ANTHROPIC_API_KEY is not set"},
 		{"secret too short to redact", map[string]string{"TICKETS_TOKEN": "short"}, "", []string{"mcp_servers.tickets.env.TICKETS_TOKEN"}, "shorter than 8 characters"},
+		{"missing database url", nil, "DATABASE_URL", []string{"database.url"}, "DATABASE_URL is not set"},
 		{"missing token", nil, "BOB_TOKEN", []string{"users.bob.token"}, "BOB_TOKEN is not set"},
 		{"token too short to be unguessable", map[string]string{"ALICE_TOKEN": "alice-token-0123"}, "", []string{"users.alice.token"}, "shorter than 32 characters"},
 		{"two users with one token", map[string]string{"BOB_TOKEN": "alice-token-0123456789abcdefghijklmn"}, "", []string{"users.bob.token"}, "the same token as user alice"},

@@ -50,7 +50,7 @@ func TestAudit_ExportIsAClientCommand(t *testing.T) {
 	delete(f.vars, "AGENTY_TOKEN")
 
 	assert.Equal(t, 2, f.main("audit", "export", "--server", f.serverURL(), "--log-level", "debug"))
-	assert.Contains(t, f.stderr.String(), "AGENTY_TOKEN is not set")
+	assert.Contains(t, f.stderr.String(), "AGENTY_TOKEN is not set: sign in with an auditor's token")
 	assert.Contains(t, f.stderr.String(), "-log-level")
 }
 

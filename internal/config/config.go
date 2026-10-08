@@ -236,7 +236,10 @@ func (f *file) validate() error {
 		errs = append(errs, &FieldError{Field: field, Msg: msg})
 	}
 	checkValue := func(field string, v Value) {
-		if (v.Env == "") == (v.Value == "") {
+		switch {
+		case v.Env == "" && v.Value == "":
+			add(field, "is required: give its env or its value")
+		case v.Env != "" && v.Value != "":
 			add(field, "needs exactly one of env or value")
 		}
 	}

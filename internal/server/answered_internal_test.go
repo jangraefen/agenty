@@ -16,7 +16,7 @@ import (
 // TestAnswered_TakesUpOnlyAnAnswerNotUsedYet: a run is resumed only for an
 // approval that was answered, approved or rejected, and whose answer its
 // audit log does not hold yet, so no answer runs a call twice; it resumes
-// with that audit log, which restores its limits.
+// with that audit log, which its gateway restores its call counts from.
 func TestAnswered_TakesUpOnlyAnAnswerNotUsedYet(t *testing.T) {
 	ctx := context.Background()
 	st := storetest.New(t)
@@ -29,10 +29,14 @@ func TestAnswered_TakesUpOnlyAnAnswerNotUsedYet(t *testing.T) {
 	require.NoError(t, err)
 	_, err = st.CreateRun(ctx, store.NewRun{ID: "r1", HarnessVersionID: v.ID, Input: "tidy", StartedBy: "alice"})
 	require.NoError(t, err)
-	decision := toolgateway.Record{RunID: "r1", CallID: "c1", Event: toolgateway.EventDecision, Tool: "files_write", Decision: toolgateway.RequireApproval}
-	require.NoError(t, st.Record(ctx, decision))
-	used := toolgateway.Record{RunID: "r1", CallID: "c0", Event: toolgateway.EventApproval, Tool: "files_write", Decision: toolgateway.Allow, Approver: "alice"}
-	require.NoError(t, st.Record(ctx, used))
+	// c0 waited and was answered, c1 waits.
+	for _, rec := range []toolgateway.Record{
+		{RunID: "r1", CallID: "c0", Event: toolgateway.EventDecision, Tool: "files_write", Decision: toolgateway.RequireApproval},
+		{RunID: "r1", CallID: "c0", Event: toolgateway.EventApproval, Tool: "files_write", Decision: toolgateway.Allow, Approver: "alice"},
+		{RunID: "r1", CallID: "c1", Event: toolgateway.EventDecision, Tool: "files_write", Decision: toolgateway.RequireApproval},
+	} {
+		require.NoError(t, st.Record(ctx, rec))
+	}
 	s := &Server{cfg: Config{Store: st}}
 	approval := func(call string, status store.ApprovalStatus) store.Approval {
 		return store.Approval{NewApproval: store.NewApproval{RunID: "r1", CallID: call}, Status: status}
@@ -58,9 +62,11 @@ func TestAnswered_TakesUpOnlyAnAnswerNotUsedYet(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			require.Len(t, audit, 2)
-			assert.Equal(t, decision.CallID, audit[0].CallID, "the run resumes with its audit log")
-			assert.Equal(t, toolgateway.EventApproval, audit[1].Event)
+			calls := make([]string, len(audit))
+			for i, rec := range audit {
+				calls[i] = rec.CallID + " " + string(rec.Event)
+			}
+			assert.Equal(t, []string{"c0 decision", "c0 approval", "c1 decision"}, calls, "the run resumes with its audit log")
 		})
 	}
 }

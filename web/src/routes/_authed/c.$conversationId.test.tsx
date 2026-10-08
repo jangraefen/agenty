@@ -376,6 +376,28 @@ describe("the conversation page", () => {
     expect(await within(recent).findByRole("link", { name: "tidy my notes" })).toBeInTheDocument();
   });
 
+  test("an answer given elsewhere clears the chat's waiting mark", async () => {
+    const live = liveEventStream();
+    let answered = false;
+    server.use(
+      ...conversationHandlers([runningRun]),
+      http.get(`${base}/runs/run-1/events`, () => live.response()),
+      http.get(`${apiUrl}/v1/conversations`, () =>
+        HttpResponse.json<Schemas["ConversationList"]>({
+          conversations: [conversation({ status: answered ? "running" : "waiting" })],
+        }),
+      ),
+    );
+    renderApp(path, TOKEN);
+    const recent = await screen.findByRole("navigation", { name: "Recent chats" });
+    await within(recent).findByRole("link", { name: "tidy my notes (waiting for approval)" });
+
+    answered = true;
+    live.send("audit", auditRecord({ event: "approval", decision: "allow", approver: "demo" }));
+
+    expect(await within(recent).findByRole("link", { name: "tidy my notes" })).toBeInTheDocument();
+  });
+
   test("refreshes the waiting approvals and the recent chats when the run asks for one", async () => {
     const live = liveEventStream();
     let asked = false;

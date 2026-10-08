@@ -57,12 +57,12 @@ func TestPutHarness_StoresVersions(t *testing.T) {
 	s := storetest.New(t)
 	h := notes()
 
-	first, err := s.PutHarness(ctx, ws, h)
+	first, err := s.PutHarness(ctx, ws, "alice", h)
 	require.NoError(t, err)
-	again, err := s.PutHarness(ctx, ws, h)
+	again, err := s.PutHarness(ctx, ws, "alice", h)
 	require.NoError(t, err)
 	h.Instructions = "Tidy the notes, and sort them."
-	second, err := s.PutHarness(ctx, ws, h)
+	second, err := s.PutHarness(ctx, ws, "alice", h)
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, first.Version)
@@ -86,11 +86,11 @@ func TestPutHarness_EmptyAndMissingListsAreTheSame(t *testing.T) {
 	s := storetest.New(t)
 	h := notes()
 	h.Tools, h.Policy = nil, nil
-	first, err := s.PutHarness(ctx, ws, h)
+	first, err := s.PutHarness(ctx, ws, "alice", h)
 	require.NoError(t, err)
 
 	h.Tools, h.Policy = []string{}, []policy.Module{}
-	again, err := s.PutHarness(ctx, ws, h)
+	again, err := s.PutHarness(ctx, ws, "alice", h)
 
 	require.NoError(t, err)
 	assert.Equal(t, first.Version, again.Version)
@@ -107,7 +107,7 @@ func TestPutHarness_ConcurrentPutsGetTheirOwnVersions(t *testing.T) {
 		wg.Go(func() {
 			h := notes()
 			h.Instructions = fmt.Sprintf("Tidy the notes, take %d.", i)
-			v, err := s.PutHarness(ctx, ws, h)
+			v, err := s.PutHarness(ctx, ws, "alice", h)
 			errs <- err
 			versions <- v.Version
 		})
@@ -131,7 +131,7 @@ func TestPutHarness_RejectsInvalidHarnesses(t *testing.T) {
 	h := notes()
 	h.Limits.MaxSteps = 0
 
-	_, err := s.PutHarness(context.Background(), ws, h)
+	_, err := s.PutHarness(context.Background(), ws, "alice", h)
 
 	require.ErrorContains(t, err, "limits.max_steps")
 	_, err = s.Harness(context.Background(), ws, "notes")
@@ -142,14 +142,14 @@ func TestHarnesses_ListsTheLatestVersionOfEach(t *testing.T) {
 	ctx := context.Background()
 	s := storetest.New(t)
 	h := notes()
-	_, err := s.PutHarness(ctx, ws, h)
+	_, err := s.PutHarness(ctx, ws, "alice", h)
 	require.NoError(t, err)
 	h.Instructions = "v2"
-	_, err = s.PutHarness(ctx, ws, h)
+	_, err = s.PutHarness(ctx, ws, "alice", h)
 	require.NoError(t, err)
 	other := notes()
 	other.Name = "agenda"
-	_, err = s.PutHarness(ctx, ws, other)
+	_, err = s.PutHarness(ctx, ws, "alice", other)
 	require.NoError(t, err)
 
 	all, err := s.Harnesses(ctx, ws)
@@ -177,7 +177,7 @@ func TestWorkspaces_AreSeparate(t *testing.T) {
 	other := notes()
 	other.Instructions = "Something else."
 
-	theirs, err := s.PutHarness(ctx, "work", other)
+	theirs, err := s.PutHarness(ctx, "work", "alice", other)
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, theirs.Version, "a harness name is versioned per workspace")
@@ -201,7 +201,7 @@ func TestWorkspaces_AreSeparate(t *testing.T) {
 // newRun stores a run of the notes harness and claims it, so it is running.
 func newRun(t *testing.T, s *store.Store, id string) store.HarnessVersion {
 	t.Helper()
-	v, err := s.PutHarness(context.Background(), ws, notes())
+	v, err := s.PutHarness(context.Background(), ws, "alice", notes())
 	require.NoError(t, err)
 	createRun(t, s, store.NewRun{ID: id, HarnessVersionID: v.ID, Input: "tidy", StartedBy: "alice"})
 	claim(t, s, id)
@@ -234,7 +234,7 @@ func claim(t *testing.T, s *store.Store, id string) {
 func TestRuns_Lifecycle(t *testing.T) {
 	ctx := context.Background()
 	s := storetest.New(t)
-	v, err := s.PutHarness(ctx, ws, notes())
+	v, err := s.PutHarness(ctx, ws, "alice", notes())
 	require.NoError(t, err)
 	created := createRun(t, s, store.NewRun{ID: "r1", HarnessVersionID: v.ID, Input: "tidy", StartedBy: "alice"})
 	queued, err := s.Run(ctx, ws, "r1")
@@ -308,9 +308,9 @@ func TestAuditRuns(t *testing.T) {
 	v := newRun(t, s, "r1")
 	other := notes()
 	other.Name = "agenda"
-	ov, err := s.PutHarness(ctx, ws, other)
+	ov, err := s.PutHarness(ctx, ws, "alice", other)
 	require.NoError(t, err)
-	theirs, err := s.PutHarness(ctx, "work", notes())
+	theirs, err := s.PutHarness(ctx, "work", "alice", notes())
 	require.NoError(t, err)
 	for _, r := range []store.NewRun{
 		{ID: "r2", HarnessVersionID: ov.ID, Input: "x", StartedBy: "bob"},
@@ -428,9 +428,9 @@ func TestFailRunningRuns(t *testing.T) {
 func TestClaimRun_ClaimsOldestFirst(t *testing.T) {
 	ctx := context.Background()
 	s := storetest.New(t)
-	v, err := s.PutHarness(ctx, ws, notes())
+	v, err := s.PutHarness(ctx, ws, "alice", notes())
 	require.NoError(t, err)
-	theirs, err := s.PutHarness(ctx, "work", notes())
+	theirs, err := s.PutHarness(ctx, "work", "alice", notes())
 	require.NoError(t, err)
 	for _, r := range []store.NewRun{
 		{ID: "r1", HarnessVersionID: v.ID, Input: "x", StartedBy: "alice"},
@@ -462,7 +462,7 @@ func TestClaimRun_ClaimsOldestFirst(t *testing.T) {
 func TestClaimRun_ConcurrentClaimsClaimEachRunOnce(t *testing.T) {
 	ctx := context.Background()
 	s := storetest.New(t)
-	v, err := s.PutHarness(ctx, ws, notes())
+	v, err := s.PutHarness(ctx, ws, "alice", notes())
 	require.NoError(t, err)
 	const runs = 20
 	for i := range runs {
@@ -509,7 +509,7 @@ func TestClaimRun_ConcurrentClaimsClaimEachRunOnce(t *testing.T) {
 func TestClaimRun_SkipsARunAnotherClaimHolds(t *testing.T) {
 	ctx := context.Background()
 	s, url := storetest.NewWithURL(t)
-	v, err := s.PutHarness(ctx, ws, notes())
+	v, err := s.PutHarness(ctx, ws, "alice", notes())
 	require.NoError(t, err)
 	createRun(t, s, store.NewRun{ID: "r1", HarnessVersionID: v.ID, Input: "x", StartedBy: "alice"})
 	createRun(t, s, store.NewRun{ID: "r2", HarnessVersionID: v.ID, Input: "x", StartedBy: "alice"})
@@ -691,7 +691,7 @@ func TestRecord_FailsClosed(t *testing.T) {
 	require.Error(t, err)
 	_, err = s.FailRunningRuns(ctx, "x")
 	require.Error(t, err)
-	_, err = s.PutHarness(ctx, ws, notes())
+	_, err = s.PutHarness(ctx, ws, "alice", notes())
 	require.Error(t, err)
 	require.Error(t, s.FinishRun(ctx, "r1", store.RunFailed, "", 0, ""))
 	require.Error(t, createErr(s, store.NewRun{ID: "r9", HarnessVersionID: 1, Input: "", StartedBy: "alice"}))

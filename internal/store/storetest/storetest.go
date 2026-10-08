@@ -61,3 +61,15 @@ func NewWithURL(t *testing.T) (*store.Store, string) {
 	t.Cleanup(s.Close)
 	return s, u.String()
 }
+
+// Exec runs SQL against the database at url, as its owner, for a test that
+// goes around the store, such as one that breaks the audit log on purpose.
+func Exec(t *testing.T, url, sql string) {
+	t.Helper()
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, url)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, conn.Close(ctx)) }()
+	_, err = conn.Exec(ctx, sql)
+	require.NoError(t, err)
+}

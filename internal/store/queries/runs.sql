@@ -60,10 +60,11 @@ FROM runs
 JOIN harness_versions ON harness_versions.id = runs.harness_version_id
 WHERE runs.id = sqlc.arg(id);
 
--- name: FailRunningRuns :execrows
+-- name: FailRunningRuns :many
 UPDATE runs
 SET status = 'failed', error = $1, finished_at = now()
-WHERE status = 'running';
+WHERE status = 'running'
+RETURNING id, steps;
 
 -- name: ConversationRuns :many
 -- The runs of the conversation the run named by id belongs to, oldest first,
@@ -102,10 +103,11 @@ JOIN harness_versions ON harness_versions.id = runs.harness_version_id
 WHERE runs.status IN ('queued', 'waiting')
 ORDER BY runs.created_at, runs.id;
 
--- name: CancelIdleRun :execrows
+-- name: CancelIdleRun :many
 UPDATE runs
 SET status = 'cancelled', error = $2, finished_at = now()
-WHERE id = $1 AND status IN ('queued', 'waiting');
+WHERE id = $1 AND status IN ('queued', 'waiting')
+RETURNING steps;
 
 -- name: SetRunDigests :execrows
 UPDATE runs

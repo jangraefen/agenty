@@ -89,7 +89,7 @@ func TestConversations(t *testing.T) {
 	claim(t, s, "c1")
 	// A follow-up just sent, still queued, is its conversation's latest run.
 	createRun(t, s, store.NewRun{ID: "a3", HarnessVersionID: v.ID, Input: "again", StartedBy: "alice", Follows: "a2"})
-	work, err := s.PutHarness(ctx, "work", notes())
+	work, err := s.PutHarness(ctx, "work", "alice", notes())
 	require.NoError(t, err)
 	createRun(t, s, store.NewRun{ID: "w1", HarnessVersionID: work.ID, Input: "elsewhere", StartedBy: "alice"})
 

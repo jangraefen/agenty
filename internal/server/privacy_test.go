@@ -147,7 +147,9 @@ func TestExportAuditLog(t *testing.T) {
 	sum, err := auditlog.Verify(strings.NewReader(whole))
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), sum.First)
-	assert.Equal(t, 2, sum.Events, "the run's decision and result")
+	assert.Contains(t, whole, `"action":"tool.decision"`, "the run's calls are in it")
+	assert.Contains(t, whole, `"action":"tool.result"`)
+	assert.Contains(t, whole, `"read":"export"`, "and the export itself, an auditor's read")
 
 	rest, trailer := f.export(t, "?after=1")
 	assert.Equal(t, "true", trailer)

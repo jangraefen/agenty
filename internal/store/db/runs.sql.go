@@ -12,10 +12,11 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const cancelIdleRun = `-- name: CancelIdleRun :execrows
+const cancelIdleRun = `-- name: CancelIdleRun :many
 UPDATE runs
 SET status = 'cancelled', error = $2, finished_at = now()
 WHERE id = $1 AND status IN ('queued', 'waiting')
+RETURNING steps
 `
 
 type CancelIdleRunParams struct {
@@ -23,12 +24,24 @@ type CancelIdleRunParams struct {
 	Error string
 }
 
-func (q *Queries) CancelIdleRun(ctx context.Context, arg CancelIdleRunParams) (int64, error) {
-	result, err := q.db.Exec(ctx, cancelIdleRun, arg.ID, arg.Error)
+func (q *Queries) CancelIdleRun(ctx context.Context, arg CancelIdleRunParams) ([]int32, error) {
+	rows, err := q.db.Query(ctx, cancelIdleRun, arg.ID, arg.Error)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return result.RowsAffected(), nil
+	defer rows.Close()
+	var items []int32
+	for rows.Next() {
+		var steps int32
+		if err := rows.Scan(&steps); err != nil {
+			return nil, err
+		}
+		items = append(items, steps)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const claimRun = `-- name: ClaimRun :one
@@ -125,18 +138,36 @@ func (q *Queries) ConversationRuns(ctx context.Context, arg ConversationRunsPara
 	return items, nil
 }
 
-const failRunningRuns = `-- name: FailRunningRuns :execrows
+const failRunningRuns = `-- name: FailRunningRuns :many
 UPDATE runs
 SET status = 'failed', error = $1, finished_at = now()
 WHERE status = 'running'
+RETURNING id, steps
 `
 
-func (q *Queries) FailRunningRuns(ctx context.Context, error string) (int64, error) {
-	result, err := q.db.Exec(ctx, failRunningRuns, error)
+type FailRunningRunsRow struct {
+	ID    string
+	Steps int32
+}
+
+func (q *Queries) FailRunningRuns(ctx context.Context, error string) ([]FailRunningRunsRow, error) {
+	rows, err := q.db.Query(ctx, failRunningRuns, error)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return result.RowsAffected(), nil
+	defer rows.Close()
+	var items []FailRunningRunsRow
+	for rows.Next() {
+		var i FailRunningRunsRow
+		if err := rows.Scan(&i.ID, &i.Steps); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const findConversation = `-- name: FindConversation :one

@@ -119,6 +119,9 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	if _, err := policy.New(ctx, policy.Layer{Name: "central", Modules: cfg.Operator.Policy}); err != nil {
 		return nil, fmt.Errorf("server: %w", err)
 	}
+	if _, err := cfg.Store.AppendEvent(ctx, serverStarted(cfg)); err != nil {
+		return nil, fmt.Errorf("server: %w", err)
+	}
 	n, err := cfg.Store.FailRunningRuns(ctx, errStopped)
 	if err != nil {
 		return nil, fmt.Errorf("server: %w", err)

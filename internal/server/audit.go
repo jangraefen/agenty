@@ -41,6 +41,15 @@ func (s handlers) ListAuditRuns(c *gin.Context, params api.ListAuditRunsParams) 
 	if !ok {
 		return
 	}
+	read := map[string]any{"read": "runs"}
+	for key, value := range map[string]string{"workspace": params.Workspace, "harness": params.Harness, "started_by": params.StartedBy, "status": string(params.Status), "before": params.Before} {
+		if value != "" {
+			read[key] = value
+		}
+	}
+	if !s.recordRead(c, read) {
+		return
+	}
 	runs, err := s.cfg.Store.AuditRuns(c.Request.Context(), store.RunFilter{
 		Workspace: params.Workspace,
 		Harness:   params.Harness,
@@ -66,7 +75,7 @@ func (s handlers) ListAuditRuns(c *gin.Context, params api.ListAuditRunsParams) 
 
 // GetAuditRun shows an auditor a run of any workspace with its audit records.
 func (s handlers) GetAuditRun(c *gin.Context, id string) {
-	if !s.auditor(c) {
+	if !s.auditor(c) || !s.recordRead(c, map[string]any{"read": "run", "run": id}) {
 		return
 	}
 	ctx := c.Request.Context()
@@ -126,6 +135,9 @@ func (s handlers) ExportAuditLog(c *gin.Context, params api.ExportAuditLogParams
 	}
 	if params.After < 0 {
 		s.fail(c, http.StatusBadRequest, fmt.Errorf("after %d: must not be negative", params.After))
+		return
+	}
+	if !s.recordRead(c, map[string]any{"read": "export", "after": params.After}) {
 		return
 	}
 	ctx := c.Request.Context()

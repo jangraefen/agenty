@@ -191,7 +191,7 @@ func TestIdleRuns_ListsQueuedAndWaitingRuns(t *testing.T) {
 	ctx := context.Background()
 	s := storetest.New(t)
 	suspendRun(t, s, time.Hour)
-	v, err := s.PutHarness(ctx, ws, notes())
+	v, err := s.PutHarness(ctx, ws, "alice", notes())
 	require.NoError(t, err)
 	createRun(t, s, store.NewRun{ID: "r2", HarnessVersionID: v.ID, Input: "x", StartedBy: "alice"})
 

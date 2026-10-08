@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -13,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/jangraefen/agenty/internal/api"
+	"github.com/jangraefen/agenty/internal/auditlog"
 	"github.com/jangraefen/agenty/internal/policy"
 	"github.com/jangraefen/agenty/internal/store"
 )
@@ -138,7 +140,7 @@ func (s handlers) PutHarness(c *gin.Context, workspace, name string) {
 		s.fail(c, http.StatusBadRequest, fmt.Errorf("invalid harness: %w", err))
 		return
 	}
-	v, err := s.cfg.Store.PutHarness(c.Request.Context(), workspace, h)
+	v, err := s.cfg.Store.PutHarness(c.Request.Context(), workspace, c.GetString(userKey), h)
 	if err != nil {
 		s.failStore(c, err)
 		return
@@ -314,6 +316,13 @@ func (s handlers) CancelRun(c *gin.Context, workspace, id string) {
 		return
 	}
 	if h := s.hub(workspace, id); h != nil {
+		// A cancel stops an agent: it goes ahead even when the log cannot
+		// record the request. How the run ended, and by whom, is recorded
+		// as it ends.
+		request := auditlog.Event{Actor: c.GetString(userKey), Action: "run.cancel_requested", Workspace: workspace, RunID: id, Details: json.RawMessage("{}")}
+		if _, err := s.cfg.Store.AppendEvent(c.Request.Context(), request); err != nil {
+			s.cfg.Logger.Error("cannot record a cancel request", "run_id", id, "error", s.cfg.Resolved.Redactor.String(err.Error()))
+		}
 		by := cancelledBy(c.GetString(userKey))
 		// A worker that claims the run from now on finds it cancelled.
 		h.cancel(by)

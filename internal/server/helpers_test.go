@@ -54,6 +54,7 @@ const origin = "http://localhost:5173"
 // scripted models handed out one per run.
 type fixture struct {
 	store  *store.Store
+	dbURL  string
 	server *server.Server
 	http   *httptest.Server
 	logs   *syncBuffer
@@ -83,11 +84,11 @@ type options struct {
 func newFixture(t *testing.T, opts options) *fixture {
 	t.Helper()
 	f := &fixture{
-		store: storetest.New(t),
 		logs:  &syncBuffer{},
 		read:  &gatewaytest.Tool{Name: "files_read", Result: json.RawMessage(`{"content":"- milk"}`)},
 		write: &gatewaytest.Tool{Name: "files_write", Result: json.RawMessage(`{"ok":true}`)},
 	}
+	f.store, f.dbURL = storetest.NewWithURL(t)
 	f.files = &gatewaytest.Server{Tools: []toolgateway.Tool{f.read, f.write}}
 	f.serve(t, opts)
 	return f
@@ -118,9 +119,13 @@ func (f *fixture) serve(t *testing.T, opts options) {
 	f.server, err = server.New(context.Background(), server.Config{
 		Store: f.store,
 		Operator: &config.Config{
-			MCPServers: map[string]config.MCPServer{"files": {Command: "unused", IdleTimeout: opts.serverIdleTimeout}},
-			Policy:     opts.policy,
-			Users:      map[string]config.User{"dana": {Auditor: true}},
+			MCPServers: map[string]config.MCPServer{"files": {
+				Command:     "unused",
+				Args:        []string{"--db", "postgres://files:" + token + "@localhost/files"},
+				IdleTimeout: opts.serverIdleTimeout,
+			}},
+			Policy: opts.policy,
+			Users:  map[string]config.User{"alice": {}, "bob": {}, "carol": {}, "dana": {Auditor: true}},
 			Workspaces: map[string]config.Workspace{
 				"home": {Members: []string{"alice", "bob", "dana"}},
 				"work": {Members: []string{"bob"}},

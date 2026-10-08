@@ -418,7 +418,7 @@ func TestClose_LeavesRunsWaitingForApproval(t *testing.T) {
 func TestNew_FailsRunsOfAnEarlierServer(t *testing.T) {
 	f := newFixture(t, options{})
 	ctx := context.Background()
-	v, err := f.store.PutHarness(ctx, "home", notes())
+	v, err := f.store.PutHarness(ctx, "home", "alice", notes())
 	require.NoError(t, err)
 	f.storeRunning(t, store.NewRun{ID: "orphan", HarnessVersionID: v.ID, Input: "tidy", StartedBy: "alice"})
 	r, err := secret.NewRedactor(nil)
@@ -454,7 +454,7 @@ func TestRun_WithTheConfiguredAnthropicProvider(t *testing.T) {
 	t.Cleanup(srv.Close)
 	h := notes()
 	h.Tools = nil
-	v, err := s.PutHarness(context.Background(), "home", h)
+	v, err := s.PutHarness(context.Background(), "home", "alice", h)
 	require.NoError(t, err)
 	f := &fixture{store: s, server: srv}
 	f.http = newHTTP(t, srv)
@@ -831,7 +831,7 @@ func TestCancelRun(t *testing.T) {
 
 func TestCancelRun_RunningOnAnotherServer(t *testing.T) {
 	f := newFixture(t, options{})
-	v, err := f.store.PutHarness(context.Background(), "home", notes())
+	v, err := f.store.PutHarness(context.Background(), "home", "alice", notes())
 	require.NoError(t, err)
 	f.storeRunning(t, store.NewRun{ID: "elsewhere", HarnessVersionID: v.ID, Input: "x", StartedBy: "alice"})
 	var resp api.Error

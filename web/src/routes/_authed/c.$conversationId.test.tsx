@@ -551,6 +551,22 @@ describe("the conversation page", () => {
     expect(history.location.hash).toBe("#run-run-2");
   });
 
+  test("shows the first run when the rest of the conversation cannot be loaded", async () => {
+    server.use(
+      http.get(`${base}/runs/run-1/conversation`, () =>
+        HttpResponse.json({ error: "boom" }, { status: 500 }),
+      ),
+      ...conversationHandlers([run()]),
+      finishedEvents("run-1", run()),
+    );
+    renderApp(path, TOKEN);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The rest of the conversation could not be loaded: boom",
+    );
+    expect(screen.getByRole("heading", { name: "tidy my notes" })).toBeInTheDocument();
+  });
+
   test("scrolls to the run a link names", async () => {
     // jsdom does not scroll, and has no scrollIntoView to spy on.
     const scrolled: string[] = [];

@@ -11,10 +11,11 @@ export const Route = createFileRoute("/_authed/c/$conversationId")({
     const summary = await orNotFound(
       queryClient.ensureQueryData(conversationSummaryQuery(api, params.conversationId)),
     );
-    // The whole conversation, so the run the hash names is there to scroll to.
+    // The whole conversation, so the run the hash names is there to scroll
+    // to; the page says so itself if it cannot be loaded.
     await Promise.all([
       queryClient.ensureQueryData(runQuery(api, summary.workspace, summary.id)),
-      queryClient.ensureQueryData(conversationQuery(api, summary.workspace, summary.id)),
+      queryClient.prefetchQuery(conversationQuery(api, summary.workspace, summary.id)),
     ]);
   },
   component: ChatPage,

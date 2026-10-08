@@ -20,7 +20,8 @@ export function Shell({ sidebar, children }: { sidebar: ReactNode; children: Rea
       return;
     }
     const close = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      // A menu in the sidebar that Escape closes has handled it.
+      if (event.key === "Escape" && !event.defaultPrevented) {
         setOpen(false);
         toggle.current?.focus();
       }

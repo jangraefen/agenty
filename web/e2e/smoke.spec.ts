@@ -57,9 +57,6 @@ test("signs in, makes a harness, chats with it, and signs out", async ({ page })
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("failed", { exact: true })).toHaveCount(2, { timeout: 45_000 });
 
-  await manage.getByRole("link", { name: "Approvals" }).click();
-  await expect(page.getByText("Nothing is waiting for approval.")).toBeVisible();
-
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/sign-in$/);
   expect(await page.evaluate(() => localStorage.getItem("agenty.token"))).toBeNull();

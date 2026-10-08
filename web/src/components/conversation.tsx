@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { useRouteContext } from "@tanstack/react-router";
-import { Fragment, useId, useState } from "react";
+import { Fragment, useId } from "react";
 import type { Schemas } from "@/api/client";
-import { auditQuery, transcriptQuery, unfinished } from "@/api/queries";
+import { transcriptQuery, unfinished } from "@/api/queries";
 import type { AnswerOutcome } from "@/components/answer-notice";
 import { ApprovalCard } from "@/components/approval-card";
 import { CodeBlock } from "@/components/code-block";
@@ -18,21 +18,15 @@ type ToolResult = Schemas["ToolResult"];
 // Turn shows one run of a conversation as list items of a chat: the user's
 // input, the agent's replies with the tool calls they made, and how the run
 // went. Everything in it comes from the user, the model or tools, so it is
-// only ever rendered as text.
-//
-// live holds the audit records of the conversation's latest run, from its
-// event stream; any other run reads its audit log when it is opened. waiting
-// holds the run's approval requests.
+// only ever rendered as text. waiting holds the run's approval requests.
 export function Turn({
   run,
   workspace,
-  live,
   waiting,
   onOutcome,
 }: {
   run: Run;
   workspace: string;
-  live: Schemas["AuditRecord"][] | undefined;
   waiting: Schemas["ApprovalRequest"][];
   onOutcome: (outcome: AnswerOutcome) => void;
 }) {
@@ -115,7 +109,6 @@ export function Turn({
             <span title={formatUsageExactly(run.usage)}>{formatUsage(run.usage)}</span>
           )}
         </div>
-        <AuditLog run={run} workspace={workspace} live={live} />
       </li>
     </>
   );
@@ -256,76 +249,11 @@ function WaitingApprovals({
             key={request.id}
             request={request}
             workspace={workspace}
-            showRun={false}
             onOutcome={onOutcome}
           />
         ))}
       </ul>
     </section>
-  );
-}
-
-const eventLabels: Record<Schemas["AuditEvent"], string> = {
-  decision: "Policy decision",
-  approval: "Approval",
-  result: "Result",
-};
-
-// AuditLog shows what the gateway recorded for the run's tool calls, folded.
-// A run other than the live one reads its log once it is opened.
-function AuditLog({
-  run,
-  workspace,
-  live,
-}: {
-  run: Run;
-  workspace: string;
-  live: Schemas["AuditRecord"][] | undefined;
-}) {
-  const { api } = useRouteContext({ from: "/_authed" });
-  const [open, setOpen] = useState(false);
-  const stored = useQuery({
-    ...auditQuery(api, workspace, run.id),
-    enabled: open && live === undefined,
-  });
-  const records = live ?? stored.data ?? [];
-  return (
-    <details onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary className="cursor-pointer">Audit log</summary>
-      {stored.isError && (
-        <p className="mt-1 text-destructive">
-          The audit log could not be loaded: {stored.error.message}
-        </p>
-      )}
-      {records.length === 0 && !stored.isFetching && (
-        <p className="mt-1">No tool calls{unfinished(run.status) ? " yet" : ""}.</p>
-      )}
-      <ol aria-label="Audit log" className="mt-2 grid gap-3 text-foreground">
-        {records.map((record, index) => (
-          // Records have no id of their own; their order never changes.
-          // biome-ignore lint/suspicious/noArrayIndexKey: see above.
-          <li key={index} className="grid gap-1 border-l-2 pl-3 text-sm">
-            <div className="flex flex-wrap items-baseline gap-2">
-              <time dateTime={record.recorded_at} className="text-muted-foreground">
-                {formatTime(record.recorded_at)}
-              </time>
-              <span>{eventLabels[record.event]}</span>
-              <code className="font-semibold">{record.tool}</code>
-              <span className="rounded bg-muted px-1.5 text-xs">{record.decision}</span>
-              {record.approver !== undefined && <span>by {record.approver}</span>}
-            </div>
-            {record.reason !== undefined && record.reason !== "" && <p>{record.reason}</p>}
-            {record.event === "decision" && record.args !== undefined && (
-              <Json value={record.args} />
-            )}
-            {record.result !== undefined && <Json value={record.result} />}
-            {record.error !== undefined && record.error !== "" && (
-              <p className="text-destructive">{record.error}</p>
-            )}
-          </li>
-        ))}
-      </ol>
-    </details>
   );
 }
 

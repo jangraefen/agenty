@@ -35,12 +35,13 @@ import (
 // token is the files server's credential; the redactor knows it.
 const token = "files-token-0123456789"
 
-// The users' bearer tokens. alice and bob share the home workspace; only bob
-// is in work, and carol is in none.
+// The users' bearer tokens. alice, bob and dana share the home workspace;
+// only bob is in work, and carol is in none. dana is the auditor.
 const (
 	aliceToken = "alice-token-0123456789abcdefghijklmn"
 	bobToken   = "bob-token-0123456789abcdefghijklmnopq"
 	carolToken = "carol-token-0123456789abcdefghijklmn"
+	danaToken  = "dana-token-0123456789abcdefghijklmnop"
 )
 
 // home is the path of alice's workspace, where the tests work.
@@ -105,7 +106,7 @@ func (f *fixture) restart(t *testing.T, opts options) {
 // serve starts the fixture's server on its database.
 func (f *fixture) serve(t *testing.T, opts options) {
 	t.Helper()
-	redactor, err := secret.NewRedactor([]string{token, aliceToken, bobToken, carolToken})
+	redactor, err := secret.NewRedactor([]string{token, aliceToken, bobToken, carolToken, danaToken})
 	require.NoError(t, err)
 	newModel := opts.newModel
 	switch {
@@ -119,8 +120,9 @@ func (f *fixture) serve(t *testing.T, opts options) {
 		Operator: &config.Config{
 			MCPServers: map[string]config.MCPServer{"files": {Command: "unused", IdleTimeout: opts.serverIdleTimeout}},
 			Policy:     opts.policy,
+			Users:      map[string]config.User{"dana": {Auditor: true}},
 			Workspaces: map[string]config.Workspace{
-				"home": {Members: []string{"alice", "bob"}},
+				"home": {Members: []string{"alice", "bob", "dana"}},
 				"work": {Members: []string{"bob"}},
 			},
 			CORS:      config.CORS{Origins: []string{origin}},
@@ -140,7 +142,7 @@ func (f *fixture) serve(t *testing.T, opts options) {
 }
 
 // userTokens are the users' tokens, as config.Resolve returns them.
-var userTokens = map[string]string{"alice": aliceToken, "bob": bobToken, "carol": carolToken}
+var userTokens = map[string]string{"alice": aliceToken, "bob": bobToken, "carol": carolToken, "dana": danaToken}
 
 // newHTTP serves srv until the test ends, then closes it.
 func newHTTP(t *testing.T, srv *server.Server) *httptest.Server {
@@ -231,6 +233,14 @@ func (f *fixture) doAs(t *testing.T, bearer, method, path string, body, out any)
 		require.NoError(t, json.NewDecoder(got).Decode(out))
 	}
 	return resp.StatusCode
+}
+
+// audit returns a run's audit records, as an auditor reads them.
+func (f *fixture) audit(t *testing.T, runID string) []api.AuditRecord {
+	t.Helper()
+	var detail api.AuditRunDetail
+	require.Equal(t, http.StatusOK, f.doAs(t, danaToken, http.MethodGet, "/v1/audit/runs/"+runID, nil, &detail))
+	return detail.Records
 }
 
 // putNotes stores the notes harness.

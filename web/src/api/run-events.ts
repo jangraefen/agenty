@@ -2,7 +2,13 @@
 import { queryOptions, experimental_streamedQuery as streamedQuery } from "@tanstack/react-query";
 import { parseEventStream } from "@/lib/sse";
 import { type Api, type Schemas, unwrap } from "./client";
-import { approvalsQuery, conversationsKey, runQuery, runsKey, transcriptQuery } from "./queries";
+import {
+  approvalsQuery,
+  conversationsKey,
+  recentChatsKey,
+  runQuery,
+  transcriptQuery,
+} from "./queries";
 
 // A run's event stream, as its audit records so far, oldest first. The other
 // events update the queries they change: an approval request the waiting
@@ -53,7 +59,7 @@ export function runEventsQuery(api: Api, workspace: string, id: string) {
               client.setQueryData(queryKey, JSON.parse(data));
               invalidate(transcript);
               invalidate(approvals);
-              invalidate(runsKey(workspace));
+              invalidate(recentChatsKey());
               invalidate(conversationsKey(workspace));
               return;
             }

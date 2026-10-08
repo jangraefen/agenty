@@ -47,10 +47,11 @@ paths:
       description: |
         The conversations whose first run the user started, in the
         workspaces they are a member of, the one whose latest run was
-        started last first. Following up a conversation does not make it
-        the follower's. A conversation is continued, cancelled and answered
-        through its workspace. A conversation followed up while the pages
-        are read moves to the first page, so later pages leave it out.
+        started last first. Only its starter continues, cancels and answers
+        a conversation, through its workspace; in one from before runs were
+        private, another member's follow-up belongs to the starter too. A
+        conversation followed up while the pages are read moves to the
+        first page, so later pages leave it out.
       parameters:
         - $ref: "#/components/parameters/Limit"
         - name: before
@@ -68,11 +69,11 @@ paths:
   /v1/conversations/{id}:
     get:
       operationId: getConversation
-      summary: A conversation in one of the user's workspaces
+      summary: A conversation the user started, in one of their workspaces
       description: |
-        Any member of the conversation's workspace finds it, not only the
-        user who started it; in a workspace the user is not a member of, it
-        is not found. Only the ID of its first run names it.
+        Only the user who started the conversation finds it, and only while
+        they are a member of its workspace. Only the ID of its first run
+        names it.
       parameters:
         - name: id
           in: path
@@ -85,6 +86,63 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/ConversationSummary"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /v1/audit/runs:
+    get:
+      operationId: listAuditRuns
+      summary: The runs of every workspace, newest first, a page at a time, for auditors
+      description: |
+        Only auditors may list them; anyone else is forbidden. A run shows
+        what happened, not what was said: neither its input nor its output.
+      parameters:
+        - name: workspace
+          in: query
+          description: Only the runs of this workspace.
+          schema: {type: string}
+        - name: harness
+          in: query
+          description: Only the runs of harnesses with this name.
+          schema: {type: string}
+        - name: started_by
+          in: query
+          description: Only the runs this user started.
+          schema: {type: string}
+        - name: status
+          in: query
+          description: Only the runs with this status.
+          schema: {$ref: "#/components/schemas/RunStatus"}
+        - $ref: "#/components/parameters/Limit"
+        - name: before
+          in: query
+          description: |
+            Continue after the run with this ID, as AuditRunList.next gives
+            it. A run that does not exist gives an empty page.
+          schema: {type: string}
+      responses:
+        "200":
+          description: A page of runs.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AuditRunList"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /v1/audit/runs/{id}:
+    get:
+      operationId: getAuditRun
+      summary: A run of any workspace with its audit records, for auditors
+      description: Only auditors may read it; anyone else is forbidden.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: The run and its audit records, in the order they were recorded.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AuditRunDetail"}
         default: {$ref: "#/components/responses/Error"}
 
   /v1/workspaces/{workspace}/harnesses:
@@ -143,32 +201,6 @@ paths:
   /v1/workspaces/{workspace}/runs:
     parameters:
       - $ref: "#/components/parameters/Workspace"
-    get:
-      operationId: listRuns
-      summary: The runs, newest first, a page at a time
-      parameters:
-        - name: harness
-          in: query
-          description: Only the runs of this harness.
-          schema: {type: string}
-        - name: status
-          in: query
-          description: Only the runs with this status.
-          schema: {$ref: "#/components/schemas/RunStatus"}
-        - $ref: "#/components/parameters/Limit"
-        - name: before
-          in: query
-          description: |
-            Continue after the run with this ID, as RunList.next gives it. A
-            run that is not one of the workspace's gives an empty page.
-          schema: {type: string}
-      responses:
-        "200":
-          description: A page of runs.
-          content:
-            application/json:
-              schema: {$ref: "#/components/schemas/RunList"}
-        default: {$ref: "#/components/responses/Error"}
     post:
       operationId: createRun
       summary: Start a run of a harness's latest version
@@ -264,23 +296,6 @@ paths:
           description: The run is being cancelled.
         default: {$ref: "#/components/responses/Error"}
 
-  /v1/workspaces/{workspace}/runs/{id}/audit:
-    parameters:
-      - $ref: "#/components/parameters/Workspace"
-      - $ref: "#/components/parameters/RunID"
-    get:
-      operationId: getRunAudit
-      summary: A run's audit records, in the order they were recorded
-      responses:
-        "200":
-          description: The audit records.
-          content:
-            application/json:
-              schema:
-                type: array
-                items: {$ref: "#/components/schemas/AuditRecord"}
-        default: {$ref: "#/components/responses/Error"}
-
   /v1/workspaces/{workspace}/runs/{id}/transcript:
     parameters:
       - $ref: "#/components/parameters/Workspace"
@@ -351,7 +366,7 @@ paths:
       - $ref: "#/components/parameters/Workspace"
     get:
       operationId: listApprovals
-      summary: The approval requests waiting for an answer, oldest first
+      summary: The approval requests the user's own runs wait for, oldest first
       responses:
         "200":
           description: The requests.
@@ -378,6 +393,9 @@ components:
       name: id
       in: path
       required: true
+      description: |
+        A run of a conversation the user started. Any other run, also one of
+        another member's conversation, is not found.
       schema: {type: string}
     Limit:
       name: limit
@@ -401,13 +419,16 @@ components:
 
     Me:
       type: object
-      required: [user, workspaces]
+      required: [user, workspaces, auditor]
       properties:
         user: {type: string}
         workspaces:
           description: The workspaces the user is a member of, sorted.
           type: array
           items: {type: string}
+        auditor:
+          description: Whether the user may read the audit log of every workspace.
+          type: boolean
 
     Harness:
       description: A declarative definition of an agent.
@@ -551,20 +572,54 @@ components:
           type: integer
           format: int64
 
-    RunList:
+    AuditRun:
+      description: A run as auditors see it, without what was said in it.
+      type: object
+      required: [id, conversation_id, workspace, harness, harness_version, started_by, status, steps, usage, created_at]
+      properties:
+        id: {type: string}
+        conversation_id: {type: string}
+        follows: {type: string}
+        workspace: {type: string}
+        harness: {type: string}
+        harness_version: {type: integer}
+        started_by: {type: string}
+        status: {$ref: "#/components/schemas/RunStatus"}
+        steps: {type: integer}
+        usage: {$ref: "#/components/schemas/Usage"}
+        error:
+          description: Why the run failed, or who cancelled it.
+          type: string
+        created_at: {type: string, format: date-time}
+        finished_at:
+          description: Unset until the run has finished.
+          type: string
+          format: date-time
+          x-omitzero: true
+
+    AuditRunList:
       type: object
       required: [runs]
       properties:
         runs:
           type: array
-          items: {$ref: "#/components/schemas/Run"}
+          items: {$ref: "#/components/schemas/AuditRun"}
         next:
           description: The before parameter of the next page, which may be empty.
           type: string
 
+    AuditRunDetail:
+      type: object
+      required: [run, records]
+      properties:
+        run: {$ref: "#/components/schemas/AuditRun"}
+        records:
+          type: array
+          items: {$ref: "#/components/schemas/AuditRecord"}
+
     ConversationSummary:
       type: object
-      required: [id, workspace, harness, title]
+      required: [id, workspace, harness, title, status]
       properties:
         id:
           description: The ID of the conversation's first run, which names it.
@@ -574,6 +629,9 @@ components:
         title:
           description: The first run's input, cut to its first 100 characters.
           type: string
+        status:
+          description: The status of the conversation's latest run.
+          allOf: [{$ref: "#/components/schemas/RunStatus"}]
 
     ConversationList:
       type: object

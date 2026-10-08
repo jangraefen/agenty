@@ -396,27 +396,48 @@ func (s *Store) Conversation(ctx context.Context, workspace, id string) ([]Run, 
 	return out, nil
 }
 
+// OwnRun returns the run with the given ID in workspace, if user started its
+// conversation. Anyone else's run, as one of another workspace, is not
+// found.
+func (s *Store) OwnRun(ctx context.Context, workspace, user, id string) (Run, error) {
+	row, err := s.queries.GetOwnRun(ctx, db.GetOwnRunParams{ID: id, Workspace: workspace, Owner: user})
+	if err != nil {
+		return Run{}, notFound("run "+id, err)
+	}
+	return run(row.Run, row.Harness, row.HarnessVersion), nil
+}
+
+// AuditRun is a run as auditors see it, with its workspace.
+type AuditRun struct {
+	Run
+	Workspace string
+}
+
 // RunFilter selects runs to list.
 type RunFilter struct {
-	// Harness and Status, when set, select the runs of that harness or with
-	// that status.
-	Harness string
-	Status  RunStatus
+	// Workspace, Harness, StartedBy and Status, when set, select the runs of
+	// that workspace or harness, started by that user, or with that status.
+	Workspace string
+	Harness   string
+	StartedBy string
+	Status    RunStatus
 	// Before, when set, lists the runs after the run with that ID, in the
-	// order Runs returns them: a page after one ending with that run.
+	// order AuditRuns returns them: a page after one ending with that run.
 	Before string
 	// Limit is the most runs to return; it must be greater than 0.
 	Limit int
 }
 
-// Runs lists the runs of workspace that f selects, newest first.
-func (s *Store) Runs(ctx context.Context, workspace string, f RunFilter) ([]Run, error) {
+// AuditRuns lists the runs of every workspace that f selects, newest first.
+// Only auditors may see them.
+func (s *Store) AuditRuns(ctx context.Context, f RunFilter) ([]AuditRun, error) {
 	if f.Limit <= 0 || f.Limit > math.MaxInt32 {
 		return nil, fmt.Errorf("store: runs: limit %d is out of range", f.Limit)
 	}
-	rows, err := s.queries.ListRuns(ctx, db.ListRunsParams{
-		Workspace: workspace,
+	rows, err := s.queries.ListAuditRuns(ctx, db.ListAuditRunsParams{
+		Workspace: optional(f.Workspace),
 		Harness:   optional(f.Harness),
+		StartedBy: optional(f.StartedBy),
 		Status:    optional(string(f.Status)),
 		Before:    optional(f.Before),
 		MaxRows:   int32(f.Limit),
@@ -424,11 +445,21 @@ func (s *Store) Runs(ctx context.Context, workspace string, f RunFilter) ([]Run,
 	if err != nil {
 		return nil, fmt.Errorf("store: runs: %w", err)
 	}
-	out := make([]Run, len(rows))
+	out := make([]AuditRun, len(rows))
 	for i, row := range rows {
-		out[i] = run(row.Run, row.Harness, row.HarnessVersion)
+		out[i] = AuditRun{Run: run(row.Run, row.Harness, row.HarnessVersion), Workspace: row.Workspace}
 	}
 	return out, nil
+}
+
+// AuditRun returns the run with the given ID, of any workspace. Only
+// auditors may see it.
+func (s *Store) AuditRun(ctx context.Context, id string) (AuditRun, error) {
+	row, err := s.queries.GetAuditRun(ctx, id)
+	if err != nil {
+		return AuditRun{}, notFound("run "+id, err)
+	}
+	return AuditRun{Run: run(row.Run, row.Harness, row.HarnessVersion), Workspace: row.Workspace}, nil
 }
 
 // ConversationSummary is a conversation as a list shows it, named by the ID
@@ -439,6 +470,8 @@ type ConversationSummary struct {
 	Harness   string
 	// Title is the first run's input, cut to its first 100 characters.
 	Title string
+	// Status is the latest run's status.
+	Status RunStatus
 	// UpdatedAt is when the conversation's latest run was created. Only
 	// Conversations sets it.
 	UpdatedAt time.Time
@@ -484,20 +517,21 @@ func (s *Store) Conversations(ctx context.Context, f ConversationFilter) ([]Conv
 			Workspace: row.Workspace,
 			Harness:   row.Harness,
 			Title:     row.Title,
+			Status:    RunStatus(row.Status),
 			UpdatedAt: row.UpdatedAt,
 		}
 	}
 	return out, nil
 }
 
-// FindConversation returns the conversation named by id, if it is in one of
-// workspaces. A later run of a conversation does not name it.
-func (s *Store) FindConversation(ctx context.Context, workspaces []string, id string) (ConversationSummary, error) {
-	row, err := s.queries.FindConversation(ctx, db.FindConversationParams{ID: id, Workspaces: workspaces})
+// FindConversation returns the conversation named by id, if user started it
+// in one of workspaces. A later run of a conversation does not name it.
+func (s *Store) FindConversation(ctx context.Context, user string, workspaces []string, id string) (ConversationSummary, error) {
+	row, err := s.queries.FindConversation(ctx, db.FindConversationParams{ID: id, StartedBy: user, Workspaces: workspaces})
 	if err != nil {
 		return ConversationSummary{}, notFound("conversation "+id, err)
 	}
-	return ConversationSummary{ID: row.ID, Workspace: row.Workspace, Harness: row.Harness, Title: row.Title}, nil
+	return ConversationSummary{ID: row.ID, Workspace: row.Workspace, Harness: row.Harness, Title: row.Title, Status: RunStatus(row.Status)}, nil
 }
 
 // optional is s as a nullable query argument: empty is NULL.

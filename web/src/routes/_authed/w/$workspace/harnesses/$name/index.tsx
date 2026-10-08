@@ -30,14 +30,6 @@ function HarnessPage() {
           changed <time dateTime={stored.created_at}>{formatTime(stored.created_at)}</time>
         </span>
         <Link
-          to="/w/$workspace/runs"
-          params={{ workspace }}
-          search={{ harness: harness.name }}
-          className="ml-auto text-sm underline"
-        >
-          Runs of this harness
-        </Link>
-        <Link
           to="/"
           search={{ harness: `${workspace}/${harness.name}` }}
           className={buttonVariants({ size: "sm" })}

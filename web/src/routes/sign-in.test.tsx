@@ -11,7 +11,7 @@ beforeEach(() => {
 
 describe("signing in", () => {
   test("without a token, every page asks to sign in", async () => {
-    const { history } = renderApp("/w/notes/runs", null);
+    const { history } = renderApp("/w/notes/harnesses", null);
 
     expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
     expect(history.location.pathname).toBe("/sign-in");
@@ -93,7 +93,7 @@ describe("signing in", () => {
 
   test("a stored token the server no longer accepts signs out", async () => {
     server.use(meHandler({ user: "demo", workspaces: ["notes"] }));
-    const { history, session } = renderApp("/w/notes/runs", "a-revoked-token");
+    const { history, session } = renderApp("/w/notes/harnesses", "a-revoked-token");
 
     expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
     expect(history.location.pathname).toBe("/sign-in");
@@ -102,7 +102,7 @@ describe("signing in", () => {
 
   test("signing out forgets the token", async () => {
     server.use(meHandler({ user: "demo", workspaces: ["notes"] }));
-    const { history, session, user } = renderApp("/w/notes/runs", TOKEN);
+    const { history, session, user } = renderApp("/w/notes/harnesses", TOKEN);
 
     await user.click(await screen.findByRole("button", { name: "Sign out" }));
 
@@ -126,8 +126,8 @@ describe("signing in", () => {
 
   test("signing out in another tab signs out this one", async () => {
     server.use(meHandler({ user: "demo", workspaces: ["notes"] }));
-    const { history } = renderApp("/w/notes/runs", TOKEN);
-    await screen.findByRole("heading", { name: "Runs" });
+    const { history } = renderApp("/w/notes/harnesses", TOKEN);
+    await screen.findByRole("heading", { name: "Harnesses" });
 
     act(() => {
       localStorage.removeItem("agenty.token");
@@ -162,7 +162,7 @@ describe("workspaces", () => {
 
   test("the sidebar names the user and switches workspaces", async () => {
     server.use(meHandler({ user: "demo", workspaces: ["notes", "ops"] }));
-    const { history, user } = renderApp("/w/notes/runs", TOKEN);
+    const { history, user } = renderApp("/w/notes/harnesses", TOKEN);
 
     expect(await screen.findByText("demo")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Workspace: notes" }));
@@ -184,7 +184,7 @@ describe("workspaces", () => {
 
   test("Escape closes the workspace menu and returns to its button", async () => {
     server.use(meHandler({ user: "demo", workspaces: ["notes", "ops"] }));
-    const { user } = renderApp("/w/notes/runs", TOKEN);
+    const { user } = renderApp("/w/notes/harnesses", TOKEN);
 
     const button = await screen.findByRole("button", { name: "Workspace: notes" });
     await user.click(button);
@@ -197,7 +197,7 @@ describe("workspaces", () => {
 
   test("the workspace menu is worked with the arrow keys", async () => {
     server.use(meHandler({ user: "demo", workspaces: ["notes", "ops"] }));
-    const { history, user } = renderApp("/w/notes/runs", TOKEN);
+    const { history, user } = renderApp("/w/notes/harnesses", TOKEN);
 
     const button = await screen.findByRole("button", { name: "Workspace: notes" });
     button.focus();
@@ -212,11 +212,11 @@ describe("workspaces", () => {
 
   test("a click elsewhere closes the workspace menu", async () => {
     server.use(meHandler({ user: "demo", workspaces: ["notes", "ops"] }));
-    const { user } = renderApp("/w/notes/runs", TOKEN);
+    const { user } = renderApp("/w/notes/harnesses", TOKEN);
 
     await user.click(await screen.findByRole("button", { name: "Workspace: notes" }));
     await screen.findByRole("menu");
-    await user.click(screen.getByRole("heading", { name: "Runs" }));
+    await user.click(screen.getByRole("heading", { name: "Harnesses" }));
 
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
@@ -235,7 +235,7 @@ describe("workspaces", () => {
         return HttpResponse.json({ error: "unauthorized" }, { status: 401 });
       }),
     );
-    renderApp("/w/notes/runs", TOKEN);
+    renderApp("/w/notes/harnesses", TOKEN);
     expect(await screen.findByText("demo")).toBeInTheDocument();
 
     act(() => {

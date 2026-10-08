@@ -80,6 +80,7 @@ export function conversation(
     workspace: "notes",
     harness: "notes",
     title: "tidy my notes",
+    status: "succeeded",
     ...overrides,
   };
 }

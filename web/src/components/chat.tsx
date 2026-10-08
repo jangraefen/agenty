@@ -180,7 +180,6 @@ function Chat({
             key={run.id}
             run={run}
             workspace={workspace}
-            live={run.id === latest.id ? events.data : undefined}
             waiting={run.id === latest.id ? waiting : []}
             onOutcome={setOutcome}
           />

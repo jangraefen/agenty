@@ -1,17 +1,7 @@
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useRouteContext } from "@tanstack/react-router";
-import type { ReactNode } from "react";
-import type { IconType } from "react-icons";
-import {
-  LuBot,
-  LuChevronsUpDown,
-  LuHistory,
-  LuLogOut,
-  LuShieldCheck,
-  LuSquarePen,
-  LuUser,
-} from "react-icons/lu";
-import { approvalsQuery, recentChatsQuery } from "@/api/queries";
+import { LuBot, LuChevronsUpDown, LuLogOut, LuSquarePen, LuUser } from "react-icons/lu";
+import { recentChatsQuery } from "@/api/queries";
 import { ThemeMenu } from "@/components/theme-menu";
 import { Button } from "@/components/ui/button";
 import {
@@ -112,58 +102,15 @@ function RecentChats() {
 }
 
 function Manage({ workspace, workspaces }: { workspace: string; workspaces: string[] }) {
-  const { api } = useRouteContext({ from: "/_authed" });
-  const approvals = useQuery(approvalsQuery(api, workspace));
-  const waiting = approvals.data?.length ?? 0;
   return (
     <nav aria-label="Manage" className="grid gap-1">
       <h2 className="px-2 text-xs font-medium text-muted-foreground">Manage</h2>
       {workspaces.length > 1 && <WorkspaceMenu workspace={workspace} workspaces={workspaces} />}
-      <ul className="grid gap-0.5">
-        <ManageLink to="/w/$workspace/harnesses" workspace={workspace} icon={LuBot}>
-          Harnesses
-        </ManageLink>
-        <ManageLink to="/w/$workspace/runs" workspace={workspace} icon={LuHistory}>
-          Runs
-        </ManageLink>
-        <ManageLink
-          to="/w/$workspace/approvals"
-          workspace={workspace}
-          icon={LuShieldCheck}
-          label={waiting > 0 ? `Approvals (${waiting} waiting)` : undefined}
-        >
-          Approvals
-          {waiting > 0 && (
-            <span className="ml-auto rounded-full bg-amber-200 px-1.5 text-xs font-medium text-amber-950">
-              {waiting}
-            </span>
-          )}
-        </ManageLink>
-      </ul>
-    </nav>
-  );
-}
-
-function ManageLink({
-  to,
-  workspace,
-  icon: Icon,
-  label,
-  children,
-}: {
-  to: "/w/$workspace/harnesses" | "/w/$workspace/runs" | "/w/$workspace/approvals";
-  workspace: string;
-  icon: IconType;
-  label?: string | undefined;
-  children: ReactNode;
-}) {
-  return (
-    <li>
-      <Link to={to} params={{ workspace }} aria-label={label} className={itemClass}>
-        <Icon aria-hidden="true" className="size-4 shrink-0" />
-        {children}
+      <Link to="/w/$workspace/harnesses" params={{ workspace }} className={itemClass}>
+        <LuBot aria-hidden="true" className="size-4 shrink-0" />
+        Harnesses
       </Link>
-    </li>
+    </nav>
   );
 }
 

@@ -21,6 +21,9 @@ users:
     token: {env: ALICE_TOKEN}
   bob:
     token: {env: BOB_TOKEN}
+  carol:
+    token: {env: CAROL_TOKEN}
+    auditor: true
 workspaces:
   notes:
     members: [alice, bob]

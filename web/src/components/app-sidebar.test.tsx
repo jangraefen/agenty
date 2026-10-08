@@ -2,7 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { beforeEach, expect, test } from "vitest";
 import { apiUrl } from "@/config";
-import { approvalRequest, conversation } from "@/test/fixtures";
+import { conversation } from "@/test/fixtures";
 import { renderApp } from "@/test/render";
 import {
   conversationsHandler,
@@ -100,24 +100,16 @@ test("manages the workspace of the page", async () => {
     "aria-current",
     "page",
   );
-  expect(within(manage).getByRole("link", { name: "Runs" })).toHaveAttribute(
-    "href",
-    "/w/work/runs",
-  );
-  expect(within(manage).getByRole("link", { name: "Approvals" })).toHaveAttribute(
-    "href",
-    "/w/work/approvals",
-  );
 });
 
 test("manages none of a workspace the user is not a member of", async () => {
-  renderApp("/w/secret/runs", TOKEN);
+  renderApp("/w/secret/harnesses", TOKEN);
 
   await screen.findByRole("heading", { name: "Workspace not found" });
   const manage = screen.getByRole("navigation", { name: "Manage" });
-  expect(within(manage).getByRole("link", { name: "Runs" })).toHaveAttribute(
+  expect(within(manage).getByRole("link", { name: "Harnesses" })).toHaveAttribute(
     "href",
-    "/w/notes/runs",
+    "/w/notes/harnesses",
   );
 });
 
@@ -127,20 +119,6 @@ test("offers no workspace switcher with one workspace", async () => {
 
   const manage = await screen.findByRole("navigation", { name: "Manage" });
   expect(within(manage).queryByRole("button", { name: /Workspace/ })).not.toBeInTheDocument();
-});
-
-test("counts the approvals waiting in the managed workspace", async () => {
-  server.use(
-    http.get(`${apiUrl}/v1/workspaces/notes/approvals`, () =>
-      HttpResponse.json([approvalRequest(), approvalRequest({ id: "a2" })]),
-    ),
-  );
-  renderApp("/w/notes/harnesses", TOKEN);
-
-  const manage = await screen.findByRole("navigation", { name: "Manage" });
-  expect(
-    await within(manage).findByRole("link", { name: "Approvals (2 waiting)" }),
-  ).toBeInTheDocument();
 });
 
 test("the menu button shows and hides the sidebar, and a page left hides it", async () => {
@@ -154,8 +132,7 @@ test("the menu button shows and hides the sidebar, and a page left hides it", as
     "true",
   );
 
-  const manage = screen.getByRole("navigation", { name: "Manage" });
-  await user.click(within(manage).getByRole("link", { name: "Runs" }));
+  await user.click(screen.getByRole("link", { name: "New chat" }));
   expect(await screen.findByRole("button", { name: "Open sidebar" })).toHaveAttribute(
     "aria-expanded",
     "false",

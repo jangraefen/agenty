@@ -68,40 +68,6 @@ export function conversationSummaryQuery(api: Api, id: string) {
   });
 }
 
-export interface RunFilters {
-  harness?: string;
-  status?: RunStatus;
-}
-
-/** The key under which every list of a workspace's runs is cached. */
-export function runsKey(workspace: string) {
-  return ["workspaces", workspace, "runs"] as const;
-}
-
-// A workspace's runs, newest first, a page at a time. While one of them runs,
-// the pages are refreshed, so its status follows.
-export function runsQuery(api: Api, workspace: string, filters: RunFilters) {
-  return infiniteQueryOptions({
-    queryKey: [...runsKey(workspace), filters],
-    queryFn: ({ pageParam }) =>
-      unwrap(
-        api.GET("/v1/workspaces/{workspace}/runs", {
-          params: {
-            path: { workspace },
-            query: { ...filters, ...(pageParam === "" ? {} : { before: pageParam }) },
-          },
-        }),
-      ),
-    initialPageParam: "",
-    getNextPageParam: (page) =>
-      page.next === undefined || page.next === "" ? undefined : page.next,
-    refetchInterval: (query) =>
-      query.state.data?.pages.some((page) => page.runs.some((run) => unfinished(run.status)))
-        ? 5000
-        : false,
-  });
-}
-
 export function runQuery(api: Api, workspace: string, id: string) {
   return queryOptions({
     queryKey: ["workspaces", workspace, "run", id],
@@ -124,18 +90,6 @@ export function conversationQuery(api: Api, workspace: string, id: string) {
     queryFn: () =>
       unwrap(
         api.GET("/v1/workspaces/{workspace}/runs/{id}/conversation", {
-          params: { path: { workspace, id } },
-        }),
-      ),
-  });
-}
-
-export function auditQuery(api: Api, workspace: string, id: string) {
-  return queryOptions({
-    queryKey: ["workspaces", workspace, "run", id, "audit"],
-    queryFn: () =>
-      unwrap(
-        api.GET("/v1/workspaces/{workspace}/runs/{id}/audit", {
           params: { path: { workspace, id } },
         }),
       ),
@@ -194,6 +148,5 @@ export function cacheStartedRun(
     run,
   ]);
   void queryClient.invalidateQueries({ queryKey: conversationsKey(workspace) });
-  void queryClient.invalidateQueries({ queryKey: runsKey(workspace) });
   void queryClient.invalidateQueries({ queryKey: recentChatsKey() });
 }

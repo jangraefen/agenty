@@ -44,14 +44,14 @@ func TestFollowUp_ContinuesTheConversation(t *testing.T) {
 	require.Equal(t, api.RunStatusSucceeded, f.finish(t, first.ID).Status)
 	m := f.script(modeltest.CallTools(call("c2", "files_write", `{"path":"notes.md"}`)), modeltest.Reply("sorted"))
 
-	second := f.followUp(t, bobToken, first.ID, "and sort them")
+	second := f.followUp(t, aliceToken, first.ID, "and sort them")
 	finished := f.finish(t, second.ID)
 
 	assert.Equal(t, first.ID, first.ConversationID, "a conversation is named by its first run")
 	assert.Empty(t, first.Follows)
 	assert.Equal(t, first.ID, second.Follows)
 	assert.Equal(t, first.ID, second.ConversationID)
-	assert.Equal(t, "bob", second.StartedBy, "any member may follow up")
+	assert.Equal(t, "alice", second.StartedBy)
 	assert.Equal(t, "and sort them", second.Input)
 	assert.Equal(t, first.HarnessVersionID, second.HarnessVersionID)
 	assert.Equal(t, api.RunStatusSucceeded, finished.Status)
@@ -75,8 +75,7 @@ func TestFollowUp_ContinuesTheConversation(t *testing.T) {
 	require.Len(t, transcript, 4, "a run's transcript holds its own messages")
 	assert.Equal(t, 0, transcript[0].Position)
 	assert.Equal(t, "and sort them", transcript[0].Text)
-	var audit []api.AuditRecord
-	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+second.ID+"/audit", nil, &audit))
+	audit := f.audit(t, second.ID)
 	require.Len(t, audit, 2, "a run's audit log holds its own calls")
 	assert.Equal(t, "files_write", audit[0].Tool)
 
@@ -147,8 +146,7 @@ func TestInvariant_CentralPolicyReachesEveryConversation(t *testing.T) {
 	f.finish(t, second.ID)
 
 	assert.Equal(t, 1, f.write.Calls, "the rule added since applies to the conversation")
-	var audit []api.AuditRecord
-	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+second.ID+"/audit", nil, &audit))
+	audit := f.audit(t, second.ID)
 	require.NotEmpty(t, audit)
 	assert.Equal(t, "files_write", audit[0].Tool)
 	assert.Equal(t, api.DecisionDeny, audit[0].Decision)
@@ -583,12 +581,12 @@ func TestListConversations(t *testing.T) {
 
 	var page api.ConversationList
 	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, "/v1/conversations?limit=1", nil, &page))
-	assert.Equal(t, []api.ConversationSummary{{ID: second.ID, Workspace: "home", Harness: "notes", Title: "and the shopping list"}}, page.Conversations)
+	assert.Equal(t, []api.ConversationSummary{{ID: second.ID, Workspace: "home", Harness: "notes", Title: "and the shopping list", Status: api.RunStatusSucceeded}}, page.Conversations)
 	require.NotEmpty(t, page.Next, "a full page may not be the last")
 
 	var rest api.ConversationList
 	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, "/v1/conversations?before="+page.Next, nil, &rest))
-	assert.Equal(t, []api.ConversationSummary{{ID: first.ID, Workspace: "home", Harness: "notes", Title: "tidy my notes"}}, rest.Conversations)
+	assert.Equal(t, []api.ConversationSummary{{ID: first.ID, Workspace: "home", Harness: "notes", Title: "tidy my notes", Status: api.RunStatusSucceeded}}, rest.Conversations)
 	assert.Empty(t, rest.Next)
 
 	var theirs api.ConversationList
@@ -596,14 +594,15 @@ func TestListConversations(t *testing.T) {
 	assert.Empty(t, theirs.Conversations, "another member's conversations are not listed")
 
 	var found api.ConversationSummary
-	require.Equal(t, http.StatusOK, f.doAs(t, bobToken, http.MethodGet, "/v1/conversations/"+first.ID, nil, &found))
-	assert.Equal(t, rest.Conversations[0], found, "any member finds a conversation of the workspace")
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, "/v1/conversations/"+first.ID, nil, &found))
+	assert.Equal(t, rest.Conversations[0], found)
+	var e api.Error
+	assert.Equal(t, http.StatusNotFound, f.doAs(t, bobToken, http.MethodGet, "/v1/conversations/"+first.ID, nil, &e), "another member does not find it")
 
 	for _, path := range []string{"/v1/conversations?limit=0", "/v1/conversations?limit=201", "/v1/conversations?before=nonsense", "/v1/conversations?before=12.", "/v1/conversations?before=x.y"} {
 		var e api.Error
 		assert.Equal(t, http.StatusBadRequest, f.do(t, http.MethodGet, path, nil, &e), path)
 	}
-	var e api.Error
 	assert.Equal(t, http.StatusNotFound, f.do(t, http.MethodGet, "/v1/conversations/ghost", nil, &e))
 	assert.Equal(t, http.StatusNotFound, f.do(t, http.MethodGet, "/v1/conversations/"+second.ID+"x", nil, &e))
 }

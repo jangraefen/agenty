@@ -5,9 +5,26 @@ import { apiUrl } from "@/config";
 
 export type { Schemas };
 
+// Answers GET /v1/conversations with pages, keyed by their before parameter,
+// "" for the first, recording each request's query in queries if given.
+export function conversationsHandler(
+  pages: Record<string, Schemas["ConversationList"]>,
+  queries: URLSearchParams[] = [],
+) {
+  return http.get(`${apiUrl}/v1/conversations`, ({ request }) => {
+    const query = new URL(request.url).searchParams;
+    queries.push(query);
+    const page = pages[query.get("before") ?? ""];
+    return page === undefined
+      ? HttpResponse.json<Schemas["Error"]>({ error: "no such page" }, { status: 400 })
+      : HttpResponse.json(page);
+  });
+}
+
 // The mocked API. Tests add their handlers with server.use; a request no
-// handler answers fails the test.
-export const server = setupServer();
+// handler answers fails the test. The sidebar of every signed-in page lists
+// the user's conversations, none unless a test says otherwise.
+export const server = setupServer(conversationsHandler({ "": { conversations: [] } }));
 
 export const TOKEN = "a-test-token-of-at-least-32-characters";
 

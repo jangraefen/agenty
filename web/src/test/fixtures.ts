@@ -71,3 +71,15 @@ export function storedHarness(
   const base = harnessVersion(harness.name ?? "notes");
   return { ...base, ...version, harness: { ...base.harness, ...harness } };
 }
+
+export function conversation(
+  overrides: Partial<Schemas["ConversationSummary"]> = {},
+): Schemas["ConversationSummary"] {
+  return {
+    id: "run-1",
+    workspace: "notes",
+    harness: "notes",
+    title: "tidy my notes",
+    ...overrides,
+  };
+}

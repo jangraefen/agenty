@@ -38,7 +38,13 @@ describe("the runs page", () => {
       runsHandler({
         "": {
           runs: [
-            run({ id: "run-2", status: "running", input: "sort the inbox", started_by: "ana" }),
+            run({
+              id: "run-2",
+              conversation_id: "run-0",
+              status: "running",
+              input: "sort the inbox",
+              started_by: "ana",
+            }),
             run({ id: "run-1", status: "failed", harness: "triage", harness_version: 5 }),
           ],
         },
@@ -58,7 +64,7 @@ describe("the runs page", () => {
     expect(second).toHaveTextContent("triage v5");
     expect(within(first).getByRole("link", { name: "notes v3" })).toHaveAttribute(
       "href",
-      "/w/notes/runs/run-2",
+      "/c/run-0#run-run-2",
     );
     expect(second).toHaveTextContent("failed");
     expect(within(second).getByText(/./, { selector: "time" })).toHaveAttribute(
@@ -117,7 +123,7 @@ describe("the runs page", () => {
     expect(history.location.search).toContain("status=failed");
   });
 
-  test("pointing at the header's links fetches nothing already loaded", async () => {
+  test("pointing at the sidebar's links fetches nothing already loaded", async () => {
     const queries: URLSearchParams[] = [];
     let approvals = 0;
     server.use(
@@ -129,7 +135,7 @@ describe("the runs page", () => {
     );
     const { user } = renderApp("/w/notes/runs", TOKEN);
     await screen.findByRole("table", { name: "Runs" });
-    const pages = screen.getByRole("navigation", { name: "Pages" });
+    const pages = screen.getByRole("navigation", { name: "Manage" });
     await user.click(within(pages).getByRole("link", { name: "Approvals" }));
     await screen.findByText("Nothing is waiting for approval.");
     await user.click(within(pages).getByRole("link", { name: "Harnesses" }));

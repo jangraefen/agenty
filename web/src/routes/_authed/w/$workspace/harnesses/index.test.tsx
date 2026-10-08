@@ -48,25 +48,25 @@ test("says when the workspace has no harnesses", async () => {
   expect(await screen.findByText(/No harnesses yet/)).toBeInTheDocument();
 });
 
-test("the header links to the harnesses", async () => {
+test("the sidebar links to the harnesses", async () => {
   server.use(http.get(`${base}/harnesses`, () => HttpResponse.json([])));
   renderApp("/w/notes/harnesses", TOKEN);
 
-  const pages = await screen.findByRole("navigation", { name: "Pages" });
+  const pages = await screen.findByRole("navigation", { name: "Manage" });
   expect(within(pages).getByRole("link", { name: "Harnesses" })).toHaveAttribute(
     "aria-current",
     "page",
   );
 });
 
-test("says why the harnesses cannot be loaded, under the workspace's header", async () => {
+test("says why the harnesses cannot be loaded, beside the sidebar", async () => {
   server.use(
     http.get(`${base}/harnesses`, () => HttpResponse.json({ error: "boom" }, { status: 500 })),
   );
   renderApp("/w/notes/harnesses", TOKEN);
 
   expect(await screen.findByRole("alert")).toHaveTextContent("boom");
-  expect(screen.getByRole("navigation", { name: "Pages" })).toBeInTheDocument();
+  expect(screen.getByRole("navigation", { name: "Manage" })).toBeInTheDocument();
 });
 
 test("a page that could not be loaded can be tried again", async () => {

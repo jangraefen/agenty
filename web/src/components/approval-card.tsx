@@ -28,7 +28,7 @@ export function ApprovalCard({
   showRun: boolean;
   onOutcome: (outcome: AnswerOutcome) => void;
 }) {
-  const { api } = useRouteContext({ from: "/_authed/w/$workspace" });
+  const { api } = useRouteContext({ from: "/_authed" });
   const queryClient = useQueryClient();
   const now = useNow(1000);
   const [reason, setReason] = useState("");

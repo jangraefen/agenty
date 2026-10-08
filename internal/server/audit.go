@@ -92,7 +92,6 @@ func (s handlers) GetAuditRun(c *gin.Context, id string) {
 func apiAuditRun(r store.AuditRun) api.AuditRun {
 	out := api.AuditRun{
 		ID:             r.ID,
-		ConversationID: r.ConversationID,
 		Follows:        r.Follows,
 		Workspace:      r.Workspace,
 		Harness:        r.Harness,

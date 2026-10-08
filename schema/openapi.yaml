@@ -13,8 +13,9 @@ info:
     a workspace they left, read-only.
 
     Errors are returned as an Error: 400 for an invalid request, 401 without
-    a valid token, 403 for a request for a host that is not local or from a
-    web page of an origin that is not configured, 404 for anything not
+    a valid token, 403 for a request for a host that is not local, from a
+    web page of an origin that is not configured, or for the audit log's
+    runs, events and export by a user who is not an auditor, 404 for anything not
     found, workspaces included, 409 for cancelling a run that has finished,
     for following up a run that has not or that is followed up already, or
     for a run that has not finished but that this server does not run, 415
@@ -434,7 +435,9 @@ paths:
       operationId: streamRunEvents
       summary: A run's events, as server-sent events
       description: |
-        The events from the run's start. A running run's stream follows it
+        The events from the run's start. The stream of a run that has not
+        finished, queued, waiting or running, replays what it recorded so
+        far, a waiting run's approval request included, then follows it
         until it finishes; a finished run's stream replays its audit records
         and its end. Each event's data is JSON:
 
@@ -513,8 +516,10 @@ components:
     BeforeEvent:
       name: before
       in: query
-      description: Continue before the event with this id, as AuditLogEventList.next gives it.
-      schema: {type: integer, format: int64, minimum: 1}
+      description: |
+        Continue before the event with this id, as AuditLogEventList.next
+        gives it; 0, the default, starts at the newest.
+      schema: {type: integer, format: int64, minimum: 0, default: 0}
     Limit:
       name: limit
       in: query
@@ -611,12 +616,8 @@ components:
 
     HarnessVersion:
       type: object
-      required: [id, version, harness, created_at]
+      required: [version, harness, created_at]
       properties:
-        id:
-          description: Identifies the version across all harnesses.
-          type: integer
-          format: int64
         version: {type: integer}
         harness: {$ref: "#/components/schemas/Harness"}
         created_at: {type: string, format: date-time}
@@ -644,7 +645,7 @@ components:
 
     Run:
       type: object
-      required: [id, conversation_id, harness_version_id, harness, harness_version, started_by, input, status, output, steps, usage, created_at]
+      required: [id, conversation_id, harness, harness_version, started_by, input, status, output, steps, usage, created_at]
       properties:
         id: {type: string}
         conversation_id:
@@ -655,7 +656,6 @@ components:
         follows:
           description: The run whose conversation this run continues, if any.
           type: string
-        harness_version_id: {type: integer, format: int64}
         harness: {type: string}
         harness_version: {type: integer}
         started_by:
@@ -705,10 +705,9 @@ components:
     AuditRun:
       description: A run as auditors see it, without what was said in it.
       type: object
-      required: [id, conversation_id, workspace, harness, harness_version, started_by, status, steps, usage, created_at]
+      required: [id, workspace, harness, harness_version, started_by, status, steps, usage, created_at]
       properties:
         id: {type: string}
-        conversation_id: {type: string}
         follows: {type: string}
         workspace: {type: string}
         harness: {type: string}
@@ -732,6 +731,8 @@ components:
         One event of the audit log, as package auditlog hashes it: hash is
         the SHA-256 of a fixed encoding of the other fields, prev_hash the
         hash of the event before it, zero before the first.
+      x-go-type: auditlog.Event
+      x-go-type-import: {path: github.com/jangraefen/agenty/internal/auditlog}
       type: object
       additionalProperties: false
       required: [id, recorded_at, actor, action, workspace, run_id, target, details, prev_hash, hash]
@@ -824,9 +825,8 @@ components:
     AuditRecord:
       description: One decision, approval or result the tool gateway recorded.
       type: object
-      required: [run_id, call_id, event, tool, decision, recorded_at]
+      required: [call_id, event, tool, decision, recorded_at]
       properties:
-        run_id: {type: string}
         call_id: {type: string}
         event: {$ref: "#/components/schemas/AuditEvent"}
         tool: {type: string}
@@ -860,22 +860,15 @@ components:
         content: {type: string}
         is_error: {type: boolean}
 
-    ProviderPart:
-      description: |
-        A message in the form of the provider that generated it, kept so it
-        can be sent to the model again.
-      type: object
-      required: [name, data]
-      properties:
-        name: {type: string}
-        data: {$ref: "#/components/schemas/JSON"}
-
     TranscriptMessage:
       description: |
         One message of a run's conversation with the model: the input, a
-        model reply, or the results of the reply's tool calls.
+        model reply, or the results of the reply's tool calls. What the
+        provider kept of a reply for the model, such as its thinking, is
+        not part of it.
       type: object
-      required: [position, role, created_at]
+      additionalProperties: false
+      required: [position, role]
       properties:
         position:
           description: The message's index in the conversation.
@@ -888,14 +881,6 @@ components:
         tool_results:
           type: array
           items: {$ref: "#/components/schemas/ToolResult"}
-        provider:
-          allOf: [{$ref: "#/components/schemas/ProviderPart"}]
-          x-omitzero: true
-        usage:
-          description: The tokens of the model call that wrote a reply.
-          allOf: [{$ref: "#/components/schemas/Usage"}]
-          x-omitzero: true
-        created_at: {type: string, format: date-time}
 
     ApprovalRequest:
       description: |

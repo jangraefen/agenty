@@ -4,7 +4,6 @@ export function run(overrides: Partial<Schemas["Run"]> = {}): Schemas["Run"] {
   return {
     id: "run-1",
     conversation_id: "run-1",
-    harness_version_id: 7,
     harness: "notes",
     harness_version: 3,
     started_by: "demo",
@@ -23,7 +22,6 @@ export function auditRecord(
   overrides: Partial<Schemas["AuditRecord"]> = {},
 ): Schemas["AuditRecord"] {
   return {
-    run_id: "run-1",
     call_id: "call-1",
     event: "decision",
     tool: "files_read_file",
@@ -56,7 +54,6 @@ export function storedHarness(
   version: Partial<Omit<Schemas["HarnessVersion"], "harness">> = {},
 ): Schemas["HarnessVersion"] {
   return {
-    id: 1,
     version: 1,
     created_at: "2026-10-01T09:00:00Z",
     ...version,
@@ -86,7 +83,6 @@ export function conversation(
 export function auditRun(overrides: Partial<Schemas["AuditRun"]> = {}): Schemas["AuditRun"] {
   return {
     id: "run-1",
-    conversation_id: "run-1",
     workspace: "notes",
     harness: "notes",
     harness_version: 3,

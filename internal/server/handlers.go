@@ -176,7 +176,7 @@ func (s handlers) GetHarness(c *gin.Context, workspace, name string) {
 }
 
 func harnessVersion(v store.HarnessVersion) api.HarnessVersion {
-	return api.HarnessVersion{ID: v.ID, Version: v.Version, Harness: api.FromHarness(v.Harness), CreatedAt: v.CreatedAt}
+	return api.HarnessVersion{Version: v.Version, Harness: api.FromHarness(v.Harness), CreatedAt: v.CreatedAt}
 }
 
 func (s handlers) CreateRun(c *gin.Context, workspace string) {
@@ -296,20 +296,19 @@ func (s handlers) GetRun(c *gin.Context, workspace, id string) {
 
 func apiRun(r store.Run) api.Run {
 	out := api.Run{
-		ID:               r.ID,
-		HarnessVersionID: r.HarnessVersionID,
-		Harness:          r.Harness,
-		HarnessVersion:   r.HarnessVersion,
-		StartedBy:        r.StartedBy,
-		Input:            r.Input,
-		Status:           api.RunStatus(r.Status),
-		Output:           r.Output,
-		Steps:            r.Steps,
-		Usage:            api.FromUsage(r.Usage),
-		Error:            r.Error,
-		CreatedAt:        r.CreatedAt,
-		ConversationID:   r.ConversationID,
-		Follows:          r.Follows,
+		ID:             r.ID,
+		Harness:        r.Harness,
+		HarnessVersion: r.HarnessVersion,
+		StartedBy:      r.StartedBy,
+		Input:          r.Input,
+		Status:         api.RunStatus(r.Status),
+		Output:         r.Output,
+		Steps:          r.Steps,
+		Usage:          api.FromUsage(r.Usage),
+		Error:          r.Error,
+		CreatedAt:      r.CreatedAt,
+		ConversationID: r.ConversationID,
+		Follows:        r.Follows,
 	}
 	if r.FinishedAt != nil {
 		out.FinishedAt = *r.FinishedAt
@@ -390,7 +389,7 @@ func (s handlers) GetRunTranscript(c *gin.Context, workspace, id string) {
 	}
 	out := make([]api.TranscriptMessage, len(messages))
 	for i, m := range messages {
-		out[i] = api.FromMessage(m.Position, m.Message, m.CreatedAt)
+		out[i] = api.FromMessage(m.Position, m.Message)
 	}
 	c.JSON(http.StatusOK, out)
 }

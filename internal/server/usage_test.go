@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"context"
 	"net/http"
 	"testing"
 
@@ -29,10 +30,10 @@ func TestRun_ReportsUsage(t *testing.T) {
 	var got api.Run
 	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+run.ID, nil, &got))
 	assert.Equal(t, want, got.Usage)
-	var transcript []api.TranscriptMessage
-	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+run.ID+"/transcript", nil, &transcript))
+	transcript, err := f.store.Transcript(context.Background(), run.ID)
+	require.NoError(t, err)
 	require.Len(t, transcript, 4)
-	assert.Zero(t, transcript[0].Usage, "an input has no usage")
-	assert.Equal(t, api.Usage{InputTokens: 100, OutputTokens: 10, CacheWriteTokens: 1000}, transcript[1].Usage)
-	assert.Equal(t, api.Usage{InputTokens: 20, OutputTokens: 5, CacheReadTokens: 1000}, transcript[3].Usage)
+	assert.Nil(t, transcript[0].Usage, "an input has no usage")
+	assert.Equal(t, &model.Usage{InputTokens: 100, OutputTokens: 10, CacheWriteTokens: 1000}, transcript[1].Usage, "each reply keeps its call's usage")
+	assert.Equal(t, &model.Usage{InputTokens: 20, OutputTokens: 5, CacheReadTokens: 1000}, transcript[3].Usage)
 }

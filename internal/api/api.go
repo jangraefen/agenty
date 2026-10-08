@@ -64,7 +64,6 @@ func (h Harness) ToHarness() harness.Harness {
 // FromRecord returns rec, recorded at the given time, in its API form.
 func FromRecord(rec toolgateway.Record, recordedAt time.Time) AuditRecord {
 	return AuditRecord{
-		RunID:      rec.RunID,
 		CallID:     rec.CallID,
 		Event:      AuditEvent(rec.Event),
 		Tool:       rec.Tool,
@@ -78,21 +77,16 @@ func FromRecord(rec toolgateway.Record, recordedAt time.Time) AuditRecord {
 	}
 }
 
-// FromMessage returns msg, at position in its conversation and stored at the
-// given time, in its API form.
-func FromMessage(position int, msg model.Message, createdAt time.Time) TranscriptMessage {
-	out := TranscriptMessage{Position: position, Role: Role(msg.Role), Text: msg.Text, CreatedAt: createdAt}
+// FromMessage returns msg, at position in its conversation, in its API form:
+// what was said, without the provider's own form of a reply, which is kept
+// only to send it to the model again.
+func FromMessage(position int, msg model.Message) TranscriptMessage {
+	out := TranscriptMessage{Position: position, Role: Role(msg.Role), Text: msg.Text}
 	for _, c := range msg.ToolCalls {
 		out.ToolCalls = append(out.ToolCalls, ToolCall{ID: c.ID, Name: c.Name, Args: c.Args})
 	}
 	for _, r := range msg.ToolResults {
 		out.ToolResults = append(out.ToolResults, ToolResult{CallID: r.CallID, Content: r.Content, IsError: r.IsError})
-	}
-	if p := msg.Provider; p != nil {
-		out.Provider = ProviderPart{Name: p.Name, Data: p.Data}
-	}
-	if u := msg.Usage; u != nil {
-		out.Usage = FromUsage(*u)
 	}
 	return out
 }

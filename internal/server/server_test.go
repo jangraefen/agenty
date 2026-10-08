@@ -142,7 +142,7 @@ func TestRun_SucceedsAndStreamsItsEvents(t *testing.T) {
 	decision := decodeAs[api.AuditRecord](t, events[0])
 	assert.Equal(t, api.EventAudit, events[0].name)
 	assert.Equal(t, api.AuditEventDecision, decision.Event)
-	assert.Equal(t, run.ID, decision.RunID)
+	assert.Equal(t, "files_read", decision.Tool)
 	result := decodeAs[api.AuditRecord](t, events[1])
 	assert.Equal(t, api.AuditEventResult, result.Event)
 	assert.JSONEq(t, `{"content":"- milk"}`, string(result.Result))
@@ -176,7 +176,6 @@ func TestRun_SucceedsAndStreamsItsEvents(t *testing.T) {
 	assert.Equal(t, "- milk", transcript[3].Text)
 	for i, m := range transcript {
 		assert.Equal(t, i, m.Position)
-		assert.False(t, m.CreatedAt.IsZero())
 	}
 }
 
@@ -384,15 +383,24 @@ func TestInvariant_ServerCredentialsNeverLeak(t *testing.T) {
 	assert.Equal(t, "the token is [redacted]", transcript[len(transcript)-1].Text)
 	assert.Contains(t, string(transcript[1].ToolCalls[0].Args), "[redacted]", "the model's own arguments are redacted too")
 	assert.Equal(t, 1, f.write.Calls, "the approved call ran, and failed")
-	require.Equal(t, "scripted", transcript[len(transcript)-1].Provider.Name)
-	assert.JSONEq(t, `{"thinking":"I saw [redacted]"}`, string(transcript[len(transcript)-1].Provider.Data), "so is the provider's form of a reply")
+	// The API leaves out the provider's form of a reply; the store keeps it
+	// for the model, redacted as well.
+	assert.NotContains(t, string(transcriptJSON), "thinking", "the API does not send the provider's form of a reply")
+	kept, err := f.store.Transcript(context.Background(), run.ID)
+	require.NoError(t, err)
+	last := kept[len(kept)-1].Provider
+	require.NotNil(t, last, "the store keeps the provider's form of a reply")
+	require.Equal(t, "scripted", last.Name)
+	assert.JSONEq(t, `{"thinking":"I saw [redacted]"}`, string(last.Data), "so is the provider's form of a reply")
+	keptJSON, err := json.Marshal(kept)
+	require.NoError(t, err)
 	approval, ok, err := f.store.LatestApproval(context.Background(), run.ID)
 	require.NoError(t, err)
 	require.True(t, ok)
 	approvalJSON, err := json.Marshal(approval)
 	require.NoError(t, err)
 	assert.Contains(t, string(approvalJSON), "[redacted]", "the results the request keeps are redacted")
-	for _, data := range append(seen, string(storedJSON), string(auditJSON), string(transcriptJSON), string(approvalJSON), f.logs.String()) {
+	for _, data := range append(seen, string(storedJSON), string(auditJSON), string(transcriptJSON), string(keptJSON), string(approvalJSON), f.logs.String()) {
 		assert.NotContains(t, data, token)
 	}
 	assert.Contains(t, strings.Join(seen, "\n"), "[redacted]")
@@ -466,7 +474,7 @@ func TestRun_WithTheConfiguredAnthropicProvider(t *testing.T) {
 	finished := decodeAs[api.Run](t, events[len(events)-1])
 	assert.Equal(t, api.RunStatusSucceeded, finished.Status)
 	assert.Equal(t, "hello", finished.Output)
-	assert.Equal(t, v.ID, finished.HarnessVersionID)
+	assert.Equal(t, v.Version, finished.HarnessVersion)
 	require.Len(t, fake.Requests(), 1)
 }
 

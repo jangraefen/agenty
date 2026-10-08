@@ -67,14 +67,6 @@ func serverStarted(cfg Config) auditlog.Event {
 // members see in its audit log.
 var workspaceChanges = []string{"harness.changed"}
 
-// eventList is a page of the audit log as the API lists it. It is not the
-// generated api.AuditLogEventList: the events are package auditlog's, so
-// their details keep the canonical text their hashes cover.
-type eventList struct {
-	Events []auditlog.Event `json:"events"`
-	Next   int64            `json:"next,omitempty"`
-}
-
 // listEvents answers with a page of events that list returns, its limit and
 // before taken from the request's parameters (before 0 for the newest).
 func (s handlers) listEvents(c *gin.Context, limit int, before int64, list func(before int64, limit int) ([]auditlog.Event, error)) {
@@ -91,7 +83,9 @@ func (s handlers) listEvents(c *gin.Context, limit int, before int64, list func(
 		s.failStore(c, err)
 		return
 	}
-	out := eventList{Events: events}
+	// The spec makes api.AuditLogEvent package auditlog's Event, so the
+	// details keep the canonical text their hashes cover.
+	out := api.AuditLogEventList{Events: events}
 	// A full page may be the last: the next one is then empty.
 	if len(events) == limit {
 		out.Next = events[len(events)-1].ID

@@ -70,7 +70,7 @@ function approvalsHandler(requests: Schemas["ApprovalRequest"][]) {
 }
 
 function message(position: number, fields: Partial<Message>): Message {
-  return { position, role: "user", created_at: "2026-10-06T10:00:00Z", ...fields };
+  return { position, role: "user", ...fields };
 }
 
 const { finished_at: _, ...runningRun } = run({ status: "running", output: "" });

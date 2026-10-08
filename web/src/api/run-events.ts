@@ -42,7 +42,9 @@ export function runEventsQuery(api: Api, workspace: string, id: string) {
             case "audit": {
               const record: Schemas["AuditRecord"] = JSON.parse(data);
               if (record.event === "approval") {
+                // Answered, here or elsewhere: the run waits no longer.
                 invalidate(approvals);
+                invalidate(recentChatsKey());
               }
               // The model's messages land in the transcript between tool calls.
               invalidate(transcript);

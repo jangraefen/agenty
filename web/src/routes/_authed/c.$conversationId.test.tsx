@@ -336,7 +336,7 @@ describe("the conversation page", () => {
     expect(within(waiting).queryByText("files_delete")).not.toBeInTheDocument();
   });
 
-  test("answers a waiting approval in the chat", async () => {
+  test("answers a waiting approval in the chat, which then waits no longer", async () => {
     const live = liveEventStream();
     let answer: unknown = null;
     let pending = [
@@ -351,8 +351,15 @@ describe("the conversation page", () => {
         pending = [];
         return new HttpResponse(null, { status: 204 });
       }),
+      http.get(`${apiUrl}/v1/conversations`, () =>
+        HttpResponse.json<Schemas["ConversationList"]>({
+          conversations: [conversation({ status: pending.length > 0 ? "waiting" : "running" })],
+        }),
+      ),
     );
     const { user } = renderApp(path, TOKEN);
+    const recent = await screen.findByRole("navigation", { name: "Recent chats" });
+    await within(recent).findByRole("link", { name: "tidy my notes (waiting for approval)" });
 
     const waiting = await screen.findByRole("region", { name: "Waiting for approval" });
     await user.click(await within(waiting).findByRole("button", { name: "Approve" }));
@@ -366,9 +373,10 @@ describe("the conversation page", () => {
     expect(screen.getByRole("status", { name: "Answers" })).toHaveTextContent(
       "Approved files_write_file.",
     );
+    expect(await within(recent).findByRole("link", { name: "tidy my notes" })).toBeInTheDocument();
   });
 
-  test("refreshes the waiting approvals when the run asks for one", async () => {
+  test("refreshes the waiting approvals and the recent chats when the run asks for one", async () => {
     const live = liveEventStream();
     let asked = false;
     let fetched = false;
@@ -379,6 +387,11 @@ describe("the conversation page", () => {
         fetched = true;
         return HttpResponse.json(asked ? [approvalRequest()] : []);
       }),
+      http.get(`${apiUrl}/v1/conversations`, () =>
+        HttpResponse.json<Schemas["ConversationList"]>({
+          conversations: [conversation({ status: asked ? "waiting" : "running" })],
+        }),
+      ),
     );
     renderApp(path, TOKEN);
     await screen.findByText("running");
@@ -390,6 +403,10 @@ describe("the conversation page", () => {
     live.send("approval", approvalRequest());
 
     expect(await screen.findByRole("region", { name: "Waiting for approval" })).toBeInTheDocument();
+    const recent = screen.getByRole("navigation", { name: "Recent chats" });
+    expect(
+      await within(recent).findByRole("link", { name: "tidy my notes (waiting for approval)" }),
+    ).toBeInTheDocument();
   });
 
   test("cancels the running run", async () => {

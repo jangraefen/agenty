@@ -1,6 +1,6 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { type FormEvent, useId } from "react";
+import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { type AuditFilters, auditRunsQuery, isRunStatus, runStatuses } from "@/api/queries";
 import { RunStatusBadge } from "@/components/run-status";
 import { Button } from "@/components/ui/button";
@@ -16,8 +16,8 @@ function auditFilters(search: Record<string, unknown>): AuditFilters {
   const filters: AuditFilters = {};
   for (const name of textFilters) {
     const value = search[name];
-    if (typeof value === "string" && value !== "") {
-      filters[name] = value;
+    if (typeof value === "string" && value.trim() !== "") {
+      filters[name] = value.trim();
     }
   }
   if (isRunStatus(search.status)) {
@@ -48,6 +48,29 @@ function AuditRuns() {
   const pages = runs.data?.pages ?? [];
   const shown = pages.reduce((count, page) => count + page.runs.length, 0);
   const filtered = Object.keys(filters).length > 0;
+
+  // After loading more, the focus moves to the first run of the page loaded,
+  // as the button may be gone; after an empty page, to the table. A page
+  // that fails leaves it on the button.
+  const table = useRef<HTMLTableElement>(null);
+  const [focusRun, setFocusRun] = useState<string | null>(null);
+  useEffect(() => {
+    if (focusRun === null) {
+      return;
+    }
+    const link = table.current?.querySelector<HTMLElement>(
+      `tr[data-run="${CSS.escape(focusRun)}"] a`,
+    );
+    (link ?? table.current)?.focus();
+    setFocusRun(null);
+  }, [focusRun]);
+
+  async function loadMore() {
+    const result = await runs.fetchNextPage();
+    if (result.isSuccess) {
+      setFocusRun(result.data.pages.at(-1)?.runs[0]?.id ?? "");
+    }
+  }
 
   function filter(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -106,6 +129,13 @@ function AuditRuns() {
           The runs could not be loaded: {runs.error.message}
         </p>
       )}
+      <p role="status" className="sr-only">
+        {runs.isFetchingNextPage
+          ? "Loading more runs…"
+          : runs.data === undefined
+            ? ""
+            : `${shown} ${shown === 1 ? "run" : "runs"} shown.`}
+      </p>
       {runs.isSuccess && shown === 0 && (
         <p className="text-muted-foreground">
           {filtered ? "No runs match these filters." : "No runs yet."}
@@ -114,7 +144,12 @@ function AuditRuns() {
       {shown > 0 && (
         // Scrolls sideways where the page is narrower than the table.
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm" aria-busy={runs.isFetching}>
+          <table
+            ref={table}
+            tabIndex={-1}
+            className="w-full text-left text-sm -outline-offset-2 focus-visible:outline-2 focus-visible:outline-ring"
+            aria-busy={runs.isFetching}
+          >
             <caption className="sr-only">Runs</caption>
             <thead className="border-b text-muted-foreground">
               <tr>
@@ -129,7 +164,7 @@ function AuditRuns() {
             <tbody>
               {pages.flatMap((page) =>
                 page.runs.map((run) => (
-                  <tr key={run.id} className="border-b last:border-0">
+                  <tr key={run.id} data-run={run.id} className="border-b last:border-0">
                     <td className="py-2 pr-4 whitespace-nowrap">
                       <Link
                         to="/audit/runs/$runId"
@@ -169,7 +204,7 @@ function AuditRuns() {
           variant="outline"
           className="justify-self-start"
           aria-disabled={runs.isFetchingNextPage}
-          onClick={() => void runs.fetchNextPage()}
+          onClick={() => void loadMore()}
         >
           Load more
         </Button>

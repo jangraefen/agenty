@@ -109,7 +109,7 @@ task demo    # in a second terminal: applies the notes harness and runs it
 
 `task --list` shows the other tasks: `test`, `lint`, `check` (what CI checks), and the database's `db`, `db:stop` and `db:reset`. MCP servers inherit only `PATH`; behind an HTTP proxy, set its variables in the server's `env` in `agenty.yaml`.
 
-The example's central policy asks before every file change and denies dotfiles; its harness allows one rewrite per run. The example's user `demo` works in the workspace `notes`, signing in with `AGENTY_TOKEN`, which the Taskfile sets to a fixed local token unless the environment or `.env` sets another. `agenty run` asks at the terminal. The demo user is an auditor too, so the audit log of a run is at `GET /v1/audit/runs/{id}`.
+The example's central policy asks before every file change and denies dotfiles; its harness allows one rewrite per run. The example's user `demo` works in the workspace `notes`, signing in with `AGENTY_TOKEN`, which the Taskfile sets to a fixed local token unless the environment or `.env` sets another. `agenty run` asks at the terminal. The demo user is an auditor too, so the web frontend's Audit log shows every run's audit records, and the API has them at `GET /v1/audit/runs/{id}`.
 
 ## The web frontend
 

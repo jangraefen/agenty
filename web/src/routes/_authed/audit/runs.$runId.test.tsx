@@ -4,7 +4,7 @@ import { beforeEach, expect, test } from "vitest";
 import { apiUrl } from "@/config";
 import { auditRecord, auditRun } from "@/test/fixtures";
 import { renderApp } from "@/test/render";
-import { emptyWorkspaceHandlers, meHandler, server, TOKEN } from "@/test/server";
+import { emptyWorkspaceHandlers, meHandler, type Schemas, server, TOKEN } from "@/test/server";
 
 beforeEach(() => {
   server.use(
@@ -16,7 +16,7 @@ beforeEach(() => {
 test("shows a run and what the gateway recorded for it", async () => {
   server.use(
     http.get(`${apiUrl}/v1/audit/runs/run-1`, () =>
-      HttpResponse.json({
+      HttpResponse.json<Schemas["AuditRunDetail"]>({
         run: auditRun({ started_by: "ana", error: "cancelled by ana", status: "cancelled" }),
         records: [
           auditRecord({
@@ -49,7 +49,7 @@ test("shows a run and what the gateway recorded for it", async () => {
 test("says when a run recorded no tool calls", async () => {
   server.use(
     http.get(`${apiUrl}/v1/audit/runs/run-1`, () =>
-      HttpResponse.json({ run: auditRun(), records: [] }),
+      HttpResponse.json<Schemas["AuditRunDetail"]>({ run: auditRun(), records: [] }),
     ),
   );
   renderApp("/audit/runs/run-1", TOKEN);
@@ -60,7 +60,7 @@ test("says when a run recorded no tool calls", async () => {
 test("a run that does not exist is not found", async () => {
   server.use(
     http.get(`${apiUrl}/v1/audit/runs/ghost`, () =>
-      HttpResponse.json({ error: "run ghost: not found" }, { status: 404 }),
+      HttpResponse.json<Schemas["Error"]>({ error: "run ghost: not found" }, { status: 404 }),
     ),
   );
   renderApp("/audit/runs/ghost", TOKEN);

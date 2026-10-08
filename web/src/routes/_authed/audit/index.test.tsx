@@ -17,7 +17,7 @@ function auditRunsHandler(
     queries.push(query);
     const page = pages[query.get("before") ?? ""];
     return page === undefined
-      ? HttpResponse.json({ error: "no such page" }, { status: 400 })
+      ? HttpResponse.json<Schemas["Error"]>({ error: "no such page" }, { status: 400 })
       : HttpResponse.json(page);
   });
 }
@@ -29,7 +29,7 @@ beforeEach(() => {
   );
 });
 
-test("lists the runs of every workspace, without what was said in them", async () => {
+test("lists the runs of every workspace", async () => {
   server.use(
     auditRunsHandler({
       "": {
@@ -58,7 +58,6 @@ test("lists the runs of every workspace, without what was said in them", async (
     "/audit/runs/run-2",
   );
   expect(second).toHaveTextContent("notes");
-  expect(within(table).queryByRole("columnheader", { name: "Input" })).not.toBeInTheDocument();
 });
 
 test("filters the runs", async () => {
@@ -94,13 +93,25 @@ test("loads more runs", async () => {
 
   await user.click(await screen.findByRole("button", { name: "Load more" }));
 
-  expect(await screen.findByRole("link", { name: "older v3" })).toBeInTheDocument();
+  const older = await screen.findByRole("link", { name: "older v3" });
   expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+  await waitFor(() => expect(older).toHaveFocus());
+  expect(screen.getByRole("status")).toHaveTextContent("2 runs shown.");
 });
 
-test("is not found for anyone but an auditor", async () => {
-  server.use(meHandler({ user: "demo", workspaces: ["notes"] }));
-  renderApp("/audit", TOKEN);
-
-  expect(await screen.findByRole("heading", { name: "Page not found" })).toBeInTheDocument();
+test("is not found for anyone but an auditor, who fetches nothing of it", async () => {
+  const asked: string[] = [];
+  server.use(
+    meHandler({ user: "demo", workspaces: ["notes"] }),
+    http.get(`${apiUrl}/v1/audit/*`, ({ request }) => {
+      asked.push(request.url);
+      return HttpResponse.json<Schemas["Error"]>({ error: "forbidden" }, { status: 403 });
+    }),
+  );
+  for (const path of ["/audit", "/audit/runs/run-1"]) {
+    const { unmount } = renderApp(path, TOKEN);
+    expect(await screen.findByRole("heading", { name: "Page not found" })).toBeInTheDocument();
+    unmount();
+  }
+  expect(asked).toEqual([]);
 });

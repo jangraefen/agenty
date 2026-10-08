@@ -9,6 +9,7 @@ import {
   conversationsHandler,
   emptyWorkspaceHandlers,
   meHandler,
+  type Schemas,
   server,
   TOKEN,
 } from "@/test/server";
@@ -194,22 +195,35 @@ test("an auditor finds the audit log in the sidebar", async () => {
   );
 });
 
-test("follows a running chat until it waits for approval", async () => {
+test("follows a chat's status soon while it runs, slowly while it waits, and not once done", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
-  let status: "running" | "waiting" = "running";
+  let status: Schemas["RunStatus"] = "running";
+  let requests = 0;
   server.use(
-    http.get(`${apiUrl}/v1/conversations`, () =>
-      HttpResponse.json({ conversations: [conversation({ title: "write the notes", status })] }),
-    ),
+    http.get(`${apiUrl}/v1/conversations`, () => {
+      requests += 1;
+      return HttpResponse.json<Schemas["ConversationList"]>({
+        conversations: [conversation({ title: "write the notes", status })],
+      });
+    }),
   );
   renderApp("/w/notes/harnesses", TOKEN);
   const recent = await screen.findByRole("navigation", { name: "Recent chats" });
   await within(recent).findByRole("link", { name: "write the notes" });
+  const tick = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
 
   status = "waiting";
-  await act(() => vi.advanceTimersByTimeAsync(5000));
-
+  await tick(5000);
   expect(
     await within(recent).findByRole("link", { name: "write the notes (waiting for approval)" }),
   ).toBeInTheDocument();
+  const waiting = requests;
+  await tick(30_000);
+  expect(requests, "a waiting chat is not asked about soon").toBe(waiting);
+  status = "succeeded";
+  await tick(30_000);
+  expect(requests, "but within a minute").toBe(waiting + 1);
+  expect(await within(recent).findByRole("link", { name: "write the notes" })).toBeInTheDocument();
+  await tick(120_000);
+  expect(requests, "nor at all once every chat is done").toBe(waiting + 1);
 });

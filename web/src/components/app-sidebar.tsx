@@ -102,6 +102,7 @@ function RecentChats() {
                 <>
                   <LuCircleAlert
                     aria-hidden="true"
+                    title="Waiting for approval"
                     className="ml-auto size-4 shrink-0 text-amber-500"
                   />{" "}
                   <span className="sr-only">(waiting for approval)</span>

@@ -38,8 +38,8 @@ function HarnessPage() {
           Runs of this harness
         </Link>
         <Link
-          to="/w/$workspace/harnesses/$name/new"
-          params={{ workspace, name: harness.name }}
+          to="/"
+          search={{ harness: `${workspace}/${harness.name}` }}
           className={buttonVariants({ size: "sm" })}
         >
           New conversation

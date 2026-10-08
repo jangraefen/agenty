@@ -36,6 +36,38 @@ export function harnessesQuery(api: Api, workspace: string) {
   });
 }
 
+/** The key under which the user's own conversations are cached. */
+export function recentChatsKey() {
+  return ["recent-chats"] as const;
+}
+
+// The conversations the user started, in every workspace of theirs, latest
+// activity first, a page at a time.
+export function recentChatsQuery(api: Api) {
+  return infiniteQueryOptions({
+    queryKey: recentChatsKey(),
+    queryFn: ({ pageParam }) =>
+      unwrap(
+        api.GET("/v1/conversations", {
+          params: { query: pageParam === "" ? {} : { before: pageParam } },
+        }),
+      ),
+    initialPageParam: "",
+    getNextPageParam: (page) =>
+      page.next === undefined || page.next === "" ? undefined : page.next,
+  });
+}
+
+// A conversation of any of the user's workspaces, which tells its workspace.
+export function conversationSummaryQuery(api: Api, id: string) {
+  return queryOptions({
+    queryKey: ["conversation-summary", id],
+    queryFn: () => unwrap(api.GET("/v1/conversations/{id}", { params: { path: { id } } })),
+    // A conversation stays in its workspace, and its title is its first input.
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+}
+
 export interface RunFilters {
   harness?: string;
   status?: RunStatus;
@@ -147,7 +179,7 @@ export function harnessQuery(api: Api, workspace: string, name: string) {
 
 /**
  * Caches run, just started after earlier, the runs of its conversation so far,
- * so its page shows the conversation at once, and refreshes the lists it joins.
+ * so its chat shows it at once, and refreshes the lists it joins.
  */
 export function cacheStartedRun(
   queryClient: QueryClient,
@@ -157,7 +189,11 @@ export function cacheStartedRun(
   earlier: Schemas["Run"][] = [],
 ) {
   queryClient.setQueryData(runQuery(api, workspace, run.id).queryKey, run);
-  queryClient.setQueryData(conversationQuery(api, workspace, run.id).queryKey, [...earlier, run]);
+  queryClient.setQueryData(conversationQuery(api, workspace, run.conversation_id).queryKey, [
+    ...earlier,
+    run,
+  ]);
   void queryClient.invalidateQueries({ queryKey: conversationsKey(workspace) });
   void queryClient.invalidateQueries({ queryKey: runsKey(workspace) });
+  void queryClient.invalidateQueries({ queryKey: recentChatsKey() });
 }

@@ -3,7 +3,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { apiUrl } from "@/config";
-import { approvalRequest, auditRecord, run } from "@/test/fixtures";
+import { approvalRequest, auditRecord, conversation, run } from "@/test/fixtures";
 import { renderApp } from "@/test/render";
 import {
   eventStream,
@@ -15,7 +15,7 @@ import {
 } from "@/test/server";
 
 const base = `${apiUrl}/v1/workspaces/notes`;
-const path = "/w/notes/runs/run-1";
+const path = "/c/run-1";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -82,7 +82,11 @@ const second = run({
 });
 
 beforeEach(() => {
-  server.use(meHandler({ user: "demo", workspaces: ["notes"] }), approvalsHandler([]));
+  server.use(
+    meHandler({ user: "demo", workspaces: ["notes"] }),
+    approvalsHandler([]),
+    http.get(`${apiUrl}/v1/conversations/run-1`, () => HttpResponse.json(conversation())),
+  );
 });
 
 describe("the conversation page", () => {
@@ -103,7 +107,7 @@ describe("the conversation page", () => {
     );
     renderApp(path, TOKEN);
 
-    expect(await screen.findByRole("heading", { name: "notes v3" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "tidy my notes" })).toBeInTheDocument();
     const chat = screen.getByRole("list", { name: "Conversation" });
     await within(chat).findByText("Sorted.");
     const messages = within(chat)
@@ -295,13 +299,13 @@ describe("the conversation page", () => {
       ),
     );
     renderApp(path, TOKEN);
-    await screen.findByRole("heading", { name: "notes v3" });
+    await screen.findByRole("heading", { name: "tidy my notes" });
 
     fail = true;
     refocusLater();
 
     expect(await screen.findByRole("alert")).toHaveTextContent("boom");
-    expect(screen.getByRole("heading", { name: "notes v3" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "tidy my notes" })).toBeInTheDocument();
   });
 
   test("renders what the model and tools wrote as text, never as HTML", async () => {
@@ -475,7 +479,7 @@ describe("the conversation page", () => {
     server.use(...conversationHandlers([run()]), finishedEvents("run-1", run()));
     renderApp(path, TOKEN);
 
-    await screen.findByRole("heading", { name: "notes v3" });
+    await screen.findByRole("heading", { name: "tidy my notes" });
     expect(screen.queryByRole("button", { name: "Cancel run" })).not.toBeInTheDocument();
   });
 
@@ -510,13 +514,44 @@ describe("the conversation page", () => {
     expect(within(audit).getAllByRole("listitem")).toHaveLength(1);
   });
 
-  test("a run that does not exist is not found", async () => {
+  test("a conversation that is not in the user's workspaces is not found", async () => {
     server.use(
-      http.get(`${base}/runs/run-1`, () =>
-        HttpResponse.json({ error: "not found" }, { status: 404 }),
+      http.get(`${apiUrl}/v1/conversations/run-1`, () =>
+        HttpResponse.json({ error: "conversation run-1: not found" }, { status: 404 }),
       ),
     );
     renderApp(path, TOKEN);
+
+    expect(
+      await screen.findByRole("heading", { name: "Conversation not found" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Start a new chat" })).toHaveAttribute("href", "/");
+  });
+
+  test("names the harness and workspace", async () => {
+    server.use(...conversationHandlers([run()]), finishedEvents("run-1", run()));
+    renderApp(path, TOKEN);
+
+    await screen.findByRole("heading", { name: "tidy my notes" });
+    expect(screen.getByText("notes · notes")).toBeInTheDocument();
+  });
+
+  test("a run's old page opens its conversation at the run", async () => {
+    server.use(...conversationHandlers([run(), second]), finishedEvents("run-2", second));
+    const { history } = renderApp("/w/notes/runs/run-2", TOKEN);
+
+    await screen.findByRole("heading", { name: "tidy my notes" });
+    expect(history.location.pathname).toBe("/c/run-1");
+    expect(history.location.hash).toBe("#run-run-2");
+  });
+
+  test("a run that does not exist is not found", async () => {
+    server.use(
+      http.get(`${base}/runs/ghost`, () =>
+        HttpResponse.json({ error: "not found" }, { status: 404 }),
+      ),
+    );
+    renderApp("/w/notes/runs/ghost", TOKEN);
 
     expect(await screen.findByRole("heading", { name: "Run not found" })).toBeInTheDocument();
   });
@@ -554,7 +589,7 @@ describe("replying", () => {
     await user.keyboard("{Enter}");
 
     await waitFor(() => {
-      expect(history.location.pathname).toBe("/w/notes/runs/run-3");
+      expect(history.location.pathname).toBe("/c/run-1");
     });
     expect(sent).toEqual({ id: "run-2", body: { input: "thanks\nbye" } });
     expect(await screen.findByText("Working…")).toBeInTheDocument();
@@ -590,7 +625,7 @@ describe("replying", () => {
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() => {
-      expect(history.location.pathname).toBe("/w/notes/runs/run-3");
+      expect(history.location.pathname).toBe("/c/run-1");
     });
     expect(screen.getByText("Sorted.")).toBeInTheDocument();
     expect(screen.getByText("and sort them")).toBeInTheDocument();
@@ -685,7 +720,7 @@ describe("replying", () => {
     );
     await user.type(box, "try again{Enter}");
 
-    await waitFor(() => expect(history.location.pathname).toBe("/w/notes/runs/run-2"));
+    await waitFor(() => expect(history.location.pathname).toBe("/c/run-1"));
     expect(sent).toBe("run-1");
   });
 

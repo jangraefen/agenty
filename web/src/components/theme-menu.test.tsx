@@ -18,17 +18,17 @@ afterEach(() => {
 });
 
 describe("the theme menu", () => {
-  test("is in a workspace's header and switches to Dark, which is kept", async () => {
+  test("is in the sidebar and switches to Dark, which is kept", async () => {
     fakeColorScheme("light");
     const { user } = renderApp("/w/notes/runs", TOKEN);
 
-    const header = await screen.findByRole("banner");
-    await user.click(within(header).getByRole("button", { name: "Theme: System" }));
+    const sidebar = await screen.findByRole("complementary");
+    await user.click(within(sidebar).getByRole("button", { name: "Theme: System" }));
     await user.click(await screen.findByRole("menuitemradio", { name: "Dark" }));
 
     expect(html).toHaveAttribute("data-theme", "dark");
     expect(localStorage.getItem("agenty.theme")).toBe("dark");
-    expect(within(header).getByRole("button", { name: "Theme: Dark" })).toBeInTheDocument();
+    expect(within(sidebar).getByRole("button", { name: "Theme: Dark" })).toBeInTheDocument();
   });
 
   test("marks the current choice", async () => {

@@ -184,8 +184,9 @@ function Runs() {
                   <tr key={run.id} data-run={run.id} className="border-b last:border-0">
                     <td className="py-2 pr-4 whitespace-nowrap">
                       <Link
-                        to="/w/$workspace/runs/$runId"
-                        params={{ workspace, runId: run.id }}
+                        to="/c/$conversationId"
+                        params={{ conversationId: run.conversation_id }}
+                        hash={`run-${run.id}`}
                         className="underline-offset-4 hover:underline"
                       >
                         {run.harness} v{run.harness_version}

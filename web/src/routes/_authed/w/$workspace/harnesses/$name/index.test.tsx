@@ -69,8 +69,9 @@ test("offers a new conversation, before editing", async () => {
   await user.click(start);
 
   await waitFor(() => {
-    expect(history.location.pathname).toBe("/w/notes/harnesses/notes/new");
+    expect(history.location.pathname).toBe("/");
   });
+  expect(history.location.search).toBe("?harness=notes%2Fnotes");
 });
 
 test("links to the harness's runs", async () => {

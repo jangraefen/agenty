@@ -208,7 +208,7 @@ describe("the approvals page", () => {
     expect(await screen.findByText("Nothing is waiting for approval.")).toBeInTheDocument();
   });
 
-  test("the header links to the approvals and counts the waiting ones", async () => {
+  test("the sidebar links to the approvals and counts the waiting ones", async () => {
     approvalsServer([
       approvalRequest({ id: "a", expires_at: inAnHour() }),
       approvalRequest({ id: "b", expires_at: inAnHour() }),
@@ -217,7 +217,7 @@ describe("the approvals page", () => {
     server.use(http.get(`${base}/harnesses`, () => HttpResponse.json([])));
     const { history, user } = renderApp("/w/notes/runs", TOKEN);
 
-    const pages = await screen.findByRole("navigation", { name: "Pages" });
+    const pages = await screen.findByRole("navigation", { name: "Manage" });
     const link = within(pages).getByRole("link", { name: /Approvals/ });
     await waitFor(() => {
       expect(link).toHaveAccessibleName("Approvals (2 waiting)");

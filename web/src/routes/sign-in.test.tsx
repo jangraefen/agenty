@@ -24,8 +24,8 @@ describe("signing in", () => {
     await user.type(await screen.findByLabelText("Token"), TOKEN);
     await user.click(screen.getByRole("button", { name: "Sign in" }));
 
-    expect(await screen.findByRole("heading", { name: "Runs" })).toBeInTheDocument();
-    expect(history.location.pathname).toBe("/w/notes/runs");
+    expect(await screen.findByRole("heading", { name: "New chat" })).toBeInTheDocument();
+    expect(history.location.pathname).toBe("/");
     expect(session.token).toBe(TOKEN);
     expect(localStorage.getItem("agenty.token")).toBe(TOKEN);
     expect(history.location.href).not.toContain(TOKEN);
@@ -43,7 +43,7 @@ describe("signing in", () => {
 
     await user.type(await screen.findByLabelText("Token"), TOKEN);
     await user.click(screen.getByRole("button", { name: "Sign in" }));
-    await screen.findByText("No runs yet.");
+    await screen.findByText(/No harness to chat with yet/);
 
     expect(asked).toBe(1);
   });
@@ -145,24 +145,12 @@ describe("signing in", () => {
     const { history } = renderApp("/sign-in", TOKEN);
 
     await waitFor(() => {
-      expect(history.location.pathname).toBe("/w/notes/runs");
+      expect(history.location.pathname).toBe("/");
     });
   });
 });
 
 describe("workspaces", () => {
-  test("a user with several workspaces picks one", async () => {
-    server.use(meHandler({ user: "demo", workspaces: ["notes", "ops"] }));
-    const { history, user } = renderApp("/", TOKEN);
-
-    expect(await screen.findByRole("heading", { name: "Workspaces" })).toBeInTheDocument();
-    await user.click(screen.getByRole("link", { name: "ops" }));
-
-    await waitFor(() => {
-      expect(history.location.pathname).toBe("/w/ops/runs");
-    });
-  });
-
   test("a user without workspaces is told so", async () => {
     server.use(meHandler({ user: "demo", workspaces: [] }));
     renderApp("/", TOKEN);
@@ -172,7 +160,7 @@ describe("workspaces", () => {
     ).toBeInTheDocument();
   });
 
-  test("the header names the user and switches workspaces", async () => {
+  test("the sidebar names the user and switches workspaces", async () => {
     server.use(meHandler({ user: "demo", workspaces: ["notes", "ops"] }));
     const { history, user } = renderApp("/w/notes/runs", TOKEN);
 
@@ -183,13 +171,13 @@ describe("workspaces", () => {
     expect(within(menu).getByRole("menuitem", { name: "ops" })).not.toHaveAttribute("aria-current");
     expect(within(menu).getByRole("menuitem", { name: "ops" })).toHaveAttribute(
       "href",
-      "/w/ops/runs",
+      "/w/ops/harnesses",
     );
 
     await user.click(within(menu).getByRole("menuitem", { name: "ops" }));
 
     await waitFor(() => {
-      expect(history.location.pathname).toBe("/w/ops/runs");
+      expect(history.location.pathname).toBe("/w/ops/harnesses");
     });
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
@@ -218,7 +206,7 @@ describe("workspaces", () => {
     await user.keyboard("{ArrowDown}{Enter}");
 
     await waitFor(() => {
-      expect(history.location.pathname).toBe("/w/ops/runs");
+      expect(history.location.pathname).toBe("/w/ops/harnesses");
     });
   });
 
@@ -263,6 +251,6 @@ describe("workspaces", () => {
     renderApp("/w/secret/runs", TOKEN);
 
     expect(await screen.findByRole("heading", { name: "Workspace not found" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Your workspaces" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Start a new chat" })).toHaveAttribute("href", "/");
   });
 });

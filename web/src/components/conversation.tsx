@@ -36,7 +36,7 @@ export function Turn({
   waiting: Schemas["ApprovalRequest"][];
   onOutcome: (outcome: AnswerOutcome) => void;
 }) {
-  const { api } = useRouteContext({ from: "/_authed/w/$workspace" });
+  const { api } = useRouteContext({ from: "/_authed" });
   const transcript = useQuery(transcriptQuery(api, workspace, run.id));
   // The input is the run's; the transcript, once loaded, adds the replies.
   const replies = transcript.data?.slice(1) ?? [];
@@ -282,7 +282,7 @@ function AuditLog({
   workspace: string;
   live: Schemas["AuditRecord"][] | undefined;
 }) {
-  const { api } = useRouteContext({ from: "/_authed/w/$workspace" });
+  const { api } = useRouteContext({ from: "/_authed" });
   const [open, setOpen] = useState(false);
   const stored = useQuery({
     ...auditQuery(api, workspace, run.id),

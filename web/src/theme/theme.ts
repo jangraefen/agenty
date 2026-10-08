@@ -1,5 +1,6 @@
 import { createContext, useContext, useSyncExternalStore } from "react";
 
+// public/theme.js reads the same key and query, before the app loads.
 const KEY = "agenty.theme";
 const DARK = "(prefers-color-scheme: dark)";
 
@@ -8,23 +9,25 @@ export const themeChoices = ["light", "dark", "system"] as const;
 export type ThemeChoice = (typeof themeChoices)[number];
 
 // Theme holds the user's choice of light, dark or the system's theme, a
-// per-browser preference kept in localStorage, and applies it as the
-// data-theme attribute of <html>, light or dark, which styles.css follows.
-// When the browser refuses storage, the choice lasts as long as the page.
+// per-browser preference kept in storage, localStorage in the browser, and
+// applies it as the data-theme attribute of <html>, light or dark, which
+// styles.css follows. public/theme.js applies the stored choice before the
+// first paint; Theme takes over from there. When the browser refuses
+// storage, the choice lasts as long as the page.
 export class Theme {
   #choice: ThemeChoice;
-  readonly #storage: Storage | null;
+  readonly #storage: Storage;
   readonly #dark: MediaQueryList | null;
   readonly #root: HTMLElement;
   readonly #listeners = new Set<() => void>();
 
-  /** Reads the stored choice and applies it at once, before anything renders. */
-  constructor(target: Window) {
-    this.#storage = storageOf(target);
+  /** Reads the stored choice and applies it at once. */
+  constructor(storage: Storage, target: Window) {
+    this.#storage = storage;
     // jsdom, for one, has no matchMedia; without it, System is light.
     this.#dark = typeof target.matchMedia === "function" ? target.matchMedia(DARK) : null;
     this.#root = target.document.documentElement;
-    this.#choice = readStored(this.#storage);
+    this.#choice = readStored(storage);
     this.#apply();
   }
 
@@ -33,16 +36,12 @@ export class Theme {
   }
 
   choose(choice: ThemeChoice): void {
-    this.#choice = choice;
     try {
-      this.#storage?.setItem(KEY, choice);
+      this.#storage.setItem(KEY, choice);
     } catch {
       // Storage refused: the choice lasts as long as the page.
     }
-    this.#apply();
-    for (const listener of this.#listeners) {
-      listener();
-    }
+    this.#change(choice);
   }
 
   /**
@@ -61,12 +60,44 @@ export class Theme {
     };
   }
 
-  /** Calls listener after every choice; returns the unsubscribe. */
-  subscribe(listener: () => void): () => void {
+  /**
+   * Follows the choices made in the app's other tabs, which share the
+   * storage; returns the function that stops following.
+   */
+  followOtherTabs(target: Window): () => void {
+    const follow = (event: StorageEvent) => {
+      // A null key means another tab cleared the storage.
+      if (event.key !== KEY && event.key !== null) {
+        return;
+      }
+      const choice = readStored(this.#storage);
+      if (choice !== this.#choice) {
+        this.#change(choice);
+      }
+    };
+    target.addEventListener("storage", follow);
+    return () => {
+      target.removeEventListener("storage", follow);
+    };
+  }
+
+  /**
+   * Calls listener after every change of the choice; returns the
+   * unsubscribe. Bound, so React can keep it from one render to the next.
+   */
+  readonly subscribe = (listener: () => void): (() => void) => {
     this.#listeners.add(listener);
     return () => {
       this.#listeners.delete(listener);
     };
+  };
+
+  #change(choice: ThemeChoice): void {
+    this.#choice = choice;
+    this.#apply();
+    for (const listener of this.#listeners) {
+      listener();
+    }
   }
 
   #apply(): void {
@@ -76,19 +107,10 @@ export class Theme {
   }
 }
 
-function storageOf(target: Window): Storage | null {
-  try {
-    return target.localStorage;
-  } catch {
-    // Some browsers refuse even to hand out storage when it is blocked.
-    return null;
-  }
-}
-
-function readStored(storage: Storage | null): ThemeChoice {
+function readStored(storage: Storage): ThemeChoice {
   let stored: string | null = null;
   try {
-    stored = storage?.getItem(KEY) ?? null;
+    stored = storage.getItem(KEY);
   } catch {
     // Storage refused: nothing was stored.
   }
@@ -103,9 +125,6 @@ export function useTheme(): { theme: Theme; choice: ThemeChoice } {
   if (theme === null) {
     throw new Error("useTheme needs a ThemeContext provider");
   }
-  const choice = useSyncExternalStore(
-    (listener) => theme.subscribe(listener),
-    () => theme.choice,
-  );
+  const choice = useSyncExternalStore(theme.subscribe, () => theme.choice);
   return { theme, choice };
 }

@@ -2,8 +2,9 @@
 
 /*
  * The theme follows the data-theme attribute of <html>, light or dark, which
- * src/theme/theme.ts sets before the app renders, from the user's choice or,
- * for System, the operating system's. Tailwind's dark: variant follows it too.
+ * public/theme.js sets before the first paint and src/theme/theme.ts keeps
+ * up to date, from the user's choice or, for System, the operating system's.
+ * Tailwind's dark: variant follows it too.
  */
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
@@ -47,17 +48,6 @@
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
-}
-
-/*
- * Until the app's script has set data-theme, a dark operating system gets a
- * dark page rather than a white flash.
- */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) {
-    color-scheme: dark;
-    background-color: oklch(0.145 0 0);
-  }
 }
 
 @theme inline {

@@ -1,4 +1,4 @@
-import { screen, within } from "@testing-library/react";
+import { act, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { fakeColorScheme, removeFakeColorScheme } from "@/test/media";
 import { renderApp } from "@/test/render";
@@ -73,5 +73,19 @@ describe("the theme menu", () => {
 
     expect(html).toHaveAttribute("data-theme", "dark");
     expect(screen.getByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+  });
+
+  test("follows a choice made in another tab", async () => {
+    fakeColorScheme("light");
+    renderApp("/sign-in", null);
+    await screen.findByRole("button", { name: "Theme: System" });
+
+    localStorage.setItem("agenty.theme", "dark");
+    act(() => {
+      window.dispatchEvent(new StorageEvent("storage", { key: "agenty.theme" }));
+    });
+
+    expect(screen.getByRole("button", { name: "Theme: Dark" })).toBeInTheDocument();
+    expect(html).toHaveAttribute("data-theme", "dark");
   });
 });

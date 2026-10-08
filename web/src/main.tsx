@@ -5,9 +5,8 @@ import { Session } from "./auth/session";
 import "./styles.css";
 import { Theme } from "./theme/theme";
 
-// Applied before React renders, as the Content-Security-Policy allows no
-// inline script in index.html to do it earlier.
-const theme = new Theme(window);
+// public/theme.js has applied the stored theme before the first paint.
+const theme = new Theme(localStorage, window);
 
 const root = document.getElementById("root");
 if (root === null) {

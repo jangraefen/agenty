@@ -16,7 +16,7 @@ export function ThemeMenu() {
   return (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger className="flex h-8 items-center gap-1 rounded-md border px-2 text-sm">
-        <span className="sr-only">Theme:</span> {labels[choice]}
+        Theme: {labels[choice]}
         <span aria-hidden="true">▾</span>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-32">

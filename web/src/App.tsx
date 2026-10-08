@@ -37,6 +37,7 @@ export function App({
   }, [session, queryClient, router]);
   useEffect(() => session.followOtherTabs(window), [session]);
   useEffect(() => theme.followSystem(), [theme]);
+  useEffect(() => theme.followOtherTabs(window), [theme]);
 
   return (
     <ThemeContext value={theme}>

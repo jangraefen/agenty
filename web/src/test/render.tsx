@@ -13,7 +13,7 @@ export function renderApp(path: string, token: string | null) {
     session.signIn(token);
   }
   const history = createMemoryHistory({ initialEntries: [path] });
-  const theme = new Theme(window);
+  const theme = new Theme(localStorage, window);
   const user = userEvent.setup();
   return {
     ...render(<App session={session} theme={theme} history={history} />),

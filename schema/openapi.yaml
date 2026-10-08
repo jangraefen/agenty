@@ -17,8 +17,9 @@ info:
     web page of an origin that is not configured, 404 for anything not
     found, workspaces included, 409 for cancelling a run that has finished,
     for following up a run that has not or that is followed up already, or
-    for a run that has not finished but that this server does not run, 415 for a body that is not
-    JSON, 500 when the server fails, and 503 while the server is stopping.
+    for a run that has not finished but that this server does not run, 415
+    for a body that is not JSON, 500 when the server fails, and 503 while
+    the server is stopping.
     A run that cannot start, such as one whose grants no MCP server serves,
     is queued all the same and fails.
 

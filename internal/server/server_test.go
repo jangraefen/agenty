@@ -43,6 +43,7 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 	}{
 		{"no store", server.Config{Operator: &config.Config{}, Resolved: &config.Resolved{Redactor: r}, Logger: logger}, "store is required"},
 		{"no config", server.Config{Store: s, Logger: logger}, "config is required"},
+		{"no redactor", server.Config{Store: s, Operator: &config.Config{}, Resolved: &config.Resolved{}, Logger: logger}, "redactor is required"},
 		{"no logger", server.Config{Store: s, Operator: &config.Config{}, Resolved: &config.Resolved{Redactor: r}}, "logger is required"},
 		// Central policy that cannot compile fails the server at its start,
 		// not each run.

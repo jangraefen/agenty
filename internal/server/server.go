@@ -94,6 +94,8 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		return nil, errors.New("server: store is required")
 	case cfg.Operator == nil || cfg.Resolved == nil:
 		return nil, errors.New("server: config is required")
+	case cfg.Resolved.Redactor == nil:
+		return nil, errors.New("server: redactor is required")
 	case cfg.Logger == nil:
 		return nil, errors.New("server: logger is required")
 	}

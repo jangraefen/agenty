@@ -9,7 +9,8 @@ import (
 
 // TestExpiryWait_ARequestDueAlreadyIsTriedAgain: the expiry loop waits for
 // the next request to expire, never forever while one is pending, also when
-// it is due already, as one that fell due while the loop read when it would.
+// it is due already, as one that fell due while the loop read the next
+// expiry.
 func TestExpiryWait_ARequestDueAlreadyIsTriedAgain(t *testing.T) {
 	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	tests := []struct {

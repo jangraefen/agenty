@@ -746,6 +746,31 @@ func TestInvariant_WorkspacesAreSeparate(t *testing.T) {
 		assert.Len(t, mine, 1, "the request is listed in its own workspace")
 	})
 
+	t.Run("conversations", func(t *testing.T) {
+		// alice's own conversation in work, a workspace she is not in, as
+		// after she was removed from it.
+		ctx := context.Background()
+		v, err := f.store.PutHarness(ctx, "work", notes())
+		require.NoError(t, err)
+		_, err = f.store.CreateRun(ctx, store.NewRun{ID: "alice-in-work", HarnessVersionID: v.ID, Input: "x", StartedBy: "alice"})
+		require.NoError(t, err)
+		// Cancelled, so no worker runs it.
+		cancelled, err := f.store.CancelIdleRun(ctx, "alice-in-work", "seeded")
+		require.NoError(t, err)
+		require.True(t, cancelled)
+
+		var mine api.ConversationList
+		require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, "/v1/conversations", nil, &mine))
+		require.Len(t, mine.Conversations, 1)
+		assert.Equal(t, run.ID, mine.Conversations[0].ID, "only conversations of the user's workspaces are listed")
+		var e api.Error
+		assert.Equal(t, http.StatusNotFound, f.do(t, http.MethodGet, "/v1/conversations/alice-in-work", nil, &e))
+		assert.Equal(t, http.StatusNotFound, f.doAs(t, carolToken, http.MethodGet, "/v1/conversations/"+run.ID, nil, &e))
+		var none api.ConversationList
+		require.Equal(t, http.StatusOK, f.doAs(t, carolToken, http.MethodGet, "/v1/conversations", nil, &none))
+		assert.Empty(t, none.Conversations)
+	})
+
 	assert.Zero(t, f.write.Calls, "no outsider answered the approval")
 	require.Equal(t, http.StatusNoContent, f.do(t, http.MethodPost, home+"/runs/"+run.ID+"/approvals/"+req.ID, api.Answer{}, nil))
 	rest := events.rest()

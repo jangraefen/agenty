@@ -21,6 +21,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The conversations the user started, latest activity first, a page at a time
+         * @description The conversations whose first run the user started, in the
+         *     workspaces they are a member of. Following up a conversation does
+         *     not make it the follower's. A conversation is continued, cancelled
+         *     and answered through its workspace.
+         */
+        get: operations["listConversations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A conversation in one of the user's workspaces */
+        get: operations["getConversation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{workspace}/harnesses": {
         parameters: {
             query?: never;
@@ -422,6 +462,19 @@ export interface components {
             /** @description The before parameter of the next page, which may be empty. */
             next?: string;
         };
+        ConversationSummary: {
+            /** @description The ID of the conversation's first run, which names it. */
+            id: string;
+            workspace: string;
+            harness: string;
+            /** @description The first run's input, cut to its first 100 characters. */
+            title: string;
+        };
+        ConversationList: {
+            conversations: components["schemas"]["ConversationSummary"][];
+            /** @description The before parameter of the next page, which may be empty. */
+            next?: string;
+        };
         /** @enum {string} */
         AuditEvent: "decision" | "approval" | "result";
         /** @enum {string} */
@@ -543,6 +596,56 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Me"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listConversations: {
+        parameters: {
+            query?: {
+                /** @description The page size. */
+                limit?: number;
+                /** @description Continue after the conversation this cursor names, as ConversationList.next gives it. */
+                before?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of conversations. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getConversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The ID of the conversation's first run. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The conversation. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationSummary"];
                 };
             };
             default: components["responses"]["Error"];

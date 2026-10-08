@@ -30,7 +30,6 @@ import (
 	"github.com/jangraefen/agenty/internal/model"
 	"github.com/jangraefen/agenty/internal/must"
 	"github.com/jangraefen/agenty/internal/store/db"
-	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
 //go:embed migrations/*.sql
@@ -65,7 +64,8 @@ func Open(ctx context.Context, url string) (*Store, error) {
 
 func migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	sqlDB := stdlib.OpenDBFromPool(pool)
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, must.Value(fs.Sub(migrations, "migrations")))
+	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, must.Value(fs.Sub(migrations, "migrations")),
+		goose.WithGoMigrations(goose.NewGoMigration(13, &goose.GoFunc{RunTx: copyAuditRecords}, nil)))
 	if err != nil {
 		return errors.Join(err, sqlDB.Close())
 	}
@@ -575,73 +575,6 @@ func (s *Store) FailRunningRuns(ctx context.Context, reason string) (int64, erro
 		return 0, fmt.Errorf("store: %w", err)
 	}
 	return n, nil
-}
-
-var _ toolgateway.Audit = (*Store)(nil)
-
-// Record appends rec to the audit log. The record's run must exist. An error
-// means the record may not be stored, and the gateway then does not execute
-// the call. Content never makes recording fail: PostgreSQL rejects NUL bytes
-// and invalid UTF-8 in text, so those are replaced, and anything that is not
-// valid JSON, such as malformed arguments from a model, is stored as a JSON
-// string.
-func (s *Store) Record(ctx context.Context, rec toolgateway.Record) error {
-	_, err := s.RecordAt(ctx, rec)
-	return err
-}
-
-// RecordAt is Record, and returns when the record was recorded.
-func (s *Store) RecordAt(ctx context.Context, rec toolgateway.Record) (time.Time, error) {
-	at, err := s.queries.InsertAuditRecord(ctx, db.InsertAuditRecordParams{
-		RunID:    text(rec.RunID),
-		CallID:   text(rec.CallID),
-		Event:    text(string(rec.Event)),
-		Tool:     text(rec.Tool),
-		Args:     jsonText(rec.Args),
-		Decision: text(string(rec.Decision)),
-		Reason:   text(rec.Reason),
-		Approver: text(rec.Approver),
-		Result:   jsonText(rec.Result),
-		Error:    text(rec.Err),
-	})
-	if err != nil {
-		return time.Time{}, fmt.Errorf("store: audit: %w", err)
-	}
-	return at, nil
-}
-
-// AuditRecord is a stored audit record.
-type AuditRecord struct {
-	toolgateway.Record
-	RecordedAt time.Time
-}
-
-// AuditRecords returns the audit records of a run, in the order they were
-// recorded.
-func (s *Store) AuditRecords(ctx context.Context, runID string) ([]AuditRecord, error) {
-	rows, err := s.queries.AuditRecordsOfRun(ctx, runID)
-	if err != nil {
-		return nil, fmt.Errorf("store: audit: %w", err)
-	}
-	out := make([]AuditRecord, len(rows))
-	for i, row := range rows {
-		out[i] = AuditRecord{
-			Record: toolgateway.Record{
-				RunID:    row.RunID,
-				CallID:   row.CallID,
-				Event:    toolgateway.Event(row.Event),
-				Tool:     row.Tool,
-				Args:     row.Args,
-				Decision: toolgateway.Decision(row.Decision),
-				Reason:   row.Reason,
-				Approver: row.Approver,
-				Result:   row.Result,
-				Err:      row.Error,
-			},
-			RecordedAt: row.RecordedAt,
-		}
-	}
-	return out, nil
 }
 
 // text makes s storable in a text column, which accepts neither NUL bytes

@@ -8,36 +8,40 @@ package db
 import (
 	"context"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const auditRecordsOfRun = `-- name: AuditRecordsOfRun :many
-SELECT id, run_id, call_id, event, tool, args, decision, reason, approver, result, error, recorded_at FROM audit_records
-WHERE run_id = $1
-ORDER BY id
+const auditEventsAfter = `-- name: AuditEventsAfter :many
+SELECT id, recorded_at, actor, action, workspace, run_id, target, details, prev_hash, hash FROM audit_events WHERE id > $1 ORDER BY id LIMIT $2
 `
 
-func (q *Queries) AuditRecordsOfRun(ctx context.Context, runID string) ([]AuditRecord, error) {
-	rows, err := q.db.Query(ctx, auditRecordsOfRun, runID)
+type AuditEventsAfterParams struct {
+	ID    int64
+	Limit int32
+}
+
+// The events after the one with the given id, in order, a page at a time.
+func (q *Queries) AuditEventsAfter(ctx context.Context, arg AuditEventsAfterParams) ([]AuditEvent, error) {
+	rows, err := q.db.Query(ctx, auditEventsAfter, arg.ID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []AuditRecord
+	var items []AuditEvent
 	for rows.Next() {
-		var i AuditRecord
+		var i AuditEvent
 		if err := rows.Scan(
 			&i.ID,
-			&i.RunID,
-			&i.CallID,
-			&i.Event,
-			&i.Tool,
-			&i.Args,
-			&i.Decision,
-			&i.Reason,
-			&i.Approver,
-			&i.Result,
-			&i.Error,
 			&i.RecordedAt,
+			&i.Actor,
+			&i.Action,
+			&i.Workspace,
+			&i.RunID,
+			&i.Target,
+			&i.Details,
+			&i.PrevHash,
+			&i.Hash,
 		); err != nil {
 			return nil, err
 		}
@@ -49,39 +53,117 @@ func (q *Queries) AuditRecordsOfRun(ctx context.Context, runID string) ([]AuditR
 	return items, nil
 }
 
-const insertAuditRecord = `-- name: InsertAuditRecord :one
-INSERT INTO audit_records (run_id, call_id, event, tool, args, decision, reason, approver, result, error)
+const insertAuditEvent = `-- name: InsertAuditEvent :exec
+INSERT INTO audit_events (id, recorded_at, actor, action, workspace, run_id, target, details, prev_hash, hash)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-RETURNING recorded_at
 `
 
-type InsertAuditRecordParams struct {
-	RunID    string
-	CallID   string
-	Event    string
-	Tool     string
-	Args     []byte
-	Decision string
-	Reason   string
-	Approver string
-	Result   []byte
-	Error    string
+type InsertAuditEventParams struct {
+	ID         int64
+	RecordedAt time.Time
+	Actor      string
+	Action     string
+	Workspace  string
+	RunID      pgtype.Text
+	Target     string
+	Details    []byte
+	PrevHash   []byte
+	Hash       []byte
 }
 
-func (q *Queries) InsertAuditRecord(ctx context.Context, arg InsertAuditRecordParams) (time.Time, error) {
-	row := q.db.QueryRow(ctx, insertAuditRecord,
+func (q *Queries) InsertAuditEvent(ctx context.Context, arg InsertAuditEventParams) error {
+	_, err := q.db.Exec(ctx, insertAuditEvent,
+		arg.ID,
+		arg.RecordedAt,
+		arg.Actor,
+		arg.Action,
+		arg.Workspace,
 		arg.RunID,
-		arg.CallID,
-		arg.Event,
-		arg.Tool,
-		arg.Args,
-		arg.Decision,
-		arg.Reason,
-		arg.Approver,
-		arg.Result,
-		arg.Error,
+		arg.Target,
+		arg.Details,
+		arg.PrevHash,
+		arg.Hash,
 	)
-	var recorded_at time.Time
-	err := row.Scan(&recorded_at)
-	return recorded_at, err
+	return err
+}
+
+const lastAuditEvent = `-- name: LastAuditEvent :one
+SELECT id, hash FROM audit_events ORDER BY id DESC LIMIT 1
+`
+
+type LastAuditEventRow struct {
+	ID   int64
+	Hash []byte
+}
+
+// The latest event's id and hash; call it holding the lock.
+func (q *Queries) LastAuditEvent(ctx context.Context) (LastAuditEventRow, error) {
+	row := q.db.QueryRow(ctx, lastAuditEvent)
+	var i LastAuditEventRow
+	err := row.Scan(&i.ID, &i.Hash)
+	return i, err
+}
+
+const lockAuditLog = `-- name: LockAuditLog :exec
+SELECT pg_advisory_xact_lock(hashtext('agenty audit log'))
+`
+
+// Serialises appends to the audit log until the transaction ends, so its
+// chain stays linear.
+func (q *Queries) LockAuditLog(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, lockAuditLog)
+	return err
+}
+
+const runOwner = `-- name: RunOwner :one
+SELECT runs.started_by, harness_versions.workspace
+FROM runs
+JOIN harness_versions ON harness_versions.id = runs.harness_version_id
+WHERE runs.id = $1
+`
+
+type RunOwnerRow struct {
+	StartedBy string
+	Workspace string
+}
+
+// Who started the run, and in which workspace, for its events.
+func (q *Queries) RunOwner(ctx context.Context, id string) (RunOwnerRow, error) {
+	row := q.db.QueryRow(ctx, runOwner, id)
+	var i RunOwnerRow
+	err := row.Scan(&i.StartedBy, &i.Workspace)
+	return i, err
+}
+
+const toolEventsOfRun = `-- name: ToolEventsOfRun :many
+SELECT action, details, recorded_at FROM audit_events
+WHERE run_id = $1 AND action IN ('tool.decision', 'tool.approval', 'tool.result')
+ORDER BY id
+`
+
+type ToolEventsOfRunRow struct {
+	Action     string
+	Details    []byte
+	RecordedAt time.Time
+}
+
+// What the tool gateway recorded for a run, in order.
+func (q *Queries) ToolEventsOfRun(ctx context.Context, runID pgtype.Text) ([]ToolEventsOfRunRow, error) {
+	rows, err := q.db.Query(ctx, toolEventsOfRun, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ToolEventsOfRunRow
+	for rows.Next() {
+		var i ToolEventsOfRunRow
+		if err := rows.Scan(&i.Action, &i.Details, &i.RecordedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

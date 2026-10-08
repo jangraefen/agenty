@@ -27,19 +27,17 @@ type Approval struct {
 	AnsweredAt *time.Time
 }
 
-type AuditRecord struct {
+type AuditEvent struct {
 	ID         int64
-	RunID      string
-	CallID     string
-	Event      string
-	Tool       string
-	Args       []byte
-	Decision   string
-	Reason     string
-	Approver   string
-	Result     []byte
-	Error      string
 	RecordedAt time.Time
+	Actor      string
+	Action     string
+	Workspace  string
+	RunID      pgtype.Text
+	Target     string
+	Details    []byte
+	PrevHash   []byte
+	Hash       []byte
 }
 
 type HarnessVersion struct {

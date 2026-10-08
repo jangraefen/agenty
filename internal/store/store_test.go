@@ -655,17 +655,18 @@ func TestRecord_NeverFailsOnContent(t *testing.T) {
 	}
 }
 
-func TestRecord_KeepsJSONAsWritten(t *testing.T) {
+func TestRecord_KeepsJSONInItsOrder(t *testing.T) {
 	ctx := context.Background()
 	s := storetest.New(t)
 	newRun(t, s, "r1")
-	args := `{"b": 1, "a": 2, "a": 3}`
+	args := `{"b": 1, "a": 2, "a": "<3>"}`
 
 	require.NoError(t, s.Record(ctx, toolgateway.Record{RunID: "r1", CallID: "c1", Event: toolgateway.EventDecision, Tool: "files_read", Args: json.RawMessage(args), Decision: toolgateway.Allow}))
 
 	got, err := s.AuditRecords(ctx, "r1")
 	require.NoError(t, err)
-	assert.Equal(t, args, string(got[0].Args), "the audit keeps key order, spacing and duplicate keys as the model sent them")
+	assert.Equal(t, `{"b":1,"a":2,"a":"\u003c3\u003e"}`, string(got[0].Args),
+		"the audit keeps key order and duplicate keys as the model sent them, in the canonical form the log's hashes cover")
 }
 
 // TestRecord_FailsClosed: a record the store cannot keep is an error, so the

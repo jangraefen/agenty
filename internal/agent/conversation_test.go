@@ -37,7 +37,7 @@ func TestRun_ContinuesAConversation(t *testing.T) {
 	a, err := agent.New(context.Background(), cfg)
 	require.NoError(t, err)
 
-	res, err := a.Start().Continue(context.Background(), earlier(), "label it urgent")
+	res, err := a.Continue(context.Background(), earlier(), "label it urgent")
 
 	require.NoError(t, err)
 	assert.Equal(t, "Labelled it urgent.", res.Output)
@@ -58,7 +58,7 @@ func TestRun_ContinuesAConversation(t *testing.T) {
 	assert.Equal(t, 1, f.label.Calls)
 	decisions := recordsOf(f.audit.Records, toolgateway.EventDecision)
 	require.Len(t, decisions, 1, "the new call goes through the gateway")
-	assert.Equal(t, res.RunID, decisions[0].RunID)
+	assert.Equal(t, a.ID(), decisions[0].RunID)
 }
 
 func TestRun_ContinuesOnlyAfterAnAnswer(t *testing.T) {
@@ -83,7 +83,7 @@ func TestRun_ContinuesOnlyAfterAnAnswer(t *testing.T) {
 			a, err := agent.New(context.Background(), cfg)
 			require.NoError(t, err)
 
-			_, err = a.Start().Continue(context.Background(), tt.history, "and now?")
+			_, err = a.Continue(context.Background(), tt.history, "and now?")
 
 			require.ErrorContains(t, err, "conversation")
 			assert.Empty(t, m.Requests(), "the model is not called")
@@ -134,7 +134,7 @@ func TestRun_ShowsCallsOfAToollessHistoryAsText(t *testing.T) {
 	history[1].ToolCalls = append(history[1].ToolCalls, model.ToolCall{ID: "c2", Name: "tickets_label"})
 	history[2].ToolResults = append(history[2].ToolResults, model.ToolResult{CallID: "c9", Content: "lost"})
 
-	_, err = a.Start().Continue(context.Background(), history, "what was it?")
+	_, err = a.Continue(context.Background(), history, "what was it?")
 
 	require.NoError(t, err)
 	require.Len(t, m.Requests(), 1)

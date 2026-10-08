@@ -37,26 +37,38 @@ func TestExample_Notes(t *testing.T) {
 	call := func(id, name, args string) model.ToolCall {
 		return model.ToolCall{ID: id, Name: name, Args: json.RawMessage(args)}
 	}
-	a, err := agent.New(context.Background(), agent.Config{
-		Redactor: gatewaytest.NoSecrets,
-		Harness:  h,
-		Model: modeltest.NewScripted(
-			modeltest.CallTools(
-				call("1", "files_read_text_file", `{"path":"notes.md"}`),
-				call("2", "files_read_text_file", `{"path":"./sub/.env.example"}`),
-				call("3", "files_write_file", `{"path":"notes.md","content":"- x"}`),
-				call("4", "files_write_file", `{"path":"notes.md","content":"- y"}`),
-			),
-			modeltest.Reply("done"),
-		),
-		Servers:  gatewaytest.Servers(tools...),
-		Policy:   cfg.Policy,
-		Approver: &gatewaytest.Approver{Approval: toolgateway.Approval{Approved: true, Approver: "alice"}},
-		Audit:    audit,
-	})
-	require.NoError(t, err)
+	newAgent := func(m model.Model) *agent.Agent {
+		a, err := agent.New(context.Background(), agent.Config{
+			RunID:    "r1",
+			Records:  audit.Records,
+			Redactor: gatewaytest.NoSecrets,
+			Harness:  h,
+			Model:    m,
+			Servers:  gatewaytest.Servers(tools...),
+			Policy:   cfg.Policy,
+			Audit:    audit,
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() { assert.NoError(t, a.Close()) })
+		return a
+	}
 
-	_, err = a.Run(context.Background(), "tidy")
+	first, err := newAgent(modeltest.NewScripted(
+		modeltest.CallTools(
+			call("1", "files_read_text_file", `{"path":"notes.md"}`),
+			call("2", "files_read_text_file", `{"path":"./sub/.env.example"}`),
+			call("3", "files_write_file", `{"path":"notes.md","content":"- x"}`),
+			call("4", "files_write_file", `{"path":"notes.md","content":"- y"}`),
+		),
+	)).Continue(context.Background(), nil, "tidy")
+	var suspended *agent.Suspended
+	require.ErrorAs(t, err, &suspended, "the first write waits for approval")
+	_, err = newAgent(modeltest.NewScripted(modeltest.Reply("done"))).Resume(context.Background(), nil, first.Messages, agent.Resumption{
+		CallID:  suspended.CallID,
+		Call:    suspended.Call,
+		Results: suspended.Results,
+		Answer:  toolgateway.Approval{Approved: true, Approver: "alice"},
+	})
 	require.NoError(t, err)
 
 	var got []string
@@ -67,6 +79,7 @@ func TestExample_Notes(t *testing.T) {
 		"decision files_read_text_file allow ",
 		"result files_read_text_file allow ",
 		"decision files_read_text_file deny policy: dotfiles may hold credentials",
+		"decision files_write_file require_approval policy: changes to files need a human",
 		"decision files_write_file require_approval policy: changes to files need a human",
 		"approval files_write_file allow ",
 		"result files_write_file allow ",

@@ -14,9 +14,10 @@ import (
 	"github.com/jangraefen/agenty/internal/toolgateway/gatewaytest"
 )
 
-// suspending is a gateway whose policy requires approval for tickets_close
-// and whose approver suspends the run instead of waiting for an answer.
+// suspending is a run's gateway whose policy requires approval for
+// tickets_close.
 type suspending struct {
+	cfg    toolgateway.Config
 	gw     *toolgateway.Gateway
 	audit  *gatewaytest.Audit
 	policy *gatewaytest.Policy
@@ -34,35 +35,50 @@ func newSuspending(t *testing.T, maxToolCalls int, redactor *secret.Redactor) *s
 		read:  &gatewaytest.Tool{Name: "tickets_read", Result: json.RawMessage(`{"ok":true}`)},
 		close: &gatewaytest.Tool{Name: "tickets_close", Result: json.RawMessage(`{"closed":true}`)},
 	}
-	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+	s.cfg = toolgateway.Config{
+		RunID:        "r1",
 		Redactor:     redactor,
 		Harness:      "triage",
 		MaxToolCalls: maxToolCalls,
 		Policy:       s.policy,
-		Approver:     &gatewaytest.Approver{Err: toolgateway.ErrSuspend},
 		Granted:      []string{"tickets_read", "tickets_close"},
 		Servers:      gatewaytest.Servers(s.read, s.close),
 		Audit:        s.audit,
-	})
+	}
+	gw, err := toolgateway.New(context.Background(), s.cfg)
 	require.NoError(t, err)
 	s.gw = gw
 	return s
 }
 
-// suspend calls tickets_close on a new run and returns the suspension.
-func (s *suspending) suspend(t *testing.T, args string) (*toolgateway.Run, *toolgateway.Suspended) {
+// resumed returns a new gateway for the run, as a server builds one to
+// resume it, with its call counts restored from records.
+func (s *suspending) resumed(t *testing.T, records []toolgateway.Record) *toolgateway.Gateway {
 	t.Helper()
-	run := s.gw.Start()
-	_, err := run.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_close", Args: json.RawMessage(args)})
-	var suspended *toolgateway.Suspended
-	require.ErrorAs(t, err, &suspended)
-	return run, suspended
+	cfg := s.cfg
+	cfg.Records = records
+	gw, err := toolgateway.New(context.Background(), cfg)
+	require.NoError(t, err)
+	return gw
 }
 
-func TestCall_SuspendsWhenTheApproverDoes(t *testing.T) {
+// suspend calls tickets_close and returns the suspension.
+func (s *suspending) suspend(t *testing.T, args string) *toolgateway.Suspended {
+	t.Helper()
+	_, err := s.gw.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_close", Args: json.RawMessage(args)})
+	var suspended *toolgateway.Suspended
+	require.ErrorAs(t, err, &suspended)
+	return suspended
+}
+
+// TestInvariant_ApprovalSuspendsTheRun guards a trust-model guarantee: a
+// call that policy marks as requiring approval never runs without a recorded
+// approval. Call suspends the run with only the decision recorded and the
+// tool not called.
+func TestInvariant_ApprovalSuspendsTheRun(t *testing.T) {
 	s := newSuspending(t, 10, gatewaytest.NoSecrets)
 
-	run, suspended := s.suspend(t, `{"id":7}`)
+	suspended := s.suspend(t, `{"id":7}`)
 
 	require.NotErrorIs(t, suspended, toolgateway.ErrDenied)
 	assert.Zero(t, s.close.Calls, "a suspended call does not run")
@@ -71,7 +87,7 @@ func TestCall_SuspendsWhenTheApproverDoes(t *testing.T) {
 	assert.Equal(t, toolgateway.EventDecision, decision.Event)
 	assert.Equal(t, toolgateway.RequireApproval, decision.Decision)
 	assert.Equal(t, decision.CallID, suspended.CallID, "the suspension names the call")
-	assert.Equal(t, run.ID(), suspended.Request.RunID)
+	assert.Equal(t, "r1", suspended.Request.RunID)
 	assert.Equal(t, "tickets_close", suspended.Request.Tool)
 	assert.JSONEq(t, `{"id":7}`, string(suspended.Request.Args))
 	assert.Equal(t, []string{"closing needs a human"}, suspended.Reasons)
@@ -88,7 +104,7 @@ func TestInvariant_ACallHoldingASecretNeverWaits(t *testing.T) {
 	require.NoError(t, err)
 	s := newSuspending(t, 10, redactor)
 
-	_, err = s.gw.Start().Call(context.Background(), toolgateway.ToolCall{Name: "tickets_close", Args: json.RawMessage(`{"note":"sk-secret-0123456789"}`)})
+	_, err = s.gw.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_close", Args: json.RawMessage(`{"note":"sk-secret-0123456789"}`)})
 
 	require.ErrorIs(t, err, toolgateway.ErrDenied)
 	require.ErrorContains(t, err, "its arguments hold a secret")
@@ -106,19 +122,18 @@ func TestInvariant_ACallHoldingASecretNeverWaits(t *testing.T) {
 
 func TestResume_RunsTheApprovedCallUnderItsOwnID(t *testing.T) {
 	s := newSuspending(t, 1, gatewaytest.NoSecrets)
-	run, suspended := s.suspend(t, `{"id":7}`)
+	suspended := s.suspend(t, `{"id":7}`)
 
-	resumed := s.gw.Restore(run.ID(), s.audit.Records)
+	resumed := s.resumed(t, s.audit.Records)
 	out, err := resumed.Resume(context.Background(), suspended.CallID, toolgateway.ToolCall{Name: "tickets_close", Args: json.RawMessage(`{"id":7}`)}, toolgateway.Approval{Approved: true, Approver: "ana", Reason: "fine"})
 
 	require.NoError(t, err, "deciding again is not another attempt, so the limit of one call holds")
 	assert.JSONEq(t, `{"closed":true}`, string(out))
 	assert.Equal(t, 1, s.close.Calls)
-	assert.Equal(t, run.ID(), resumed.ID())
 	require.Len(t, s.audit.Records, 4)
 	for _, r := range s.audit.Records {
 		assert.Equal(t, suspended.CallID, r.CallID, "every record of the call carries its own ID")
-		assert.Equal(t, run.ID(), r.RunID)
+		assert.Equal(t, "r1", r.RunID)
 	}
 	again := s.audit.Records[1]
 	assert.Equal(t, toolgateway.EventDecision, again.Event, "the call is decided again")
@@ -132,9 +147,9 @@ func TestResume_RunsTheApprovedCallUnderItsOwnID(t *testing.T) {
 
 func TestResume_DeniesARejectedCall(t *testing.T) {
 	s := newSuspending(t, 10, gatewaytest.NoSecrets)
-	run, suspended := s.suspend(t, `{}`)
+	suspended := s.suspend(t, `{}`)
 
-	_, err := s.gw.Restore(run.ID(), s.audit.Records).Resume(context.Background(), suspended.CallID, toolgateway.ToolCall{Name: "tickets_close", Args: json.RawMessage(`{}`)}, toolgateway.Approval{Approver: "ana", Reason: "not today"})
+	_, err := s.resumed(t, s.audit.Records).Resume(context.Background(), suspended.CallID, toolgateway.ToolCall{Name: "tickets_close", Args: json.RawMessage(`{}`)}, toolgateway.Approval{Approver: "ana", Reason: "not today"})
 
 	require.ErrorIs(t, err, toolgateway.ErrDenied)
 	require.ErrorContains(t, err, "approval rejected: not today")
@@ -151,10 +166,10 @@ func TestResume_DeniesARejectedCall(t *testing.T) {
 // loosens policy.
 func TestInvariant_ResumedCallsAreDecidedAgain(t *testing.T) {
 	s := newSuspending(t, 10, gatewaytest.NoSecrets)
-	run, suspended := s.suspend(t, `{}`)
+	suspended := s.suspend(t, `{}`)
 	s.policy.Verdicts["tickets_close"] = toolgateway.Verdict{Decision: toolgateway.Deny, Reasons: []string{"closing is frozen"}}
 
-	_, err := s.gw.Restore(run.ID(), s.audit.Records).Resume(context.Background(), suspended.CallID, toolgateway.ToolCall{Name: "tickets_close", Args: json.RawMessage(`{}`)}, toolgateway.Approval{Approved: true, Approver: "ana"})
+	_, err := s.resumed(t, s.audit.Records).Resume(context.Background(), suspended.CallID, toolgateway.ToolCall{Name: "tickets_close", Args: json.RawMessage(`{}`)}, toolgateway.Approval{Approved: true, Approver: "ana"})
 
 	require.ErrorIs(t, err, toolgateway.ErrDenied)
 	require.ErrorContains(t, err, "closing is frozen")
@@ -172,7 +187,7 @@ func TestInvariant_ResumedCallsAreDecidedAgain(t *testing.T) {
 // so resuming a run never resets its limits or what policy sees.
 func TestInvariant_LimitsSurviveARestore(t *testing.T) {
 	s := newSuspending(t, 4, gatewaytest.NoSecrets)
-	run := s.gw.Start()
+	run := s.gw
 	ctx := context.Background()
 	_, err := run.Call(ctx, toolgateway.ToolCall{Name: "tickets_read"})
 	require.NoError(t, err)
@@ -182,7 +197,7 @@ func TestInvariant_LimitsSurviveARestore(t *testing.T) {
 	var suspended *toolgateway.Suspended
 	require.ErrorAs(t, err, &suspended)
 
-	resumed := s.gw.Restore(run.ID(), s.audit.Records)
+	resumed := s.resumed(t, s.audit.Records)
 	_, err = resumed.Resume(ctx, suspended.CallID, toolgateway.ToolCall{Name: "tickets_close", Args: json.RawMessage(`{}`)}, toolgateway.Approval{Approved: true})
 	require.NoError(t, err)
 	_, err = resumed.Call(ctx, toolgateway.ToolCall{Name: "tickets_read"})
@@ -195,14 +210,16 @@ func TestInvariant_LimitsSurviveARestore(t *testing.T) {
 	assert.Equal(t, toolgateway.CallCounts{Total: 2, ByTool: map[string]int{"tickets_read": 1, "tickets_close": 1}}, last.Calls, "policy sees the calls executed before the restore")
 }
 
-func TestRestore_IgnoresOtherRuns(t *testing.T) {
+func TestNew_RestoresOnlyItsRunsRecords(t *testing.T) {
 	s := newSuspending(t, 1, gatewaytest.NoSecrets)
-	other := s.gw.Start()
-	_, err := other.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_read"})
+	_, err := s.gw.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_read"})
 	require.NoError(t, err)
 
-	restored := s.gw.Restore("mine", s.audit.Records)
-	_, err = restored.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_read"})
+	cfg := s.cfg
+	cfg.RunID, cfg.Records = "mine", s.audit.Records
+	mine, err := toolgateway.New(context.Background(), cfg)
+	require.NoError(t, err)
+	_, err = mine.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_read"})
 
 	require.NoError(t, err, "another run's calls do not count")
 }
@@ -212,7 +229,7 @@ func TestCall_ACancelledRunIsNotSuspended(t *testing.T) {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	cancel(errors.New("cancelled by ana"))
 
-	_, err := s.gw.Start().Call(ctx, toolgateway.ToolCall{Name: "tickets_close", Args: json.RawMessage(`{}`)})
+	_, err := s.gw.Call(ctx, toolgateway.ToolCall{Name: "tickets_close", Args: json.RawMessage(`{}`)})
 
 	require.ErrorIs(t, err, toolgateway.ErrDenied)
 	var suspended *toolgateway.Suspended
@@ -220,4 +237,5 @@ func TestCall_ACancelledRunIsNotSuspended(t *testing.T) {
 	last := s.audit.Records[len(s.audit.Records)-1]
 	assert.Equal(t, toolgateway.EventApproval, last.Event)
 	assert.Equal(t, "approval failed: cancelled by ana", last.Reason, "the cancellation is the cause")
+	assert.Zero(t, s.close.Calls)
 }

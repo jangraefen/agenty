@@ -3,7 +3,6 @@ package toolgateway
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"maps"
 )
 
@@ -13,8 +12,8 @@ type Policy interface {
 	Evaluate(ctx context.Context, req Request) (Verdict, error)
 }
 
-// Request describes one granted call to whoever decides on it: policy, and an
-// approver when policy asks for one. Its JSON form is the input document
+// Request describes one granted call to whoever decides on it: policy, and a
+// person when policy asks for their approval. Its JSON form is the input document
 // policy is written against.
 type Request struct {
 	RunID   string          `json:"run_id"`
@@ -42,19 +41,10 @@ type Verdict struct {
 	Reasons  []string
 }
 
-// Approver answers calls that policy marks as requiring approval. It sees the
-// same request as policy, and the reasons policy gave.
-type Approver interface {
-	Approve(ctx context.Context, req Request, reasons []string) (Approval, error)
-}
-
-// ErrSuspend is returned by an Approver that keeps a request to be answered
-// later instead of waiting for the answer: the run stops at the call, which
-// Run.Resume runs once it is answered.
-var ErrSuspend = errors.New("toolgateway: suspend the run for approval")
-
-// Suspended is the error Call returns for a call whose approver suspended the
-// run. Request and Reasons are redacted, as the approver saw them.
+// Suspended is the error Call returns for a call that policy marks as
+// requiring approval: the run stops at the call, which Resume runs once a
+// person has answered it. Request and Reasons are redacted, as the approver
+// sees them.
 type Suspended struct {
 	// CallID identifies the call in the audit log; Resume takes it.
 	CallID  string
@@ -66,7 +56,7 @@ func (s *Suspended) Error() string {
 	return "tool " + s.Request.Tool + ": waiting for approval"
 }
 
-// Approval is an approver's answer.
+// Approval is a person's answer to a call that waited for approval.
 type Approval struct {
 	Approved bool
 	// Approver names who decided.

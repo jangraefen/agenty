@@ -43,14 +43,14 @@ func TestRun_RecordsTheTranscriptAsItGoes(t *testing.T) {
 	a, err := agent.New(context.Background(), cfg)
 	require.NoError(t, err)
 
-	res, err := a.Run(context.Background(), "ticket 7")
+	res, err := a.Continue(context.Background(), nil, "ticket 7")
 
 	require.NoError(t, err)
 	require.Len(t, res.Messages, 4)
 	assert.Equal(t, res.Messages, tr.messages, "every message is recorded, in order")
 	assert.Equal(t, []int{0, 1, 2, 3}, tr.indexes)
 	for _, id := range tr.runIDs {
-		assert.Equal(t, res.RunID, id)
+		assert.Equal(t, "r1", id)
 	}
 	assert.Equal(t, "ticket 7", tr.messages[0].Text)
 	assert.Equal(t, model.RoleAssistant, tr.messages[1].Role)
@@ -70,7 +70,7 @@ func TestRun_KeepsTheTranscriptOfAFailedRun(t *testing.T) {
 	a, err := agent.New(context.Background(), cfg)
 	require.NoError(t, err)
 
-	_, err = a.Run(context.Background(), "ticket 7")
+	_, err = a.Continue(context.Background(), nil, "ticket 7")
 
 	require.ErrorContains(t, err, "model down")
 	assert.Equal(t, []int{0, 1, 2}, tr.indexes, "everything up to the failure is recorded")
@@ -90,7 +90,7 @@ func TestRun_StopsWhenTheTranscriptCannotBeRecorded(t *testing.T) {
 			a, err := agent.New(context.Background(), cfg)
 			require.NoError(t, err)
 
-			_, err = a.Run(context.Background(), "ticket 7")
+			_, err = a.Continue(context.Background(), nil, "ticket 7")
 
 			require.ErrorContains(t, err, "transcript store down")
 			assert.Zero(t, f.label.Calls, "nothing runs after a message that could not be recorded")

@@ -23,6 +23,7 @@ func serverConfig() (toolgateway.Config, *gatewaytest.Server, *gatewaytest.Serve
 	}}
 	mail := &gatewaytest.Server{Tools: []toolgateway.Tool{&gatewaytest.Tool{Name: "mail_send"}}}
 	return toolgateway.Config{
+		RunID:        "r1",
 		Redactor:     gatewaytest.NoSecrets,
 		Granted:      []string{"files_read"},
 		Servers:      map[string]toolgateway.ToolServer{"files": files, "mail": mail},
@@ -44,10 +45,10 @@ func TestNew_StartsOnlyGrantedServers(t *testing.T) {
 	require.Len(t, defs, 1)
 	assert.Equal(t, "files_read", defs[0].Name, "only granted server tools are offered")
 
-	result, err := gw.Start().Call(context.Background(), toolgateway.ToolCall{Name: "files_read"})
+	result, err := gw.Call(context.Background(), toolgateway.ToolCall{Name: "files_read"})
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"content":"x"}`, string(result))
-	_, err = gw.Start().Call(context.Background(), toolgateway.ToolCall{Name: "files_delete"})
+	_, err = gw.Call(context.Background(), toolgateway.ToolCall{Name: "files_delete"})
 	require.ErrorIs(t, err, toolgateway.ErrDenied, "a server's ungranted tools stay denied")
 
 	require.NoError(t, gw.Close())

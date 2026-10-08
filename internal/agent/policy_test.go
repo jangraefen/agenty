@@ -12,7 +12,6 @@ import (
 	"github.com/jangraefen/agenty/internal/model/modeltest"
 	"github.com/jangraefen/agenty/internal/policy"
 	"github.com/jangraefen/agenty/internal/toolgateway"
-	"github.com/jangraefen/agenty/internal/toolgateway/gatewaytest"
 )
 
 func TestRun_CentralAndHarnessPolicyBothApply(t *testing.T) {
@@ -20,34 +19,29 @@ func TestRun_CentralAndHarnessPolicyBothApply(t *testing.T) {
 	f.harness.Policy = []policy.Module{{Name: "triage.rego", Source: `package agenty.tool
 
 deny contains "ticket 13 is off limits" if input.args.id == 13`}}
-	approver := &gatewaytest.Approver{Approval: toolgateway.Approval{Approved: true, Approver: "alice"}}
 	cfg := f.config(modeltest.NewScripted(
 		modeltest.CallTools(
 			model.ToolCall{ID: "c1", Name: "tickets_read", Args: []byte(`{"id":13}`)},
 			model.ToolCall{ID: "c2", Name: "tickets_label", Args: []byte(`{"id":7}`)},
 		),
-		modeltest.Reply("done"),
 	))
 	cfg.Policy = []policy.Module{{Name: "central.rego", Source: `package agenty.tool
 
 require_approval contains "writes need a human" if input.tool == "tickets_label"`}}
-	cfg.Approver = approver
 	a, err := agent.New(context.Background(), cfg)
 	require.NoError(t, err)
 
-	res, err := a.Run(context.Background(), "ticket 7")
-	require.NoError(t, err)
+	_, err = a.Continue(context.Background(), nil, "ticket 7")
 
+	var suspended *agent.Suspended
+	require.ErrorAs(t, err, &suspended)
 	assert.Zero(t, f.read.Calls, "harness policy denied the read")
-	assert.Equal(t, 1, f.label.Calls, "central policy required approval, and alice approved")
-	require.Len(t, approver.Calls, 1)
-	assert.Equal(t, []string{"writes need a human"}, approver.Calls[0].Reasons)
-
-	results := res.Messages[2].ToolResults
-	require.Len(t, results, 2)
-	assert.True(t, results[0].IsError)
-	assert.Contains(t, results[0].Content, "ticket 13 is off limits")
-	assert.False(t, results[1].IsError)
+	assert.Zero(t, f.label.Calls, "central policy required approval, so the label waits")
+	assert.Equal(t, 1, suspended.Call)
+	assert.Equal(t, []string{"writes need a human"}, suspended.Reasons)
+	require.Len(t, suspended.Results, 1)
+	assert.True(t, suspended.Results[0].IsError)
+	assert.Contains(t, suspended.Results[0].Content, "ticket 13 is off limits")
 }
 
 func TestRun_ToolCallLimitIsReportedToTheModel(t *testing.T) {
@@ -69,7 +63,10 @@ func TestRun_ToolCallLimitIsReportedToTheModel(t *testing.T) {
 	assert.Contains(t, results[1].Content, "tool call limit reached")
 }
 
-func TestRun_ApprovalWithoutApproverIsDenied(t *testing.T) {
+// TestRun_ACallThatNeedsApprovalNeverRunsUnanswered: the run stops at the
+// call, which does not run, and no approval is recorded until it is
+// answered.
+func TestRun_ACallThatNeedsApprovalNeverRunsUnanswered(t *testing.T) {
 	f := newFixture(5)
 	cfg := f.config(modeltest.NewScripted(modeltest.CallTools(call("c1", "tickets_read")), modeltest.Reply("done")))
 	cfg.Policy = []policy.Module{{Name: "central.rego", Source: `package agenty.tool
@@ -78,12 +75,13 @@ require_approval contains "everything needs a human" if true`}}
 	a, err := agent.New(context.Background(), cfg)
 	require.NoError(t, err)
 
-	_, err = a.Run(context.Background(), "ticket 7")
+	_, err = a.Continue(context.Background(), nil, "ticket 7")
 
-	require.NoError(t, err)
+	var suspended *agent.Suspended
+	require.ErrorAs(t, err, &suspended)
 	assert.Zero(t, f.read.Calls)
 	require.Len(t, f.audit.Records, 1)
-	assert.Equal(t, toolgateway.Deny, f.audit.Records[0].Decision)
+	assert.Equal(t, toolgateway.RequireApproval, f.audit.Records[0].Decision)
 }
 
 func TestRun_InlineHarnessRulesApply(t *testing.T) {
@@ -109,7 +107,7 @@ deny contains "labels are frozen" if input.tool == "tickets_label"`}}
 	a, err := agent.New(context.Background(), cfg)
 	require.NoError(t, err)
 
-	_, err = a.Run(context.Background(), "ticket 7")
+	_, err = a.Continue(context.Background(), nil, "ticket 7")
 
 	require.NoError(t, err)
 	assert.Zero(t, f.label.Calls, "central policy still applies")

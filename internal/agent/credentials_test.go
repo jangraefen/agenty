@@ -43,6 +43,7 @@ func TestInvariant_CredentialsNeverReachModel(t *testing.T) {
 	f := newFixture(3)
 	f.harness.Tools = []string{"vault_read", "vault_login"}
 	a, err := agent.New(context.Background(), agent.Config{
+		RunID:    "r1",
 		Harness:  f.harness,
 		Model:    m,
 		Servers:  gatewaytest.Servers(leakyResult, leakyError),
@@ -51,7 +52,7 @@ func TestInvariant_CredentialsNeverReachModel(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	res, err := a.Run(context.Background(), "rotate the token")
+	res, err := a.Continue(context.Background(), nil, "rotate the token")
 	require.NoError(t, err)
 
 	assertNoSecret := func(what string, b []byte) {

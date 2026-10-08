@@ -46,6 +46,7 @@ func newFixture(maxSteps int) *fixture {
 // config wires the fixture into an agent config for m.
 func (f *fixture) config(m model.Model) agent.Config {
 	return agent.Config{
+		RunID:    "r1",
 		Redactor: gatewaytest.NoSecrets,
 		Harness:  f.harness,
 		Model:    m,
@@ -54,12 +55,12 @@ func (f *fixture) config(m model.Model) agent.Config {
 	}
 }
 
-// run builds an agent for m and runs it once on a fixed input.
+// run builds an agent for m and runs it on a fixed input.
 func (f *fixture) run(t *testing.T, m model.Model) (agent.Result, error) {
 	t.Helper()
 	a, err := agent.New(context.Background(), f.config(m))
 	require.NoError(t, err)
-	return a.Run(context.Background(), "ticket 7")
+	return a.Continue(context.Background(), nil, "ticket 7")
 }
 
 func (f *fixture) toolCalls() int {

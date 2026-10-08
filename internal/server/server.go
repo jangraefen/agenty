@@ -700,24 +700,23 @@ func (u cancelledBy) Error() string { return "cancelled by " + string(u) }
 // before, so a follow-up the end allows finds them. A run that fails after a
 // user cancelled it ended as cancelled.
 func (s *Server) execute(ctx context.Context, h *hub, p prepared) {
-	run := p.agent
 	var (
 		res    agent.Result
 		runErr error
 	)
 	if p.resume != nil {
-		res, runErr = run.Resume(ctx, p.history, p.own, *p.resume)
+		res, runErr = p.agent.Resume(ctx, p.history, p.own, *p.resume)
 	} else {
-		res, runErr = run.Continue(ctx, p.history, p.input)
+		res, runErr = p.agent.Continue(ctx, p.history, p.input)
 	}
 	var suspended *agent.Suspended
 	if errors.As(runErr, &suspended) && ctx.Err() == nil {
 		// The run waits holding nothing: its servers are kept for the
 		// conversation, as after a run that finished.
 		if err := errors.Join(p.agent.Close(), keep(ctx, p.lease, p.conversation)); err != nil {
-			s.cfg.Logger.Error("cannot keep a suspended run's tool servers", "run_id", run.ID(), "error", err)
+			s.cfg.Logger.Error("cannot keep a suspended run's tool servers", "run_id", p.agent.ID(), "error", err)
 		}
-		s.suspend(ctx, h, run.ID(), res, suspended)
+		s.suspend(ctx, h, p.agent.ID(), res, suspended)
 		return
 	}
 	err := errors.Join(runErr, p.agent.Close(), keep(ctx, p.lease, p.conversation))
@@ -728,16 +727,16 @@ func (s *Server) execute(ctx context.Context, h *hub, p prepared) {
 		// The cause is what the run's record says; any other error, such as
 		// a server that did not stop, is logged.
 		status, errMsg = store.RunCancelled, by.Error()
-		s.cfg.Logger.Info("run cancelled", "run_id", run.ID(), "error", err)
+		s.cfg.Logger.Info("run cancelled", "run_id", p.agent.ID(), "error", err)
 		if p.resume != nil {
-			if err := s.closeOut(ctx, h, run.ID(), by); err != nil {
-				s.cfg.Logger.Error("cannot record the calls a cancelled run did not run", "run_id", run.ID(), "error", err)
+			if err := s.closeOut(ctx, h, p.agent.ID(), by); err != nil {
+				s.cfg.Logger.Error("cannot record the calls a cancelled run did not run", "run_id", p.agent.ID(), "error", err)
 			}
 		}
 	case err != nil:
 		status, errMsg = store.RunFailed, s.cfg.Resolved.Redactor.String(err.Error())
 	}
-	s.finish(ctx, h, run.ID(), status, res, errMsg)
+	s.finish(ctx, h, p.agent.ID(), status, res, errMsg)
 }
 
 // suspend records that the run waits for approval of the call suspended

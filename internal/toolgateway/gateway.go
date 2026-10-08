@@ -207,8 +207,7 @@ func (g *Gateway) restore(records []Record) {
 		case EventDecision:
 			attempted[rec.CallID] = true
 		case EventResult:
-			g.executed.Total++
-			g.executed.ByTool[rec.Tool]++
+			g.countExecuted(rec.Tool)
 		case EventApproval:
 		}
 	}

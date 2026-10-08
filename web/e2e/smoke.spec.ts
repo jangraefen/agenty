@@ -37,8 +37,9 @@ test("signs in, makes a harness, runs it to its end, and signs out", async ({ pa
   await expect(page).toHaveURL(new RegExp(`/w/smoke/harnesses/${name}$`));
   await expect(page.getByRole("figure", { name: "As YAML" })).toContainText(`name: ${name}`);
 
-  await page.getByLabel("Input").fill("Say hello.");
-  await page.getByRole("button", { name: "Start run" }).click();
+  await page.getByRole("link", { name: "New conversation" }).click();
+  await page.getByLabel("Message").fill("Say hello.");
+  await page.getByRole("button", { name: "Send" }).click();
   await expect(page).toHaveURL(/\/w\/smoke\/runs\/[^/]+$/);
   await expect(page.getByText("failed", { exact: true })).toBeVisible({ timeout: 45_000 });
   await expect(page.getByRole("heading", { name: "The run failed" })).toBeVisible();

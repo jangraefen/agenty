@@ -31,4 +31,9 @@ declare module "@tanstack/react-router" {
   interface Register {
     router: ReturnType<typeof makeRouter>;
   }
+  interface HistoryState {
+    // focusMessage asks a conversation's page to focus its message box, as
+    // when it opens after its first message was written on another page.
+    focusMessage?: boolean;
+  }
 }

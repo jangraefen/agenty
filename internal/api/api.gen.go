@@ -390,6 +390,12 @@ type RunID = string
 // Workspace defines model for Workspace.
 type Workspace = string
 
+// ExportAuditLogParams defines parameters for ExportAuditLog.
+type ExportAuditLogParams struct {
+	// After Start after the event with this id; 0, the default, starts at the first.
+	After int64 `form:"after,omitempty" json:"after,omitempty"`
+}
+
 // ListAuditRunsParams defines parameters for ListAuditRuns.
 type ListAuditRunsParams struct {
 	// Workspace Only the runs of this workspace.

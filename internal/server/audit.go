@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/jangraefen/agenty/internal/api"
+	"github.com/jangraefen/agenty/internal/auditlog"
 	"github.com/jangraefen/agenty/internal/store"
 )
 
@@ -107,4 +108,53 @@ func apiAuditRun(r store.AuditRun) api.AuditRun {
 		out.FinishedAt = *r.FinishedAt
 	}
 	return out
+}
+
+// exportPage is how many events an export reads at a time: the log is read
+// as a stream, never whole.
+const exportPage = 500
+
+// exportComplete is the trailer an export ends with once its last event is
+// written: an export cut short by an error lacks it.
+const exportComplete = "Audit-Export-Complete"
+
+// ExportAuditLog writes the audit log after the given event to an auditor,
+// as JSON lines.
+func (s handlers) ExportAuditLog(c *gin.Context, params api.ExportAuditLogParams) {
+	if !s.auditor(c) {
+		return
+	}
+	if params.After < 0 {
+		s.fail(c, http.StatusBadRequest, fmt.Errorf("after %d: must not be negative", params.After))
+		return
+	}
+	ctx := c.Request.Context()
+	// The log as it is now: events appended while it is written are left
+	// for the next export, so the export ends.
+	last, err := s.cfg.Store.LastAuditEventID(ctx)
+	if err != nil {
+		s.failStore(c, err)
+		return
+	}
+	c.Header("Content-Type", "application/jsonl")
+	c.Header("Trailer", exportComplete)
+	c.Status(http.StatusOK)
+	for after := params.After; ; {
+		page, err := s.cfg.Store.AuditEvents(ctx, after, last, exportPage)
+		if err != nil {
+			s.cfg.Logger.Error("cannot export the audit log", "error", s.cfg.Resolved.Redactor.String(err.Error()))
+			return
+		}
+		if len(page) == 0 {
+			c.Writer.Header().Set(exportComplete, "true")
+			return
+		}
+		for _, e := range page {
+			if err := auditlog.WriteLine(c.Writer, e); err != nil {
+				return
+			}
+			after = e.ID
+		}
+		c.Writer.Flush()
+	}
 }

@@ -82,8 +82,14 @@ func checkContract(t *testing.T, req *http.Request, resp *http.Response, body []
 		Header:                 resp.Header,
 		Options:                &openapi3filter.Options{IncludeResponseStatus: true},
 	}
-	if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
+	switch contentType := resp.Header.Get("Content-Type"); {
+	case strings.HasPrefix(contentType, "text/event-stream"):
 		out.Options.ExcludeResponseBody = true
+	case strings.HasPrefix(contentType, "application/jsonl"):
+		out.Options.ExcludeResponseBody = true
+		for line := range bytes.Lines(body) {
+			checkSchema(t, "AuditLogEvent", line)
+		}
 	}
 	out.SetBodyBytes(body)
 	require.NoError(t, openapi3filter.ValidateResponse(context.Background(), out), "%s %s: %d %s", req.Method, req.URL.Path, resp.StatusCode, body)

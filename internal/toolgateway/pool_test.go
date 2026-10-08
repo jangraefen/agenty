@@ -35,15 +35,15 @@ func TestPool_KeepsAConversationsServersForItsNextRun(t *testing.T) {
 	t.Cleanup(func() { assert.NoError(t, pool.Close()) })
 	servers := map[string]toolgateway.ToolServer{"files": files}
 
-	first := pool.Lease("", servers)
+	first := pool.Lease("conv-1", servers)
 	use(t, first)
 	assert.Equal(t, []string{"files"}, first.Fresh())
-	require.NoError(t, first.Keep("conv-1"))
+	require.NoError(t, first.Keep())
 	assert.Zero(t, files.Closed, "a kept server keeps running")
 
 	second := pool.Lease("conv-1", servers)
 	use(t, second)
-	require.NoError(t, second.Keep("conv-1"))
+	require.NoError(t, second.Keep())
 
 	assert.Equal(t, []string{"files"}, files.StartedAs, "the next run of the conversation uses the same server")
 	assert.Empty(t, second.Fresh())
@@ -59,20 +59,20 @@ func TestInvariant_PoolNeverSharesServersAcrossConversations(t *testing.T) {
 	pool := toolgateway.NewPool(map[string]time.Duration{"files": time.Hour}, slog.New(slog.DiscardHandler))
 	t.Cleanup(func() { assert.NoError(t, pool.Close()) })
 	servers := map[string]toolgateway.ToolServer{"files": files}
-	mine := pool.Lease("", servers)
+	mine := pool.Lease("conv-1", servers)
 	use(t, mine)
-	require.NoError(t, mine.Keep("conv-1"))
+	require.NoError(t, mine.Keep())
 
 	theirs := pool.Lease("conv-2", servers)
 	use(t, theirs)
-	require.NoError(t, theirs.Keep("conv-2"))
-	fresh := pool.Lease("", servers)
-	use(t, fresh)
-	require.NoError(t, fresh.Keep("conv-3"))
+	require.NoError(t, theirs.Keep())
+	again := pool.Lease("conv-1", servers)
+	use(t, again)
+	require.NoError(t, again.Keep())
 
-	assert.Len(t, files.StartedAs, 3, "each conversation has a server of its own")
+	assert.Len(t, files.StartedAs, 2, "each conversation has a server of its own")
 	assert.Equal(t, []string{"files"}, theirs.Fresh())
-	assert.Equal(t, []string{"files"}, fresh.Fresh())
+	assert.Empty(t, again.Fresh(), "a conversation takes its own server, not another's")
 }
 
 func TestPool_StopsServersIdleForTheirTimeout(t *testing.T) {
@@ -81,16 +81,16 @@ func TestPool_StopsServersIdleForTheirTimeout(t *testing.T) {
 	pool := toolgateway.NewPool(map[string]time.Duration{"files": 10 * time.Millisecond, "once": 0}, slog.New(slog.DiscardHandler))
 	t.Cleanup(func() { assert.NoError(t, pool.Close()) })
 	servers := map[string]toolgateway.ToolServer{"files": files, "once": once}
-	lease := pool.Lease("", servers)
+	lease := pool.Lease("conv-1", servers)
 	use(t, lease)
 
-	require.NoError(t, lease.Keep("conv-1"))
+	require.NoError(t, lease.Keep())
 
 	assert.Equal(t, 1, once.Closed, "a server without idle time stops when its run ends")
 	assert.Eventually(t, func() bool { return files.ClosedCount() == 1 }, time.Second, time.Millisecond)
 	next := pool.Lease("conv-1", servers)
 	use(t, next)
-	require.NoError(t, next.Keep("conv-1"))
+	require.NoError(t, next.Keep())
 	assert.ElementsMatch(t, []string{"files", "once"}, next.Fresh(), "a stopped server starts anew")
 }
 
@@ -99,9 +99,9 @@ func TestPool_ReplacesAServerThatDied(t *testing.T) {
 	pool := toolgateway.NewPool(map[string]time.Duration{"files": time.Hour}, slog.New(slog.DiscardHandler))
 	t.Cleanup(func() { assert.NoError(t, pool.Close()) })
 	servers := map[string]toolgateway.ToolServer{"files": files}
-	lease := pool.Lease("", servers)
+	lease := pool.Lease("conv-1", servers)
 	use(t, lease)
-	require.NoError(t, lease.Keep("conv-1"))
+	require.NoError(t, lease.Keep())
 	// The kept server answers no more; a new one does.
 	files.ToolsErr = errors.New("broken pipe")
 	files.OnStart = func(context.Context) error {
@@ -123,16 +123,16 @@ func TestPool_ClosedLeasesAndPoolsStopTheirServers(t *testing.T) {
 	files := &gatewaytest.Server{}
 	pool := toolgateway.NewPool(map[string]time.Duration{"files": time.Hour}, slog.New(slog.DiscardHandler))
 	servers := map[string]toolgateway.ToolServer{"files": files}
-	lease := pool.Lease("", servers)
+	lease := pool.Lease("conv-1", servers)
 	use(t, lease)
 
 	require.NoError(t, lease.Close())
 	assert.Equal(t, 1, files.Closed, "a lease that is not kept stops its servers")
 
 	require.NoError(t, pool.Close())
-	late := pool.Lease("", servers)
+	late := pool.Lease("conv-1", servers)
 	use(t, late)
-	require.NoError(t, late.Keep("conv-1"))
+	require.NoError(t, late.Keep())
 	assert.Equal(t, 2, files.Closed, "a closed pool keeps nothing")
 }
 
@@ -141,10 +141,10 @@ func TestPool_LogsAnIdleServerThatDoesNotStop(t *testing.T) {
 	logs := &syncBuffer{}
 	pool := toolgateway.NewPool(map[string]time.Duration{"files": time.Millisecond}, slog.New(slog.NewTextHandler(logs, nil)))
 	t.Cleanup(func() { assert.NoError(t, pool.Close()) })
-	lease := pool.Lease("", map[string]toolgateway.ToolServer{"files": files})
+	lease := pool.Lease("conv-1", map[string]toolgateway.ToolServer{"files": files})
 	use(t, lease)
 
-	require.NoError(t, lease.Keep("conv-1"))
+	require.NoError(t, lease.Keep())
 
 	assert.Eventually(t, func() bool { return strings.Contains(logs.String(), "still running") }, time.Second, time.Millisecond)
 	assert.Contains(t, logs.String(), "conv-1")
@@ -168,17 +168,17 @@ func (b *syncBuffer) String() string {
 	return b.buf.String()
 }
 
-// TestPool_ReturnKeepsOnlyWhatWasTaken: a run that does not go ahead, such as
-// a follow-up that lost a race to another, gives the conversation back the
-// servers it took and stops those it started, so it never replaces what the
-// conversation's other run keeps.
+// TestPool_ReturnKeepsOnlyWhatWasTaken: a run that does not go ahead, as it
+// failed to start, gives the conversation back the servers it took and stops
+// those it started: the conversation's next run must start those anew, and
+// learns that it did.
 func TestPool_ReturnKeepsOnlyWhatWasTaken(t *testing.T) {
 	files, mail := &gatewaytest.Server{}, &gatewaytest.Server{}
 	pool := toolgateway.NewPool(map[string]time.Duration{"files": time.Hour, "mail": time.Hour}, slog.New(slog.DiscardHandler))
 	t.Cleanup(func() { assert.NoError(t, pool.Close()) })
-	first := pool.Lease("", map[string]toolgateway.ToolServer{"files": files})
+	first := pool.Lease("conv-1", map[string]toolgateway.ToolServer{"files": files})
 	use(t, first)
-	require.NoError(t, first.Keep("conv-1"))
+	require.NoError(t, first.Keep())
 	lost := pool.Lease("conv-1", map[string]toolgateway.ToolServer{"files": files, "mail": mail})
 	use(t, lost)
 
@@ -189,7 +189,7 @@ func TestPool_ReturnKeepsOnlyWhatWasTaken(t *testing.T) {
 	next := pool.Lease("conv-1", map[string]toolgateway.ToolServer{"files": files})
 	use(t, next)
 	assert.Empty(t, next.Fresh())
-	require.NoError(t, next.Keep("conv-1"))
+	require.NoError(t, next.Keep())
 }
 
 // TestPool_KeepsAServerWhoseProbeWasCancelled: a start cancelled, as when
@@ -199,9 +199,9 @@ func TestPool_KeepsAServerWhoseProbeWasCancelled(t *testing.T) {
 	pool := toolgateway.NewPool(map[string]time.Duration{"files": time.Hour}, slog.New(slog.DiscardHandler))
 	t.Cleanup(func() { assert.NoError(t, pool.Close()) })
 	servers := map[string]toolgateway.ToolServer{"files": files}
-	first := pool.Lease("", servers)
+	first := pool.Lease("conv-1", servers)
 	use(t, first)
-	require.NoError(t, first.Keep("conv-1"))
+	require.NoError(t, first.Keep())
 	files.ToolsErr = context.Canceled
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -216,7 +216,7 @@ func TestPool_KeepsAServerWhoseProbeWasCancelled(t *testing.T) {
 	next := pool.Lease("conv-1", servers)
 	use(t, next)
 	assert.Empty(t, next.Fresh())
-	require.NoError(t, next.Keep("conv-1"))
+	require.NoError(t, next.Keep())
 }
 
 // TestPool_AKeptServerReplacesTheOneBefore: should a conversation's server
@@ -226,12 +226,12 @@ func TestPool_AKeptServerReplacesTheOneBefore(t *testing.T) {
 	pool := toolgateway.NewPool(map[string]time.Duration{"files": time.Hour}, slog.New(slog.DiscardHandler))
 	t.Cleanup(func() { assert.NoError(t, pool.Close()) })
 	servers := map[string]toolgateway.ToolServer{"files": files}
-	first, second := pool.Lease("", servers), pool.Lease("", servers)
+	first, second := pool.Lease("conv-1", servers), pool.Lease("conv-1", servers)
 	use(t, first)
 	use(t, second)
 
-	require.NoError(t, first.Keep("conv-1"))
-	require.NoError(t, second.Keep("conv-1"))
+	require.NoError(t, first.Keep())
+	require.NoError(t, second.Keep())
 
 	assert.Equal(t, 1, files.Closed)
 }
@@ -241,39 +241,15 @@ func TestPool_ServersThatFailToStartOrStop(t *testing.T) {
 	pool := toolgateway.NewPool(map[string]time.Duration{"files": time.Hour}, slog.New(slog.DiscardHandler))
 	t.Cleanup(func() { assert.NoError(t, pool.Close()) })
 	servers := map[string]toolgateway.ToolServer{"files": files}
-	lease := pool.Lease("", servers)
+	lease := pool.Lease("conv-1", servers)
 	use(t, lease)
-	require.NoError(t, lease.Keep("conv-1"))
+	require.NoError(t, lease.Keep())
 	files.ToolsErr, files.CloseErr = errors.New("broken pipe"), errors.New("still running")
 
 	_, err := pool.Lease("conv-1", servers).Servers()["files"].Start(context.Background(), "files")
 	require.ErrorContains(t, err, "still running", "a dead server that does not stop is not replaced")
 
 	files.CloseErr, files.StartErr = nil, errors.New("no such command")
-	_, err = pool.Lease("", servers).Servers()["files"].Start(context.Background(), "files")
+	_, err = pool.Lease("conv-2", servers).Servers()["files"].Start(context.Background(), "files")
 	require.ErrorContains(t, err, "no such command")
-}
-
-// TestPool_ReturnNeverReplacesANewerServer: a follow-up that took the
-// conversation's server, then lost to another that started anew, ran and
-// kept its own, gives back nothing: the conversation keeps the newer one.
-func TestPool_ReturnNeverReplacesANewerServer(t *testing.T) {
-	older, newer := &gatewaytest.Server{}, &gatewaytest.Server{}
-	pool := toolgateway.NewPool(map[string]time.Duration{"files": time.Hour}, slog.New(slog.DiscardHandler))
-	first := pool.Lease("", map[string]toolgateway.ToolServer{"files": older})
-	use(t, first)
-	require.NoError(t, first.Keep("conv-1"))
-	lost := pool.Lease("conv-1", map[string]toolgateway.ToolServer{"files": older})
-	use(t, lost)
-	won := pool.Lease("conv-1", map[string]toolgateway.ToolServer{"files": newer})
-	use(t, won)
-	require.Equal(t, []string{"files"}, won.Fresh())
-	require.NoError(t, won.Keep("conv-1"))
-
-	require.NoError(t, lost.Return())
-
-	assert.Equal(t, 1, older.Closed, "the older server is stopped")
-	assert.Zero(t, newer.Closed, "the conversation keeps the newer one")
-	require.NoError(t, pool.Close())
-	assert.Equal(t, 1, newer.Closed)
 }

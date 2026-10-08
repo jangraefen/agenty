@@ -481,11 +481,9 @@ const errStopped = "the server stopped before the run finished"
 type prepared struct {
 	agent *agent.Agent
 	lease *toolgateway.Lease
-	// conversation names the conversation the run belongs to, and history
-	// is the conversation so far.
-	conversation string
-	history      []model.Message
-	input        string
+	// history is the run's conversation so far.
+	history []model.Message
+	input   string
 	// resume, if set, resumes the run at a call that waited for approval,
 	// after own, the run's messages so far, instead of starting it on input.
 	resume *agent.Resumption
@@ -553,10 +551,9 @@ func (s *Server) prepare(h *hub, claimed store.ClaimedRun) (prepared, error) {
 		return prepared{}, errors.Join(err, a.Close(), lease.Return())
 	}
 	p := prepared{
-		agent:        a,
-		lease:        lease,
-		conversation: stored.ConversationID,
-		history:      history,
+		agent:   a,
+		lease:   lease,
+		history: history,
 	}
 	if !waited {
 		p.input = withLostState(stored.Input, lease.Fresh(), history)
@@ -683,11 +680,11 @@ func (s *Server) prior(ctx context.Context, workspace string, run store.Run) ([]
 // keep keeps the run's servers for its conversation, unless the run was
 // cancelled: a call may still be running in a server then, which stopping
 // the server ends.
-func keep(ctx context.Context, lease *toolgateway.Lease, conversation string) error {
+func keep(ctx context.Context, lease *toolgateway.Lease) error {
 	if ctx.Err() != nil {
 		return lease.Close()
 	}
-	return lease.Keep(conversation)
+	return lease.Keep()
 }
 
 // cancelledBy is the cause of a run's cancellation by a user: the user.
@@ -713,13 +710,13 @@ func (s *Server) execute(ctx context.Context, h *hub, p prepared) {
 	if errors.As(runErr, &suspended) && ctx.Err() == nil {
 		// The run waits holding nothing: its servers are kept for the
 		// conversation, as after a run that finished.
-		if err := errors.Join(p.agent.Close(), keep(ctx, p.lease, p.conversation)); err != nil {
+		if err := errors.Join(p.agent.Close(), keep(ctx, p.lease)); err != nil {
 			s.cfg.Logger.Error("cannot keep a suspended run's tool servers", "run_id", p.agent.ID(), "error", err)
 		}
 		s.suspend(ctx, h, p.agent.ID(), res, suspended)
 		return
 	}
-	err := errors.Join(runErr, p.agent.Close(), keep(ctx, p.lease, p.conversation))
+	err := errors.Join(runErr, p.agent.Close(), keep(ctx, p.lease))
 	status, errMsg := store.RunSucceeded, ""
 	var by cancelledBy
 	switch {

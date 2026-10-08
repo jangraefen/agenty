@@ -75,18 +75,19 @@ SELECT claimed.id, harness_versions.workspace
 FROM claimed
 JOIN harness_versions ON harness_versions.id = claimed.harness_version_id;
 
--- name: QueuedRuns :many
--- The queued runs, oldest first, with their workspaces and harnesses.
-SELECT runs.id, harness_versions.workspace, harness_versions.name AS harness
+-- name: IdleRuns :many
+-- The runs no worker holds that have not finished, queued or waiting, oldest
+-- first, with their workspaces and harnesses.
+SELECT runs.id, runs.status, harness_versions.workspace, harness_versions.name AS harness
 FROM runs
 JOIN harness_versions ON harness_versions.id = runs.harness_version_id
-WHERE runs.status = 'queued'
+WHERE runs.status IN ('queued', 'waiting')
 ORDER BY runs.created_at, runs.id;
 
--- name: CancelQueuedRun :execrows
+-- name: CancelIdleRun :execrows
 UPDATE runs
 SET status = 'cancelled', error = $2, finished_at = now()
-WHERE id = $1 AND status = 'queued';
+WHERE id = $1 AND status IN ('queued', 'waiting');
 
 -- name: SetRunDigests :execrows
 UPDATE runs

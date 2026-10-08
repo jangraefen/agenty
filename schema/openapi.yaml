@@ -210,10 +210,11 @@ paths:
       - $ref: "#/components/parameters/RunID"
     post:
       operationId: cancelRun
-      summary: Cancel a queued or running run
+      summary: Cancel a queued, waiting or running run
       description: |
-        A queued run ends at once; a running one as soon as what it is doing
-        stops. Either ends as cancelled by the user; its events tell when.
+        A queued run, or one waiting for approval, ends at once; a running
+        one as soon as what it is doing stops. Either ends as cancelled by
+        the user; its events tell when.
       responses:
         "202":
           description: The run is being cancelled.
@@ -287,7 +288,10 @@ paths:
     post:
       operationId: answerApproval
       summary: Answer an approval request
-      description: The signed-in user is recorded as the approver.
+      description: |
+        The signed-in user is recorded as the approver. The answer queues the
+        run, which resumes at the call; a request is answered once, and not
+        after it expired, which rejected it.
       requestBody:
         required: true
         content:
@@ -436,7 +440,7 @@ components:
 
     RunStatus:
       type: string
-      enum: [queued, running, succeeded, failed, cancelled]
+      enum: [queued, running, waiting, succeeded, failed, cancelled]
 
     Run:
       type: object

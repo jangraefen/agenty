@@ -195,17 +195,20 @@ type RunStatus string
 
 const (
 	// RunQueued is a run waiting for a worker.
-	RunQueued    RunStatus = "queued"
-	RunRunning   RunStatus = "running"
+	RunQueued  RunStatus = "queued"
+	RunRunning RunStatus = "running"
+	// RunWaiting is a run whose call waits for approval; no worker holds it.
+	RunWaiting   RunStatus = "waiting"
 	RunSucceeded RunStatus = "succeeded"
 	RunFailed    RunStatus = "failed"
 	// RunCancelled is a run a user cancelled.
 	RunCancelled RunStatus = "cancelled"
 )
 
-// Finished reports whether the run has ended, neither queued nor running.
+// Finished reports whether the run has ended: it is neither queued, nor
+// running, nor waiting.
 func (r Run) Finished() bool {
-	return r.Status != RunQueued && r.Status != RunRunning
+	return r.Status != RunQueued && r.Status != RunRunning && r.Status != RunWaiting
 }
 
 // Run is a stored run.
@@ -290,29 +293,48 @@ func (s *Store) ClaimRun(ctx context.Context) (ClaimedRun, bool, error) {
 	return ClaimedRun{ID: row.ID, Workspace: row.Workspace}, true, nil
 }
 
-// QueuedRun is a queued run, with its workspace and harness.
-type QueuedRun struct {
-	ID, Workspace, Harness string
+// IdleRun is a run no worker holds that has not finished, queued or waiting,
+// with its workspace and harness.
+type IdleRun struct {
+	ID        string
+	Status    RunStatus
+	Workspace string
+	Harness   string
 }
 
-// QueuedRuns returns the queued runs, oldest first.
-func (s *Store) QueuedRuns(ctx context.Context) ([]QueuedRun, error) {
-	rows, err := s.queries.QueuedRuns(ctx)
+// IdleRuns returns the queued and waiting runs, oldest first.
+func (s *Store) IdleRuns(ctx context.Context) ([]IdleRun, error) {
+	rows, err := s.queries.IdleRuns(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("store: queued runs: %w", err)
+		return nil, fmt.Errorf("store: idle runs: %w", err)
 	}
-	out := make([]QueuedRun, len(rows))
+	out := make([]IdleRun, len(rows))
 	for i, r := range rows {
-		out[i] = QueuedRun{ID: r.ID, Workspace: r.Workspace, Harness: r.Harness}
+		out[i] = IdleRun{ID: r.ID, Status: RunStatus(r.Status), Workspace: r.Workspace, Harness: r.Harness}
 	}
 	return out, nil
 }
 
-// CancelQueuedRun records a queued run as cancelled, giving why. It reports
-// false if the run is not queued, such as one a worker has claimed.
-func (s *Store) CancelQueuedRun(ctx context.Context, id, why string) (bool, error) {
-	n, err := s.queries.CancelQueuedRun(ctx, db.CancelQueuedRunParams{ID: id, Error: why})
+// CancelIdleRun records a queued or waiting run as cancelled, giving why, and
+// withdraws the approval request it waits for. It reports false if the run
+// is neither, such as one a worker has claimed.
+func (s *Store) CancelIdleRun(ctx context.Context, id, why string) (bool, error) {
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
+		return false, fmt.Errorf("store: run %s: %w", id, err)
+	}
+	q := s.queries.WithTx(tx)
+	// The request first, then the run, as AnswerApproval and
+	// ExpireApprovals lock them.
+	err = q.WithdrawApprovals(ctx, db.WithdrawApprovalsParams{RunID: id, Reason: why})
+	var n int64
+	if err == nil {
+		n, err = q.CancelIdleRun(ctx, db.CancelIdleRunParams{ID: id, Error: why})
+	}
+	if err != nil {
+		return false, errors.Join(fmt.Errorf("store: run %s: %w", id, err), tx.Rollback(ctx))
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return false, fmt.Errorf("store: run %s: %w", id, err)
 	}
 	return n > 0, nil

@@ -10,6 +10,23 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Approval struct {
+	ID         string
+	RunID      string
+	CallID     string
+	CallIndex  int32
+	Tool       string
+	Args       []byte
+	Reasons    []byte
+	Results    []byte
+	Status     string
+	Approver   string
+	Reason     string
+	CreatedAt  time.Time
+	ExpiresAt  time.Time
+	AnsweredAt *time.Time
+}
+
 type AuditRecord struct {
 	ID         int64
 	RunID      string

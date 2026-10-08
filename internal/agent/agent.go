@@ -173,6 +173,40 @@ func (a *Agent) StartAs(id string) *Run {
 	return &Run{agent: a, gateway: a.gateway.StartAs(id)}
 }
 
+// Restore is StartAs for a run that stopped at a call waiting for approval:
+// its call counts are restored from records, its audit log, so the run's
+// limits and policy see the calls it made before. Resume it with Run.Resume.
+func (a *Agent) Restore(id string, records []toolgateway.Record) *Run {
+	return &Run{agent: a, gateway: a.gateway.Restore(id, records)}
+}
+
+// Suspended is the error a run returns when it stops at a call that waits
+// for approval. The run's messages end with the reply that makes the call;
+// Call is its index in the reply's calls, and Results are the results of the
+// calls before it, which Resume needs.
+type Suspended struct {
+	*toolgateway.Suspended
+	Call    int
+	Results []model.ToolResult
+}
+
+func (s *Suspended) Unwrap() error { return s.Suspended }
+
+// Resumption is how Resume goes on with a suspended run: the call that waits,
+// as Suspended named it, and its answer.
+type Resumption struct {
+	// CallID identifies the call in the audit log.
+	CallID string
+	// Call is the call's index in the run's last reply, and Results are the
+	// results of the calls before it.
+	Call    int
+	Results []model.ToolResult
+	Answer  toolgateway.Approval
+	// Note, if set, is appended to the call's result, such as to say that
+	// the server the call ran on had to start anew.
+	Note string
+}
+
 // Run is one run of an agent, in a gateway run of its own.
 type Run struct {
 	agent    *Agent
@@ -211,29 +245,91 @@ func (r *Run) Continue(ctx context.Context, history []model.Message, input strin
 	if r.executed.Swap(true) {
 		return Result{}, errors.New("agent: run already executed")
 	}
-	a, run := r.agent, r.gateway
-	res := Result{RunID: run.ID()}
-	// add appends msg to the conversation and records it.
-	add := func(msg model.Message) error {
+	res := Result{RunID: r.gateway.ID()}
+	add := r.adder(ctx, &res)
+	if err := add(model.Message{Role: model.RoleUser, Text: input}); err != nil {
+		return res, err
+	}
+	return r.loop(ctx, history, &res, add, 1)
+}
+
+// Resume executes a run that stopped at a call waiting for approval, as
+// Continue returned it with a *Suspended error, once the call is answered.
+// own holds the run's messages so far, which end with the reply whose call
+// waits; the call runs, or not, as s says, then the calls after it, and the
+// run goes on from there. The harness's limits count the run's steps and tool
+// calls before the suspension too, if the run was restored with Restore.
+func (r *Run) Resume(ctx context.Context, history, own []model.Message, s Resumption) (Result, error) {
+	if err := checkHistory(history); err != nil {
+		return Result{}, err
+	}
+	var last model.Message
+	if len(own) > 0 {
+		last = own[len(own)-1]
+	}
+	switch {
+	case last.Role != model.RoleAssistant || len(last.ToolCalls) == 0:
+		return Result{}, errors.New("agent: the run to resume does not end with tool calls")
+	case s.Call < 0 || s.Call >= len(last.ToolCalls):
+		return Result{}, fmt.Errorf("agent: the run's last reply has no call %d", s.Call)
+	}
+	if r.executed.Swap(true) {
+		return Result{}, errors.New("agent: run already executed")
+	}
+	res := Result{RunID: r.gateway.ID(), Messages: slices.Clone(own)}
+	for _, msg := range own {
+		if msg.Role == model.RoleAssistant {
+			res.Steps++
+		}
+	}
+	add := r.adder(ctx, &res)
+	c := last.ToolCalls[s.Call]
+	out, err := r.gateway.Resume(ctx, s.CallID, toolgateway.ToolCall{Name: c.Name, Args: c.Args}, s.Answer)
+	if errors.Is(err, toolgateway.ErrAudit) {
+		return res, fmt.Errorf("agent: step %d: %w", res.Steps, err)
+	}
+	result := toolResult(c, out, err)
+	if s.Note != "" {
+		result.Content += "\n\n" + s.Note
+	}
+	results, err := callTools(ctx, r.gateway, last.ToolCalls, s.Call+1, append(slices.Clone(s.Results), result))
+	if err != nil {
+		return res, fmt.Errorf("agent: step %d: %w", res.Steps, err)
+	}
+	if err := add(model.Message{Role: model.RoleUser, ToolResults: results}); err != nil {
+		return res, err
+	}
+	return r.loop(ctx, history, &res, add, res.Steps+1)
+}
+
+// adder returns a function that appends a message to the run's conversation
+// in res and records it.
+func (r *Run) adder(ctx context.Context, res *Result) func(model.Message) error {
+	a := r.agent
+	return func(msg model.Message) error {
 		res.Messages = append(res.Messages, msg)
 		if a.transcript == nil {
 			return nil
 		}
-		if err := a.transcript.Append(ctx, run.ID(), len(res.Messages)-1, msg); err != nil {
+		if err := a.transcript.Append(ctx, r.gateway.ID(), len(res.Messages)-1, msg); err != nil {
 			return fmt.Errorf("agent: transcript: %w", err)
 		}
 		return nil
 	}
-	if err := add(model.Message{Role: model.RoleUser, Text: input}); err != nil {
-		return res, err
-	}
+}
+
+// loop runs the agent loop from step first on: it asks the model, after
+// history and the run's messages in res, and runs the tool calls it makes,
+// until it answers or the harness's step limit is reached.
+func (r *Run) loop(ctx context.Context, history []model.Message, res *Result, add func(model.Message) error, first int) (Result, error) {
+	a, run := r.agent, r.gateway
 	tools := a.gateway.Definitions()
 	if len(tools) == 0 {
 		history = callsAsText(history)
 	}
 	maxSteps := a.harness.Limits.MaxSteps
 
-	for step := 1; step <= maxSteps; step++ {
+	for step := first; step <= maxSteps; step++ {
 		msg, err := a.model.Generate(ctx, model.Request{
 			System:   a.harness.Instructions,
 			Messages: append(slices.Clip(history), res.Messages...),
@@ -241,35 +337,35 @@ func (r *Run) Continue(ctx context.Context, history []model.Message, input strin
 			History:  len(history),
 		})
 		if err != nil {
-			return res, fmt.Errorf("agent: step %d: model: %w", step, err)
+			return *res, fmt.Errorf("agent: step %d: model: %w", step, err)
 		}
 		msg.Role = model.RoleAssistant
 		res.Steps = step
 		if err := add(msg); err != nil {
-			return res, err
+			return *res, err
 		}
 
 		if len(msg.ToolCalls) == 0 {
 			res.Output = msg.Text
-			return res, nil
+			return *res, nil
 		}
 		if step == maxSteps {
 			// Recorded, so the transcript ends as a conversation can
 			// continue from.
 			if err := add(notRun(msg.ToolCalls, maxSteps)); err != nil {
-				return res, err
+				return *res, err
 			}
 			break
 		}
-		results, err := callTools(ctx, run, msg.ToolCalls)
+		results, err := callTools(ctx, run, msg.ToolCalls, 0, nil)
 		if err != nil {
-			return res, fmt.Errorf("agent: step %d: %w", step, err)
+			return *res, fmt.Errorf("agent: step %d: %w", step, err)
 		}
 		if err := add(model.Message{Role: model.RoleUser, ToolResults: results}); err != nil {
-			return res, err
+			return *res, err
 		}
 	}
-	return res, fmt.Errorf("agent: %w (%d)", ErrMaxSteps, maxSteps)
+	return *res, fmt.Errorf("agent: %w (%d)", ErrMaxSteps, maxSteps)
 }
 
 // checkHistory checks that history, if any, is a conversation a run can
@@ -332,24 +428,36 @@ func callsAsText(history []model.Message) []model.Message {
 	return out
 }
 
-// callTools runs calls in order through the gateway. Denials and tool errors
-// become error results for the model; audit failures and cancellation stop
-// the run before any further call.
-func callTools(ctx context.Context, run *toolgateway.Run, calls []model.ToolCall) ([]model.ToolResult, error) {
-	results := make([]model.ToolResult, 0, len(calls))
-	for _, c := range calls {
+// callTools runs calls from index from on, in order, through the gateway,
+// after results, those of the calls before. Denials and tool errors become
+// error results for the model; audit failures and cancellation stop the run
+// before any further call, and a call that waits for approval suspends it
+// with a *Suspended error.
+func callTools(ctx context.Context, run *toolgateway.Run, calls []model.ToolCall, from int, results []model.ToolResult) ([]model.ToolResult, error) {
+	for i := from; i < len(calls); i++ {
+		c := calls[i]
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		out, err := run.Call(ctx, toolgateway.ToolCall{Name: c.Name, Args: c.Args})
-		if errors.Is(err, toolgateway.ErrAudit) {
+		var suspended *toolgateway.Suspended
+		switch {
+		case errors.Is(err, toolgateway.ErrAudit):
 			return nil, err
+		case errors.As(err, &suspended):
+			return nil, &Suspended{Suspended: suspended, Call: i, Results: results}
 		}
-		result := model.ToolResult{CallID: c.ID, Content: string(out)}
-		if err != nil {
-			result.Content, result.IsError = err.Error(), true
-		}
-		results = append(results, result)
+		results = append(results, toolResult(c, out, err))
 	}
 	return results, nil
+}
+
+// toolResult is the result the model sees of call, which returned out and
+// err: a denial or tool error is an error result.
+func toolResult(c model.ToolCall, out json.RawMessage, err error) model.ToolResult {
+	result := model.ToolResult{CallID: c.ID, Content: string(out)}
+	if err != nil {
+		result.Content, result.IsError = err.Error(), true
+	}
+	return result
 }

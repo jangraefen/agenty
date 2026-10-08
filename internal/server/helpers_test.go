@@ -96,8 +96,9 @@ func newFixture(t *testing.T, opts options) *fixture {
 // configured by opts, as an operator restarting agenty with a changed config.
 func (f *fixture) restart(t *testing.T, opts options) {
 	t.Helper()
-	f.http.Close()
+	// The server first: it ends the event streams the HTTP server waits for.
 	f.server.Close()
+	f.http.Close()
 	f.serve(t, opts)
 }
 

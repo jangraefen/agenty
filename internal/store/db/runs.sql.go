@@ -11,19 +11,19 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const cancelQueuedRun = `-- name: CancelQueuedRun :execrows
+const cancelIdleRun = `-- name: CancelIdleRun :execrows
 UPDATE runs
 SET status = 'cancelled', error = $2, finished_at = now()
-WHERE id = $1 AND status = 'queued'
+WHERE id = $1 AND status IN ('queued', 'waiting')
 `
 
-type CancelQueuedRunParams struct {
+type CancelIdleRunParams struct {
 	ID    string
 	Error string
 }
 
-func (q *Queries) CancelQueuedRun(ctx context.Context, arg CancelQueuedRunParams) (int64, error) {
-	result, err := q.db.Exec(ctx, cancelQueuedRun, arg.ID, arg.Error)
+func (q *Queries) CancelIdleRun(ctx context.Context, arg CancelIdleRunParams) (int64, error) {
+	result, err := q.db.Exec(ctx, cancelIdleRun, arg.ID, arg.Error)
 	if err != nil {
 		return 0, err
 	}
@@ -213,6 +213,48 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (GetRunRow, erro
 	return i, err
 }
 
+const idleRuns = `-- name: IdleRuns :many
+SELECT runs.id, runs.status, harness_versions.workspace, harness_versions.name AS harness
+FROM runs
+JOIN harness_versions ON harness_versions.id = runs.harness_version_id
+WHERE runs.status IN ('queued', 'waiting')
+ORDER BY runs.created_at, runs.id
+`
+
+type IdleRunsRow struct {
+	ID        string
+	Status    string
+	Workspace string
+	Harness   string
+}
+
+// The runs no worker holds that have not finished, queued or waiting, oldest
+// first, with their workspaces and harnesses.
+func (q *Queries) IdleRuns(ctx context.Context) ([]IdleRunsRow, error) {
+	rows, err := q.db.Query(ctx, idleRuns)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []IdleRunsRow
+	for rows.Next() {
+		var i IdleRunsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Status,
+			&i.Workspace,
+			&i.Harness,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertRun = `-- name: InsertRun :one
 INSERT INTO runs (id, harness_version_id, input, started_by, conversation_id, follows)
 VALUES (
@@ -346,41 +388,6 @@ func (q *Queries) ListRuns(ctx context.Context, arg ListRunsParams) ([]ListRunsR
 			&i.Harness,
 			&i.HarnessVersion,
 		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const queuedRuns = `-- name: QueuedRuns :many
-SELECT runs.id, harness_versions.workspace, harness_versions.name AS harness
-FROM runs
-JOIN harness_versions ON harness_versions.id = runs.harness_version_id
-WHERE runs.status = 'queued'
-ORDER BY runs.created_at, runs.id
-`
-
-type QueuedRunsRow struct {
-	ID        string
-	Workspace string
-	Harness   string
-}
-
-// The queued runs, oldest first, with their workspaces and harnesses.
-func (q *Queries) QueuedRuns(ctx context.Context) ([]QueuedRunsRow, error) {
-	rows, err := q.db.Query(ctx, queuedRuns)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []QueuedRunsRow
-	for rows.Next() {
-		var i QueuedRunsRow
-		if err := rows.Scan(&i.ID, &i.Workspace, &i.Harness); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

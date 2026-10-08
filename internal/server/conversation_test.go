@@ -440,8 +440,9 @@ func TestFollowUp_ContinuesAfterACancelledRun(t *testing.T) {
 		{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{call("c1", "files_write", `{"path":"notes.md"}`)}},
 		{Role: model.RoleUser, ToolResults: []model.ToolResult{{CallID: "c1", Content: "tool call denied: files_write: approval failed: cancelled by alice", IsError: true}}},
 		{Role: model.RoleAssistant, Text: "[This turn ended without an answer: the run was cancelled.]"},
-		// A cancelled run's servers are stopped.
-		{Role: model.RoleUser, Text: "[The tool server files was started anew since this conversation last used it: what it held from earlier, such as open files or pages, is gone.]\n\nnever mind"},
+		// A run that waits holds no call, so the conversation keeps its
+		// servers.
+		{Role: model.RoleUser, Text: "never mind"},
 	}
 	assert.Equal(t, want, m.Requests()[0].Messages)
 }
@@ -560,13 +561,9 @@ func TestFollowUp_AFollowUpThatCannotRunKeepsTheConversationsServers(t *testing.
 // TestRun_ACancelledRunStopsItsServers: a call may still be running in a
 // server when its run is cancelled, so the server is stopped, not kept.
 func TestRun_ACancelledRunStopsItsServers(t *testing.T) {
-	f := newFixture(t, options{policy: []policy.Module{policy.RulesModule("central", `require_approval contains "writes need a human" if input.tool == "files_write"`)}})
+	f := newFixture(t, options{})
 	f.putNotes(t)
-	f.script(modeltest.CallTools(call("c1", "files_write", `{}`)))
-	run := f.startRun(t, "write")
-	waiting := f.events(t, run.ID)
-	waiting.next()
-	waiting.next()
+	run, _ := f.busy(t)
 
 	require.Equal(t, http.StatusAccepted, f.do(t, http.MethodPost, home+"/runs/"+run.ID+"/cancel", nil, nil))
 	require.Equal(t, api.RunStatusCancelled, f.finish(t, run.ID).Status)

@@ -400,9 +400,9 @@ func TestClaimRun_ClaimsOldestFirst(t *testing.T) {
 	} {
 		createRun(t, s, r)
 	}
-	queued, err := s.QueuedRuns(ctx)
+	queued, err := s.IdleRuns(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, []store.QueuedRun{{ID: "r1", Workspace: ws, Harness: "notes"}, {ID: "w1", Workspace: "work", Harness: "notes"}, {ID: "r2", Workspace: ws, Harness: "notes"}}, queued)
+	assert.Equal(t, []store.IdleRun{{ID: "r1", Status: store.RunQueued, Workspace: ws, Harness: "notes"}, {ID: "w1", Status: store.RunQueued, Workspace: "work", Harness: "notes"}, {ID: "r2", Status: store.RunQueued, Workspace: ws, Harness: "notes"}}, queued)
 
 	var got []store.ClaimedRun
 	for {
@@ -415,7 +415,7 @@ func TestClaimRun_ClaimsOldestFirst(t *testing.T) {
 	}
 
 	assert.Equal(t, []store.ClaimedRun{{ID: "r1", Workspace: ws}, {ID: "w1", Workspace: "work"}, {ID: "r2", Workspace: ws}}, got)
-	queued, err = s.QueuedRuns(ctx)
+	queued, err = s.IdleRuns(ctx)
 	require.NoError(t, err)
 	assert.Empty(t, queued)
 }
@@ -492,13 +492,13 @@ func TestClaimRun_SkipsARunAnotherClaimHolds(t *testing.T) {
 	assert.Equal(t, "r2", claimed.ID)
 }
 
-func TestCancelQueuedRun(t *testing.T) {
+func TestCancelIdleRun(t *testing.T) {
 	ctx := context.Background()
 	s := storetest.New(t)
 	newRun(t, s, "running")
 	createRun(t, s, store.NewRun{ID: "queued", HarnessVersionID: 1, Input: "x", StartedBy: "alice"})
 
-	cancelled, err := s.CancelQueuedRun(ctx, "queued", "cancelled by bob")
+	cancelled, err := s.CancelIdleRun(ctx, "queued", "cancelled by bob")
 	require.NoError(t, err)
 	assert.True(t, cancelled)
 	r, err := s.Run(ctx, ws, "queued")
@@ -511,7 +511,7 @@ func TestCancelQueuedRun(t *testing.T) {
 	assert.False(t, ok, "a cancelled run is not claimed")
 
 	for _, id := range []string{"queued", "running", "ghost"} {
-		cancelled, err := s.CancelQueuedRun(ctx, id, "again")
+		cancelled, err := s.CancelIdleRun(ctx, id, "again")
 		require.NoError(t, err)
 		assert.False(t, cancelled, "only a queued run is cancelled in the store: %s", id)
 	}
@@ -655,9 +655,20 @@ func TestRecord_FailsClosed(t *testing.T) {
 	require.Error(t, createErr(s, store.NewRun{ID: "r9", HarnessVersionID: 1, Input: "", StartedBy: "alice"}))
 	_, _, err = s.ClaimRun(ctx)
 	require.Error(t, err)
-	_, err = s.QueuedRuns(ctx)
+	_, err = s.IdleRuns(ctx)
 	require.Error(t, err)
-	_, err = s.CancelQueuedRun(ctx, "r1", "x")
+	_, err = s.CancelIdleRun(ctx, "r1", "x")
+	require.Error(t, err)
+	require.Error(t, s.SuspendRun(ctx, store.NewApproval{ID: "a1", RunID: "r1"}))
+	_, err = s.PendingApprovals(ctx, ws)
+	require.Error(t, err)
+	_, _, err = s.LatestApproval(ctx, "r1")
+	require.Error(t, err)
+	_, err = s.AnswerApproval(ctx, ws, "r1", "a1", store.Answer{})
+	require.Error(t, err)
+	_, err = s.ExpireApprovals(ctx, "x")
+	require.Error(t, err)
+	_, _, err = s.NextApprovalExpiry(ctx)
 	require.Error(t, err)
 	require.Error(t, s.SetRunDigests(ctx, "r1", "d", "h"))
 	_, err = s.Run(ctx, ws, "r1")

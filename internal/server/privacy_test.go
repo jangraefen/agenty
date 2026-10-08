@@ -66,6 +66,16 @@ func TestInvariant_RunsArePrivate(t *testing.T) {
 	var listed api.ConversationList
 	require.Equal(t, http.StatusOK, f.doAs(t, bobToken, http.MethodGet, "/v1/conversations", nil, &listed))
 	assert.Empty(t, listed.Conversations)
+	// The audit log's views for members show nothing of another's runs:
+	// not their ids, nor their calls' arguments.
+	for _, path := range []string{"/v1/me/activity", home + "/audit"} {
+		var raw json.RawMessage
+		require.Equal(t, http.StatusOK, f.doAs(t, bobToken, http.MethodGet, path, nil, &raw), path)
+		for _, secret := range []string{running.ID, waiting.ID, "notes.md"} {
+			assert.NotContains(t, string(raw), secret, path)
+		}
+	}
+	require.NotEmpty(t, f.logEvents(t, "tool.decision"), "the log does hold the runs' calls")
 
 	assert.Equal(t, api.RunStatusRunning, f.status(t, running.ID), "no one else cancelled the run")
 	assert.Equal(t, api.RunStatusWaiting, f.status(t, waiting.ID), "no one else answered the request")
@@ -95,7 +105,7 @@ func TestInvariant_OnlyAuditorsReadTheAuditLog(t *testing.T) {
 	require.Equal(t, http.StatusCreated, f.doAs(t, bobToken, http.MethodPost, "/v1/workspaces/work/runs", api.CreateRun{Harness: "notes", Input: "x"}, &theirs))
 
 	for _, bearer := range []string{aliceToken, bobToken, carolToken} {
-		for _, path := range []string{"/v1/audit/runs", "/v1/audit/runs/" + mine.ID} {
+		for _, path := range []string{"/v1/audit/runs", "/v1/audit/runs/" + mine.ID, "/v1/audit/events", "/v1/audit/export"} {
 			var e api.Error
 			assert.Equal(t, http.StatusForbidden, f.doAs(t, bearer, http.MethodGet, path, nil, &e), path)
 		}

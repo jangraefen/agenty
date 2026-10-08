@@ -145,6 +145,61 @@ paths:
               schema: {$ref: "#/components/schemas/AuditRunDetail"}
         default: {$ref: "#/components/responses/Error"}
 
+  /v1/me/activity:
+    get:
+      operationId: listMyActivity
+      summary: What the user did, newest first, a page at a time
+      description: |
+        The events whose actor is the user, in the workspaces they are a
+        member of now, or in none: their runs and their calls, their
+        approvals, cancels and harness changes, and, for an auditor, their
+        reads. Not what others did, auditors' reads of the user's runs
+        included, nor how a run ended, which the server records.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/BeforeEvent"
+      responses:
+        "200":
+          description: A page of events.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AuditLogEventList"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /v1/audit/events:
+    get:
+      operationId: listAuditEvents
+      summary: Every event of the audit log, newest first, a page at a time, for auditors
+      description: |
+        Only auditors may list them; anyone else is forbidden. The listing
+        is itself recorded as an auditor's read.
+      parameters:
+        - name: actor
+          in: query
+          description: Only the events by this user.
+          schema: {type: string, maxLength: 200}
+        - name: workspace
+          in: query
+          description: Only the events in this workspace.
+          schema: {type: string, maxLength: 200}
+        - name: action
+          in: query
+          description: Only the events with this action.
+          schema: {type: string, maxLength: 200}
+        - name: run
+          in: query
+          description: Only the events about this run.
+          schema: {type: string, maxLength: 200}
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/BeforeEvent"
+      responses:
+        "200":
+          description: A page of events.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AuditLogEventList"}
+        default: {$ref: "#/components/responses/Error"}
+
   /v1/audit/export:
     get:
       operationId: exportAuditLog
@@ -166,6 +221,26 @@ paths:
           content:
             application/jsonl:
               schema: {type: string}
+        default: {$ref: "#/components/responses/Error"}
+
+  /v1/workspaces/{workspace}/audit:
+    parameters:
+      - $ref: "#/components/parameters/Workspace"
+    get:
+      operationId: listWorkspaceAuditEvents
+      summary: The changes made to a workspace, newest first, a page at a time
+      description: |
+        The events that change the workspace itself: its harnesses' new
+        versions. Its members' runs are theirs, not the workspace's.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/BeforeEvent"
+      responses:
+        "200":
+          description: A page of events.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AuditLogEventList"}
         default: {$ref: "#/components/responses/Error"}
 
   /v1/workspaces/{workspace}/harnesses:
@@ -420,6 +495,11 @@ components:
         A run of a conversation the user started. Any other run, also one of
         another member's conversation, is not found.
       schema: {type: string}
+    BeforeEvent:
+      name: before
+      in: query
+      description: Continue before the event with this id, as AuditLogEventList.next gives it.
+      schema: {type: integer, format: int64, minimum: 1}
     Limit:
       name: limit
       in: query
@@ -643,9 +723,21 @@ components:
           type: string
         run_id: {type: string}
         target: {type: string}
-        details: {type: object}
+        details: {type: object, additionalProperties: true}
         prev_hash: {type: string, pattern: "^[0-9a-f]{64}$"}
         hash: {type: string, pattern: "^[0-9a-f]{64}$"}
+
+    AuditLogEventList:
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          items: {$ref: "#/components/schemas/AuditLogEvent"}
+        next:
+          description: The before parameter of the next page; unset on the last.
+          type: integer
+          format: int64
 
     AuditRunList:
       type: object

@@ -4,14 +4,18 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"maps"
+	"net/http"
 	"slices"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/jangraefen/agenty/internal/api"
 	"github.com/jangraefen/agenty/internal/auditlog"
 	"github.com/jangraefen/agenty/internal/must"
 	"github.com/jangraefen/agenty/internal/policy"
+	"github.com/jangraefen/agenty/internal/store"
 )
 
 // serverStarted is the event of a server's start: the central policy in
@@ -70,4 +74,94 @@ func (s handlers) recordRead(c *gin.Context, what map[string]any) bool {
 		return false
 	}
 	return true
+}
+
+// workspaceChanges are the actions that change a workspace itself, which its
+// members see in its audit log.
+var workspaceChanges = []string{"harness.changed"}
+
+// maxFilter is the longest filter value an auditor's listing takes, so its
+// recorded read stays small.
+const maxFilter = 200
+
+// eventList is a page of the audit log as the API lists it. It is not the
+// generated api.AuditLogEventList: the events are package auditlog's, so
+// their details keep the canonical text their hashes cover.
+type eventList struct {
+	Events []auditlog.Event `json:"events"`
+	Next   int64            `json:"next,omitempty"`
+}
+
+// listEvents answers with a page of events that list returns, its limit and
+// before taken from the request's parameters (before 0 for the newest).
+// read, if not nil, records the read once the request is valid, and answers
+// when it cannot.
+func (s handlers) listEvents(c *gin.Context, limit int, before int64, read func() bool, list func(before int64, limit int) ([]auditlog.Event, error)) {
+	if before < 0 {
+		s.fail(c, http.StatusBadRequest, fmt.Errorf("before %d: must not be negative", before))
+		return
+	}
+	limit, ok := s.pageLimit(c, limit)
+	if !ok {
+		return
+	}
+	if read != nil && !read() {
+		return
+	}
+	events, err := list(before, limit)
+	if err != nil {
+		s.failStore(c, err)
+		return
+	}
+	out := eventList{Events: events}
+	// A full page may be the last: the next one is then empty.
+	if len(events) == limit {
+		out.Next = events[len(events)-1].ID
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// ListMyActivity lists what the user did: the events they are the actor of,
+// in the workspaces they are a member of now, or in none. What others did,
+// auditors' reads of the user's runs too, is not theirs.
+func (s handlers) ListMyActivity(c *gin.Context, params api.ListMyActivityParams) {
+	user := c.GetString(userKey)
+	s.listEvents(c, params.Limit, params.Before, nil, func(before int64, limit int) ([]auditlog.Event, error) {
+		return s.cfg.Store.ActorEvents(c.Request.Context(), user, s.memberships(user), before, limit)
+	})
+}
+
+// ListWorkspaceAuditEvents lists the changes made to a workspace, for its
+// members.
+func (s handlers) ListWorkspaceAuditEvents(c *gin.Context, workspace string, params api.ListWorkspaceAuditEventsParams) {
+	s.listEvents(c, params.Limit, params.Before, nil, func(before int64, limit int) ([]auditlog.Event, error) {
+		return s.cfg.Store.WorkspaceEvents(c.Request.Context(), workspace, workspaceChanges, before, limit)
+	})
+}
+
+// ListAuditEvents lists every event of the audit log for an auditor.
+func (s handlers) ListAuditEvents(c *gin.Context, params api.ListAuditEventsParams) {
+	if !s.auditor(c) {
+		return
+	}
+	for _, value := range []string{params.Actor, params.Workspace, params.Action, params.Run} {
+		if len(value) > maxFilter {
+			s.fail(c, http.StatusBadRequest, fmt.Errorf("a filter is longer than %d bytes", maxFilter))
+			return
+		}
+	}
+	read := map[string]any{"read": "events"}
+	for key, value := range map[string]string{"actor": params.Actor, "workspace": params.Workspace, "action": params.Action, "run": params.Run} {
+		if value != "" {
+			read[key] = value
+		}
+	}
+	if params.Before != 0 {
+		read["before"] = params.Before
+	}
+	f := store.EventFilter{Actor: params.Actor, Workspace: params.Workspace, Action: params.Action, RunID: params.Run}
+	s.listEvents(c, params.Limit, params.Before, func() bool { return s.recordRead(c, read) }, func(before int64, limit int) ([]auditlog.Event, error) {
+		f.Before, f.Limit = before, limit
+		return s.cfg.Store.ListAuditEvents(c.Request.Context(), f)
+	})
 }

@@ -44,6 +44,8 @@ test("shows a run and what the gateway recorded for it", async () => {
   expect(decision).toHaveTextContent("writes need a human");
   expect(approval).toHaveTextContent("by ana");
   expect(screen.getByRole("link", { name: "All runs" })).toHaveAttribute("href", "/audit");
+  expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+  expect(screen.queryByRole("navigation", { name: "Audit log views" })).not.toBeInTheDocument();
 });
 
 test("says when a run recorded no tool calls", async () => {

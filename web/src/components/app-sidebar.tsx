@@ -4,6 +4,7 @@ import {
   LuBot,
   LuChevronsUpDown,
   LuCircleAlert,
+  LuFileClock,
   LuLogOut,
   LuScrollText,
   LuSquarePen,
@@ -57,10 +58,14 @@ export function AppSidebar() {
       )}
       <div className="grid gap-2 border-t pt-3">
         <div className="flex items-center gap-2">
-          <span className="flex min-w-0 flex-1 items-center gap-2 px-2 text-sm text-muted-foreground">
+          <Link
+            to="/activity"
+            aria-label={`${me.user}, your activity`}
+            className={`flex-1 text-muted-foreground ${itemClass}`}
+          >
             <LuUser aria-hidden="true" className="size-4 shrink-0" />
             <span className="truncate">{me.user}</span>
-          </span>
+          </Link>
           <Button variant="outline" size="sm" onClick={signOut}>
             <LuLogOut aria-hidden="true" />
             Sign out
@@ -135,6 +140,10 @@ function Manage({ workspace, workspaces }: { workspace: string; workspaces: stri
       <Link to="/w/$workspace/harnesses" params={{ workspace }} className={itemClass}>
         <LuBot aria-hidden="true" className="size-4 shrink-0" />
         Harnesses
+      </Link>
+      <Link to="/w/$workspace/audit" params={{ workspace }} className={itemClass}>
+        <LuFileClock aria-hidden="true" className="size-4 shrink-0" />
+        Audit log
       </Link>
     </nav>
   );

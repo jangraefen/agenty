@@ -101,3 +101,21 @@ export function auditRun(overrides: Partial<Schemas["AuditRun"]> = {}): Schemas[
     ...overrides,
   };
 }
+
+export function logEvent(
+  overrides: Partial<Schemas["AuditLogEvent"]> = {},
+): Schemas["AuditLogEvent"] {
+  return {
+    id: 1,
+    recorded_at: "2026-10-08T12:00:00Z",
+    actor: "demo",
+    action: "harness.changed",
+    workspace: "notes",
+    run_id: "",
+    target: "notes",
+    details: { version: 2 },
+    prev_hash: "0".repeat(64),
+    hash: "1".repeat(64),
+    ...overrides,
+  };
+}

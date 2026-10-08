@@ -110,6 +110,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What the user did, newest first, a page at a time
+         * @description The events whose actor is the user, in the workspaces they are a
+         *     member of now, or in none: their runs and their calls, their
+         *     approvals, cancels and harness changes, and, for an auditor, their
+         *     reads. Not what others did, auditors' reads of the user's runs
+         *     included, nor how a run ended, which the server records.
+         */
+        get: operations["listMyActivity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/audit/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every event of the audit log, newest first, a page at a time, for auditors
+         * @description Only auditors may list them; anyone else is forbidden. The listing
+         *     is itself recorded as an auditor's read.
+         */
+        get: operations["listAuditEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/audit/export": {
         parameters: {
             query?: never;
@@ -126,6 +171,29 @@ export interface paths {
          *     event is written: an export without it was cut short.
          */
         get: operations["exportAuditLog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{workspace}/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace: components["parameters"]["Workspace"];
+            };
+            cookie?: never;
+        };
+        /**
+         * The changes made to a workspace, newest first, a page at a time
+         * @description The events that change the workspace itself: its harnesses' new
+         *     versions. Its members' runs are theirs, not the workspace's.
+         */
+        get: operations["listWorkspaceAuditEvents"];
         put?: never;
         post?: never;
         delete?: never;
@@ -581,9 +649,19 @@ export interface components {
             workspace: string;
             run_id: string;
             target: string;
-            details: Record<string, never>;
+            details: {
+                [key: string]: unknown;
+            };
             prev_hash: string;
             hash: string;
+        };
+        AuditLogEventList: {
+            events: components["schemas"]["AuditLogEvent"][];
+            /**
+             * Format: int64
+             * @description The before parameter of the next page; unset on the last.
+             */
+            next?: number;
         };
         AuditRunList: {
             runs: components["schemas"]["AuditRun"][];
@@ -711,6 +789,8 @@ export interface components {
          *     another member's conversation, is not found.
          */
         RunID: string;
+        /** @description Continue before the event with this id, as AuditLogEventList.next gives it. */
+        BeforeEvent: number;
         /** @description The page size. */
         Limit: number;
     };
@@ -851,6 +931,66 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    listMyActivity: {
+        parameters: {
+            query?: {
+                /** @description The page size. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Continue before the event with this id, as AuditLogEventList.next gives it. */
+                before?: components["parameters"]["BeforeEvent"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of events. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditLogEventList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listAuditEvents: {
+        parameters: {
+            query?: {
+                /** @description Only the events by this user. */
+                actor?: string;
+                /** @description Only the events in this workspace. */
+                workspace?: string;
+                /** @description Only the events with this action. */
+                action?: string;
+                /** @description Only the events about this run. */
+                run?: string;
+                /** @description The page size. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Continue before the event with this id, as AuditLogEventList.next gives it. */
+                before?: components["parameters"]["BeforeEvent"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of events. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditLogEventList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     exportAuditLog: {
         parameters: {
             query?: {
@@ -870,6 +1010,34 @@ export interface operations {
                 };
                 content: {
                     "application/jsonl": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listWorkspaceAuditEvents: {
+        parameters: {
+            query?: {
+                /** @description The page size. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Continue before the event with this id, as AuditLogEventList.next gives it. */
+                before?: components["parameters"]["BeforeEvent"];
+            };
+            header?: never;
+            path: {
+                workspace: components["parameters"]["Workspace"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of events. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditLogEventList"];
                 };
             };
             default: components["responses"]["Error"];

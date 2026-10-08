@@ -73,6 +73,20 @@ test("signs in, makes a harness, chats with it, and signs out", async ({ page })
     .click();
   await expect(page.getByRole("heading", { name: `${name} v1` })).toBeVisible();
   await expect(page.getByText("No tool calls.")).toBeVisible();
+  // The log's events: the harness made above, among them, and the smoke
+  // user's own activity.
+  await page.getByRole("link", { name: "All runs" }).click();
+  await page
+    .getByRole("navigation", { name: "Audit log views" })
+    .getByRole("link", { name: "Events" })
+    .click();
+  const events = page.getByRole("table", { name: "Events" });
+  await expect(events.getByText("Harness changed").first()).toBeVisible();
+  await page.getByRole("link", { name: "smoke, your activity" }).click();
+  await expect(page.getByRole("heading", { name: "Your activity" })).toBeVisible();
+  await expect(
+    page.getByRole("table", { name: "Events" }).getByText("Run started").first(),
+  ).toBeVisible();
 
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/sign-in$/);

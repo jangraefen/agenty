@@ -1,25 +1,25 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { type FormEvent, useEffect, useId, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { type AuditFilters, auditRunsQuery, isRunStatus, runStatuses } from "@/api/queries";
+import { AuditHeader } from "@/components/audit-header";
+import { FilterForm, textFilters } from "@/components/filter-form";
 import { RunStatusBadge } from "@/components/run-status";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatDuration, formatTime } from "@/lib/format";
 
-const textFilters = ["workspace", "harness", "started_by"] as const;
+const fields = [
+  { name: "workspace", label: "Workspace" },
+  { name: "harness", label: "Harness" },
+  { name: "started_by", label: "Started by" },
+] as const;
 
-// The filters in a search, ignoring anything else: the router passes on the
-// search parameters no route validates, too.
 function auditFilters(search: Record<string, unknown>): AuditFilters {
-  const filters: AuditFilters = {};
-  for (const name of textFilters) {
-    const value = search[name];
-    if (typeof value === "string" && value.trim() !== "") {
-      filters[name] = value.trim();
-    }
-  }
+  const filters: AuditFilters = textFilters(
+    search,
+    fields.map((field) => field.name),
+  );
   if (isRunStatus(search.status)) {
     filters.status = search.status;
   }
@@ -33,17 +33,10 @@ export const Route = createFileRoute("/_authed/audit/")({
   component: AuditRuns,
 });
 
-const labels: Record<(typeof textFilters)[number], string> = {
-  workspace: "Workspace",
-  harness: "Harness",
-  started_by: "Started by",
-};
-
 function AuditRuns() {
   const filters = auditFilters(Route.useSearch());
   const { api } = Route.useRouteContext();
   const navigate = Route.useNavigate();
-  const id = useId();
   const runs = useInfiniteQuery(auditRunsQuery(api, filters));
   const pages = runs.data?.pages ?? [];
   const shown = pages.reduce((count, page) => count + page.runs.length, 0);
@@ -66,62 +59,44 @@ function AuditRuns() {
   }, [focusRun]);
 
   async function loadMore() {
+    if (runs.isFetchingNextPage) {
+      return;
+    }
     const result = await runs.fetchNextPage();
     if (result.isSuccess) {
       setFocusRun(result.data.pages.at(-1)?.runs[0]?.id ?? "");
     }
   }
 
-  function filter(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    void navigate({ search: auditFilters(Object.fromEntries(form)), replace: true });
-  }
-
   return (
     <section className="grid gap-6">
-      <h1 className="text-xl font-semibold">Audit log</h1>
-      {/* Keyed by the filters, so the fields show them after each search. */}
-      <form
-        key={JSON.stringify(filters)}
-        onSubmit={filter}
-        className="flex flex-wrap items-end gap-4"
+      <AuditHeader />
+      <FilterForm
+        fields={fields}
+        values={filters}
+        onFilter={(form) => void navigate({ search: auditFilters(form), replace: true })}
       >
-        {textFilters.map((name) => (
-          <div key={name} className="grid gap-1">
-            <Label htmlFor={`${id}-${name}`} className="font-normal">
-              {labels[name]}
+        {(id) => (
+          <div className="grid gap-1">
+            <Label htmlFor={`${id}-status`} className="font-normal">
+              Status
             </Label>
-            <Input
-              id={`${id}-${name}`}
-              name={name}
-              defaultValue={filters[name] ?? ""}
-              className="h-8 w-40"
-            />
+            <select
+              id={`${id}-status`}
+              name="status"
+              defaultValue={filters.status ?? ""}
+              className="h-8 rounded-md border bg-background px-2 text-sm"
+            >
+              <option value="">All</option>
+              {runStatuses.map((status) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
+            </select>
           </div>
-        ))}
-        <div className="grid gap-1">
-          <Label htmlFor={`${id}-status`} className="font-normal">
-            Status
-          </Label>
-          <select
-            id={`${id}-status`}
-            name="status"
-            defaultValue={filters.status ?? ""}
-            className="h-8 rounded-md border bg-background px-2 text-sm"
-          >
-            <option value="">All</option>
-            {runStatuses.map((status) => (
-              <option key={status} value={status}>
-                {status}
-              </option>
-            ))}
-          </select>
-        </div>
-        <Button type="submit" variant="outline" size="sm">
-          Filter
-        </Button>
-      </form>
+        )}
+      </FilterForm>
 
       {runs.isPending && <p className="text-muted-foreground">Loading runs…</p>}
       {runs.isError && (

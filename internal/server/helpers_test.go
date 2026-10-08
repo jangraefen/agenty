@@ -141,7 +141,7 @@ func (f *fixture) serve(t *testing.T, opts options) {
 			Approvals:  config.Approvals{Timeout: opts.approvalTimeout},
 		},
 		Resolved: &config.Resolved{Redactor: redactor, UserTokens: userTokens},
-		Logger:   slog.New(redactor.Handler(slog.NewTextHandler(f.logs, nil))),
+		Logger:   slog.New(slog.NewTextHandler(f.logs, nil)),
 		NewModel: newModel,
 		Server: func(name string, _ mcptool.Server) toolgateway.ToolServer {
 			assert.Equal(t, "files", name)

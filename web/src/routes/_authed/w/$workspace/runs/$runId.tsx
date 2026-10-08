@@ -10,10 +10,10 @@ import { useEffect, useRef, useState } from "react";
 import { ApiError, type Schemas, unwrap } from "@/api/client";
 import {
   approvalsQuery,
+  cacheStartedRun,
   conversationQuery,
   conversationsKey,
   runQuery,
-  runsKey,
   unfinished,
 } from "@/api/queries";
 import { runEventsQuery } from "@/api/run-events";
@@ -217,11 +217,7 @@ function Composer({ runs, latest, ready }: { runs: Run[]; latest: Run; ready: bo
       ),
     onSuccess: async (run) => {
       setText("");
-      queryClient.setQueryData(runQuery(api, workspace, run.id).queryKey, run);
-      // The new run's page shows the conversation so far at once.
-      queryClient.setQueryData(conversationQuery(api, workspace, run.id).queryKey, [...runs, run]);
-      void queryClient.invalidateQueries({ queryKey: conversationsKey(workspace) });
-      void queryClient.invalidateQueries({ queryKey: runsKey(workspace) });
+      cacheStartedRun(queryClient, api, workspace, run, runs);
       await navigate({ to: "/w/$workspace/runs/$runId", params: { workspace, runId: run.id } });
       box.current?.focus();
     },
@@ -235,36 +231,22 @@ function Composer({ runs, latest, ready }: { runs: Run[]; latest: Run; ready: bo
 
   const waiting = unfinished(latest.status);
   const ended = latest.status === "failed" || latest.status === "cancelled";
-  const notes = [];
-  if (waiting) {
-    notes.push({
-      id: "waiting",
-      note: (
-        <p className="text-xs text-muted-foreground">You can reply once the agent has answered.</p>
-      ),
-    });
-  }
-  if (ended) {
-    notes.push({
-      id: "ended",
-      note: (
-        <p className="text-xs text-muted-foreground">
-          The last run {latest.status === "failed" ? "failed" : "was cancelled"}. A reply continues
-          from where it stopped.
-        </p>
-      ),
-    });
-  }
-  if (reply.isError) {
-    notes.push({
-      id: "error",
-      note: (
-        <p role="alert" className="text-sm text-destructive">
-          The reply could not be sent: {reply.error.message}
-        </p>
-      ),
-    });
-  }
+  const notes = {
+    waiting: waiting && (
+      <p className="text-xs text-muted-foreground">You can reply once the agent has answered.</p>
+    ),
+    ended: ended && (
+      <p className="text-xs text-muted-foreground">
+        The last run {latest.status === "failed" ? "failed" : "was cancelled"}. A reply continues
+        from where it stopped.
+      </p>
+    ),
+    error: reply.isError && (
+      <p role="alert" className="text-sm text-destructive">
+        The reply could not be sent: {reply.error.message}
+      </p>
+    ),
+  };
 
   return (
     <MessageBox

@@ -24,8 +24,8 @@ export function MessageBox({
   blocked: boolean;
   invalid: boolean;
   placeholder: string;
-  // notes are the notes below the box, by the ID suffix they describe it with.
-  notes: { id: string; note: ReactNode }[];
+  // notes are the notes below the box, by name; a false one is not shown.
+  notes: Record<string, ReactNode | false>;
 }) {
   const id = useId();
 
@@ -47,7 +47,8 @@ export function MessageBox({
     }
   }
 
-  const described = notes.map((n) => `${id}-${n.id}`).join(" ");
+  const shown = Object.entries(notes).filter(([, note]) => note !== false);
+  const described = shown.map(([name]) => `${id}-${name}`).join(" ");
 
   return (
     <form onSubmit={submit} className="sticky bottom-0 grid gap-2 border-t bg-background pt-3 pb-4">
@@ -71,9 +72,9 @@ export function MessageBox({
           Send
         </Button>
       </div>
-      {notes.map((n) => (
-        <div key={n.id} id={`${id}-${n.id}`}>
-          {n.note}
+      {shown.map(([name, note]) => (
+        <div key={name} id={`${id}-${name}`}>
+          {note}
         </div>
       ))}
     </form>

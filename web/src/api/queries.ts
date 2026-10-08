@@ -1,4 +1,4 @@
-import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
+import { infiniteQueryOptions, type QueryClient, queryOptions } from "@tanstack/react-query";
 import { type Api, type Schemas, unwrap } from "./client";
 
 export type RunStatus = Schemas["RunStatus"];
@@ -143,4 +143,21 @@ export function harnessQuery(api: Api, workspace: string, name: string) {
         }),
       ),
   });
+}
+
+/**
+ * Caches run, just started after earlier, the runs of its conversation so far,
+ * so its page shows the conversation at once, and refreshes the lists it joins.
+ */
+export function cacheStartedRun(
+  queryClient: QueryClient,
+  api: Api,
+  workspace: string,
+  run: Schemas["Run"],
+  earlier: Schemas["Run"][] = [],
+) {
+  queryClient.setQueryData(runQuery(api, workspace, run.id).queryKey, run);
+  queryClient.setQueryData(conversationQuery(api, workspace, run.id).queryKey, [...earlier, run]);
+  void queryClient.invalidateQueries({ queryKey: conversationsKey(workspace) });
+  void queryClient.invalidateQueries({ queryKey: runsKey(workspace) });
 }

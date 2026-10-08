@@ -109,14 +109,24 @@ func TestFollowUp_RunsTheConversationsVersion(t *testing.T) {
 	requests := m.Requests()
 	require.Len(t, requests, 1)
 	assert.Equal(t, "Tidy the notes.", requests[0].System)
-	var offered []string
-	for _, def := range requests[0].Tools {
-		offered = append(offered, def.Name)
-	}
-	assert.Contains(t, offered, "files_write", "a grant taken away reaches new conversations only")
+	assert.Contains(t, offered(requests[0]), "files_write", "a grant taken away reaches new conversations only")
 	assert.Len(t, requests[0].Messages, 3, "with the conversation so far")
-	f.script(modeltest.Reply("ok"))
-	assert.Equal(t, 2, f.startRun(t, "anew").HarnessVersion, "a new conversation runs the latest version")
+
+	m = f.script(modeltest.Reply("ok"))
+	fresh := f.startRun(t, "anew")
+	f.finish(t, fresh.ID)
+	assert.Equal(t, 2, fresh.HarnessVersion, "a new conversation runs the latest version")
+	require.Len(t, m.Requests(), 1)
+	assert.NotContains(t, offered(m.Requests()[0]), "files_write")
+}
+
+// offered names the tools a model request offers.
+func offered(req model.Request) []string {
+	var names []string
+	for _, def := range req.Tools {
+		names = append(names, def.Name)
+	}
+	return names
 }
 
 // TestInvariant_CentralPolicyReachesEveryConversation guards a trust-model

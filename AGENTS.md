@@ -4,7 +4,7 @@ Guidance for AI coding agents working in this repository.
 
 ## Project
 
-Agenty is an open-source, self-hostable platform for building governed AI agent harnesses. The proof of concept and the API server are done and the next stage is the web frontend: [docs/IDEA.md](docs/IDEA.md) describes the idea, the settled technology choices, the PoC, and the decisions for the next stages. Read it before working.
+Agenty is an open-source, self-hostable platform for building governed AI agent harnesses. The proof of concept, the API server and the web frontend are done and the next stage makes runs durable: [docs/IDEA.md](docs/IDEA.md) describes the idea, the settled technology choices, the PoC, and the decisions for the next stages. Read it before working.
 
 ## Non-negotiables
 

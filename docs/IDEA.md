@@ -1,6 +1,6 @@
 # Agenty — Idea
 
-> **Status**: The proof of concept and the API server are done; the next stage is the web frontend. This document is the starting point; everything else is built incrementally from it.
+> **Status**: The proof of concept, the API server and the web frontend are done; the next stage makes runs durable. This document is the starting point; everything else is built incrementally from it.
 
 ## The problem
 
@@ -109,9 +109,9 @@ task demo    # in a second terminal: applies the notes harness and runs it
 
 The example's central policy asks before every file change and denies dotfiles; its harness allows one rewrite per run. The example's user `demo` works in the workspace `notes`, signing in with `AGENTY_TOKEN`, which the Taskfile sets to a fixed local token unless the environment or `.env` sets another. `agenty run` asks at the terminal, and the audit log of a run is at `GET /v1/workspaces/notes/runs/{id}/audit`.
 
-## Next: the web frontend
+## The web frontend
 
-The API server held. The next stage puts a browser in front of it: the web frontend in `web/`, a client of the JSON API like the CLI, against the API server as it is. The rest of the web portal below comes after.
+The API server held. This stage put a browser in front of it: the web frontend in `web/`, a client of the JSON API like the CLI, against the API server as it is. The rest of the web portal below comes after.
 
 - **Sign-in**: the user pastes their token, which the frontend checks with `GET /v1/me` and keeps in the browser's `localStorage` until they sign out or the API answers 401. It is sent only in the `Authorization` header, never in a URL, and never logged.
 - **Content-Security-Policy**: the built frontend runs only its own scripts, loads stylesheets, fonts and images only from itself (images also as `data:` URLs) and talks only to the API, for good, not until sign-in changes: it shows output from models and tools, which a prompt injection can shape, and the browser holds a token worth stealing, as it may with OIDC too. That output is only ever rendered as text, never as HTML; the policy is the second line of defence. It allows inline styles, which Radix's modal pieces, such as its dialog, lock scrolling with. An injected style cannot send data to another origin, but it could restyle the page, approvals included, misleadingly, or request the frontend's own URLs, so no field holds a secret in its value attribute: the token field is uncontrolled.
@@ -123,25 +123,31 @@ The API server held. The next stage puts a browser in front of it: the web front
 
 The frontend calls the agenty server at the URL `VITE_AGENTY_API_URL` names when it is built, `http://127.0.0.1:8080` by default. `task web:dev` serves the frontend for development, and `task web:e2e` runs its smoke test, which needs Google Chrome: it signs in, starts a run and follows it to its end against a real `agenty serve` with an operator config of its own, `web/e2e/agenty.yaml`, whose dummy model key and closed provider address make every run fail at once, without calling a model; `task check` checks it along with the backend, and `task --list` shows its other `web:` tasks.
 
+## Next: durable runs
+
+The web frontend held. A run is still one goroutine from start to end: a call that needs approval holds it, its MCP servers and its events in memory until someone answers or `approvals.timeout` passes, and a restart fails every run in flight. This stage makes runs that wait durable, through a job queue in PostgreSQL, built in this order:
+
+- **Pinned conversations**: a follow-up runs the harness version of the run it follows, instead of the latest, as now, so a conversation keeps the version it started with. A builder's change, a grant taken away included, applies to new conversations only. Central policy is not versioned: every call is checked against the central policy the server runs with at the time, so the operator can stop a tool everywhere, ongoing conversations included.
+- **A job queue**: the runs table is the queue, and there is no queue library. Starting or following up a run stores it as `queued` and returns. Workers, goroutines inside `agenty serve`, `runs.workers` of them, 16 by default, claim queued runs oldest first with `FOR UPDATE SKIP LOCKED`, woken in-process when a run is queued, and on start take up the runs left queued. A run is never retried, as a tool may not be idempotent: a worker takes up only queued runs. One `agenty serve` serves a database, as yet: on start it fails the runs an earlier one left running, as now, and a run executing is cancelled in-process. A queued or waiting run is cancelled in the database.
+- **Durable approvals**: a call that needs approval suspends its run, which then waits as `waiting`, holding no worker; the results of the calls before it in the same reply are stored first. The request is stored, bound to that call and its arguments, and answered once; the answer queues the run, and a worker resumes it at that call. A request nobody answers within `approvals.timeout` is rejected by the server's sweep, which queues the run so the model is told. Before running the call, the gateway decides it again with the central policy of the time: an answered request settles `require_approval`, and only a deny stops the call now. The resumed run keeps its gateway ID; its call counts, denied calls included, are restored from its audit log and its steps from its transcript, so a restart neither loosens policy nor resets a limit. The new decision is recorded under the call's own ID and is not another attempt. A run's event stream follows it across a suspend: while it waits, the stream shows its stored request. MCP servers get no special handling: a resumed call runs on the server there is then, and when that server had to start anew, the call's result says so. That a local server's state may be gone by then is accepted; remote servers over HTTP, the main path once built, keep theirs.
+
 ## Later: the web portal
 
-Decided for the stage after the web frontend:
+Decided for the stages after durable runs:
 
 - **Frontend**: the web frontend above. Harnesses are authored in a form, with a read-only YAML view.
 - **Tenancy**: workspaces within one organisation, as the API server has them.
 - **Sign-in**: the API server's configured users and tokens are the stopgap: OIDC replaces them before release and is then the only way to sign in.
 - **Central policy**: stays Rego files from the operator config; the portal shows it read-only.
-- **Runs**: executed in-process by the backend, taken from a job queue in PostgreSQL.
-- **Approvals**: durable. A call that needs approval pauses the run; approving resumes it, and pending runs survive restarts.
 - **MCP servers**: reached as local processes over stdio, as today, or as remote servers over HTTP. Their credentials are held by the operator, one set per server.
 - **Long conversations**: compress a conversation that nears the model's context window, as Claude Code does, for example with the Anthropic API's server-side compaction, instead of letting it fail.
 
-Conversations started as runs that follow one another, and each run is still built for one shot: it starts its MCP servers, holds its approvals and events in memory, and stops everything when it ends. Longer and more durable conversations keep these in mind:
+Conversations started as runs that follow one another, and each run still holds its approvals and events in memory. Longer and more durable conversations keep these in mind:
 
-- **Two tiers of durability**: a chat turn that dies, to a restart or an error, is recovered by continuing the conversation from its transcript, not by resuming the turn where it stopped; a tool call whose result was never recorded is reported to the model as interrupted, never run again, as the tool may not be idempotent. Only runs that work long on their own or wait for approvals are made durable, through the job queue and durable approvals above.
+- **Two tiers of durability**: a chat turn that dies, to a restart or an error, is recovered by continuing the conversation from its transcript, not by resuming the turn where it stopped; a tool call whose result was never recorded is reported to the model as interrupted, never run again, as the tool may not be idempotent. Only runs that wait for approvals are made durable, through the job queue and durable approvals of the next stage; runs that work long on their own come later.
 - **Transcript and context**: the stored transcript stays complete and is what users see; what the model sees is derived from it and may be shorter, once conversations are compressed. A conversation becomes an entity of its own, holding that state, its title and its totals, instead of being derived from the runs that follow one another.
 - **MCP servers live as long as a conversation**, not a run: a server keeps its state, such as an open page or a working directory, between the turns of one conversation, and stops after it has been idle for a while. A server is never shared between conversations, since its state crosses the boundary, unless the operator marks it stateless. When a server's state is lost, by expiry or a restart, the model is told, as the earlier turns still describe it. Remote servers over HTTP are the main path for a multi-user server; their sessions can outlive a restart, where a local process cannot.
-- **A stable prompt prefix**: prompt caching, and on newer Anthropic models the validity of earlier thinking blocks, depend on the instructions, the tool definitions and every earlier message being sent byte for byte as before. Within a conversation they are kept stable; a change, such as a new harness version, is appended after the history where the provider allows it, and otherwise earlier thinking is left out rather than sent invalid. Nothing per-request, such as the time, goes into the instructions.
+- **A stable prompt prefix**: prompt caching, and on newer Anthropic models the validity of earlier thinking blocks, depend on the instructions, the tool definitions and every earlier message being sent byte for byte as before. Within a conversation they are kept stable, as it keeps its harness version; where they change all the same, earlier thinking is left out rather than sent invalid. Nothing per-request, such as the time, goes into the instructions.
 - **Usage**: every model call records its input, output and cache tokens, the basis for conversation budgets, for checking that caching works, and for cost attribution. A conversation gets limits of its own, on tokens or turns, beside each run's.
 
 The longer-term direction stays the same: a governed catalog of tools and skills, service accounts, cost attribution, and a curated starter kit of MCP servers for common enterprise systems — all open source, with no paid edition.

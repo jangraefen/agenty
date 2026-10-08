@@ -79,6 +79,10 @@ export function conversationSummaryQuery(api: Api, id: string) {
   });
 }
 
+// An auditor's reads are recorded in the audit log, so they are not repeated
+// for nothing: not when the window regains focus, nor within half a minute.
+const auditorReads = { refetchOnWindowFocus: false, staleTime: 30_000 } as const;
+
 export interface AuditFilters {
   workspace?: string;
   harness?: string;
@@ -90,6 +94,7 @@ export interface AuditFilters {
 export function auditRunsQuery(api: Api, filters: AuditFilters) {
   return infiniteQueryOptions({
     queryKey: ["audit", "runs", filters],
+    ...auditorReads,
     queryFn: ({ pageParam }) =>
       unwrap(
         api.GET("/v1/audit/runs", {
@@ -106,6 +111,7 @@ export function auditRunsQuery(api: Api, filters: AuditFilters) {
 export function auditRunQuery(api: Api, id: string) {
   return queryOptions({
     queryKey: ["audit", "run", id],
+    ...auditorReads,
     queryFn: () => unwrap(api.GET("/v1/audit/runs/{id}", { params: { path: { id } } })),
   });
 }
@@ -153,13 +159,16 @@ export type EventFilters = {
 
 // Every event of the audit log, for auditors.
 export function auditEventsQuery(api: Api, filters: EventFilters) {
-  return eventsQuery(["audit", "events", filters], (before) =>
-    unwrap(
-      api.GET("/v1/audit/events", {
-        params: { query: { ...filters, ...(before === undefined ? {} : { before }) } },
-      }),
+  return {
+    ...eventsQuery(["audit", "events", filters], (before) =>
+      unwrap(
+        api.GET("/v1/audit/events", {
+          params: { query: { ...filters, ...(before === undefined ? {} : { before }) } },
+        }),
+      ),
     ),
-  );
+    ...auditorReads,
+  };
 }
 
 export function runQuery(api: Api, workspace: string, id: string) {

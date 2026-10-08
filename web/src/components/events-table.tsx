@@ -47,17 +47,19 @@ function summary({ action, details: d }: Event): string {
 
 // EventsTable lists audit log events, newest first, and loads more on
 // request. Their details come from users, models and tools, so they are
-// shown as text only. showActor adds who acted; subject links an event's run
-// or names its target.
+// shown as text only. showActor adds who acted, showWorkspace where;
+// subject links an event's run or names its target.
 export function EventsTable({
   events,
   empty,
   showActor,
+  showWorkspace = true,
   subject = (event) => event.run_id || event.target,
 }: {
   events: UseInfiniteQueryResult<InfiniteData<Schemas["AuditLogEventList"]>>;
   empty: string;
   showActor: boolean;
+  showWorkspace?: boolean;
   subject?: (event: Event) => ReactNode;
 }) {
   const listed = events.data?.pages.flatMap((page) => page.events) ?? [];
@@ -79,7 +81,7 @@ export function EventsTable({
                 <th className="py-2 pr-4 font-medium">When</th>
                 {showActor && <th className="py-2 pr-4 font-medium">Who</th>}
                 <th className="py-2 pr-4 font-medium">What</th>
-                <th className="py-2 pr-4 font-medium">Workspace</th>
+                {showWorkspace && <th className="py-2 pr-4 font-medium">Workspace</th>}
                 <th className="py-2 pr-4 font-medium">Of</th>
                 <th className="py-2 font-medium">Details</th>
               </tr>
@@ -102,7 +104,7 @@ export function EventsTable({
                   <td className="py-2 pr-4 whitespace-nowrap">
                     {labels[event.action] ?? event.action}
                   </td>
-                  <td className="py-2 pr-4">{event.workspace}</td>
+                  {showWorkspace && <td className="py-2 pr-4">{event.workspace}</td>}
                   <td className="py-2 pr-4">{subject(event)}</td>
                   <td className="py-2">
                     <details>
@@ -123,7 +125,11 @@ export function EventsTable({
           variant="outline"
           className="justify-self-start"
           aria-disabled={events.isFetchingNextPage}
-          onClick={() => void events.fetchNextPage()}
+          onClick={() => {
+            if (!events.isFetchingNextPage) {
+              void events.fetchNextPage();
+            }
+          }}
         >
           Load more
         </Button>

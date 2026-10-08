@@ -230,14 +230,13 @@ func (s *Store) AuditEvents(ctx context.Context, after, last int64, limit int) (
 	return events(rows), nil
 }
 
-// EventFilter selects events of the audit log to list.
+// EventFilter selects events of the audit log to list, for auditors.
 type EventFilter struct {
-	// Actor, Workspace and RunID, when set, select the events by that actor,
-	// in that workspace or about that run; Actions, when not nil, those with
-	// one of the actions.
+	// Actor, Workspace, Action and RunID, when set, select the events by
+	// that actor, in that workspace, with that action or about that run.
 	Actor     string
 	Workspace string
-	Actions   []string
+	Action    string
 	RunID     string
 	// Before, when set, lists the events before the one with that id.
 	Before int64
@@ -254,11 +253,38 @@ func (s *Store) ListAuditEvents(ctx context.Context, f EventFilter) ([]auditlog.
 	rows, err := s.queries.ListAuditEvents(ctx, db.ListAuditEventsParams{
 		Actor:     optional(f.Actor),
 		Workspace: optional(f.Workspace),
-		Actions:   f.Actions,
+		Action:    optional(f.Action),
 		RunID:     optional(f.RunID),
 		Before:    pgtype.Int8{Int64: f.Before, Valid: f.Before > 0},
 		MaxRows:   int32(f.Limit),
 	})
+	if err != nil {
+		return nil, fmt.Errorf("store: audit: %w", err)
+	}
+	return events(rows), nil
+}
+
+// ActorEvents lists up to limit events by actor, newest first, before the
+// one with id before (0 for the newest), leaving out those of a workspace
+// not in workspaces: what a user did in a workspace they left.
+func (s *Store) ActorEvents(ctx context.Context, actor string, workspaces []string, before int64, limit int) ([]auditlog.Event, error) {
+	if limit <= 0 || limit > math.MaxInt32 {
+		return nil, fmt.Errorf("store: audit: limit %d is out of range", limit)
+	}
+	rows, err := s.queries.ListActorEvents(ctx, db.ListActorEventsParams{Actor: actor, Workspaces: workspaces, Before: before, MaxRows: int32(limit)})
+	if err != nil {
+		return nil, fmt.Errorf("store: audit: %w", err)
+	}
+	return events(rows), nil
+}
+
+// WorkspaceEvents lists up to limit events of workspace with one of the
+// actions, newest first, before the one with id before (0 for the newest).
+func (s *Store) WorkspaceEvents(ctx context.Context, workspace string, actions []string, before int64, limit int) ([]auditlog.Event, error) {
+	if limit <= 0 || limit > math.MaxInt32 {
+		return nil, fmt.Errorf("store: audit: limit %d is out of range", limit)
+	}
+	rows, err := s.queries.ListWorkspaceEvents(ctx, db.ListWorkspaceEventsParams{Workspace: workspace, Actions: actions, Before: before, MaxRows: int32(limit)})
 	if err != nil {
 		return nil, fmt.Errorf("store: audit: %w", err)
 	}

@@ -119,10 +119,11 @@ export interface paths {
         };
         /**
          * What the user did, newest first, a page at a time
-         * @description The events whose actor is the user: their runs' calls, their
+         * @description The events whose actor is the user, in the workspaces they are a
+         *     member of now, or in none: their runs and their calls, their
          *     approvals, cancels and harness changes, and, for an auditor, their
          *     reads. Not what others did, auditors' reads of the user's runs
-         *     included.
+         *     included, nor how a run ended, which the server records.
          */
         get: operations["listMyActivity"];
         put?: never;

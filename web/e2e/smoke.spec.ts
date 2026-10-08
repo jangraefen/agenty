@@ -75,6 +75,7 @@ test("signs in, makes a harness, chats with it, and signs out", async ({ page })
   await expect(page.getByText("No tool calls.")).toBeVisible();
   // The log's events: the harness made above, among them, and the smoke
   // user's own activity.
+  await page.getByRole("link", { name: "All runs" }).click();
   await page
     .getByRole("navigation", { name: "Audit log views" })
     .getByRole("link", { name: "Events" })

@@ -2,6 +2,7 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { type AuditFilters, auditRunsQuery, isRunStatus, runStatuses } from "@/api/queries";
+import { AuditHeader } from "@/components/audit-header";
 import { FilterForm, textFilters } from "@/components/filter-form";
 import { RunStatusBadge } from "@/components/run-status";
 import { Button } from "@/components/ui/button";
@@ -58,6 +59,9 @@ function AuditRuns() {
   }, [focusRun]);
 
   async function loadMore() {
+    if (runs.isFetchingNextPage) {
+      return;
+    }
     const result = await runs.fetchNextPage();
     if (result.isSuccess) {
       setFocusRun(result.data.pages.at(-1)?.runs[0]?.id ?? "");
@@ -66,6 +70,7 @@ function AuditRuns() {
 
   return (
     <section className="grid gap-6">
+      <AuditHeader />
       <FilterForm
         fields={fields}
         values={filters}

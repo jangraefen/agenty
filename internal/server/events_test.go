@@ -210,6 +210,7 @@ func TestAuditViews(t *testing.T) {
 		require.Equal(t, http.StatusOK, f.doAs(t, danaToken, http.MethodGet, "/v1/audit/events?run="+run.ID+"&actor=alice", nil, &ofRun))
 		assert.Equal(t, []string{"alice run.started"}, actions(ofRun))
 		assert.Equal(t, http.StatusBadRequest, f.doAs(t, danaToken, http.MethodGet, "/v1/audit/events?before=-1", nil, &e))
+		assert.Equal(t, http.StatusBadRequest, f.doAs(t, danaToken, http.MethodGet, "/v1/audit/events?actor="+strings.Repeat("a", 201), nil, &e))
 		reads := f.logEvents(t, "audit.read")
 		assert.JSONEq(t, `{"read":"events","run":"`+run.ID+`","actor":"alice"}`, string(reads[len(reads)-1].Details),
 			"a refused listing read nothing, so it is no read")

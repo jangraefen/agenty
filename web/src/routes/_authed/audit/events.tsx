@@ -1,6 +1,7 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { auditEventsQuery, type EventFilters } from "@/api/queries";
+import { AuditHeader } from "@/components/audit-header";
 import { EventsTable } from "@/components/events-table";
 import { FilterForm, textFilters } from "@/components/filter-form";
 
@@ -31,6 +32,7 @@ function AuditEvents() {
   const events = useInfiniteQuery(auditEventsQuery(api, filters));
   return (
     <section className="grid gap-6">
+      <AuditHeader />
       <FilterForm
         fields={fields}
         values={filters}

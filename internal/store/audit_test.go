@@ -370,9 +370,8 @@ func TestListAuditEvents(t *testing.T) {
 		{"the next page", store.EventFilter{Limit: 2, Before: 4}, []string{"3 run.started", "2 harness.changed"}},
 		{"by an actor", store.EventFilter{Limit: 10, Actor: "alice"}, []string{"4 tool.decision", "3 run.started", "1 harness.changed"}},
 		{"in a workspace", store.EventFilter{Limit: 10, Workspace: "work"}, []string{"2 harness.changed"}},
-		{"with given actions", store.EventFilter{Limit: 10, Workspace: ws, Actions: []string{"harness.changed"}}, []string{"1 harness.changed"}},
+		{"with an action", store.EventFilter{Limit: 10, Workspace: ws, Action: "harness.changed"}, []string{"1 harness.changed"}},
 		{"about a run", store.EventFilter{Limit: 10, RunID: "r1"}, []string{"4 tool.decision", "3 run.started"}},
-		{"with no actions", store.EventFilter{Limit: 10, Actions: []string{}}, []string{}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, list(tt.filter))
@@ -380,4 +379,24 @@ func TestListAuditEvents(t *testing.T) {
 	}
 	_, err = s.ListAuditEvents(ctx, store.EventFilter{})
 	require.ErrorContains(t, err, "limit")
+
+	ids := func(page []auditlog.Event, err error) []string {
+		t.Helper()
+		require.NoError(t, err)
+		out := make([]string, len(page))
+		for i, e := range page {
+			out[i] = fmt.Sprint(e.ID, " ", e.Action)
+		}
+		return out
+	}
+	assert.Equal(t, []string{"5 audit.read"}, ids(s.ActorEvents(ctx, "dana", nil, 0, 10)), "an event of no workspace is always the actor's")
+	assert.Equal(t, []string{"4 tool.decision", "3 run.started", "1 harness.changed"}, ids(s.ActorEvents(ctx, "alice", []string{ws}, 0, 10)))
+	assert.Equal(t, []string{"3 run.started", "1 harness.changed"}, ids(s.ActorEvents(ctx, "alice", []string{ws}, 4, 10)), "before an event")
+	assert.Empty(t, ids(s.ActorEvents(ctx, "alice", []string{"work"}, 0, 10)), "nothing of a workspace the actor left")
+	assert.Equal(t, []string{"1 harness.changed"}, ids(s.WorkspaceEvents(ctx, ws, []string{"harness.changed"}, 0, 10)))
+	assert.Empty(t, ids(s.WorkspaceEvents(ctx, ws, []string{"harness.changed"}, 1, 10)))
+	_, err = s.ActorEvents(ctx, "alice", nil, 0, 0)
+	require.Error(t, err)
+	_, err = s.WorkspaceEvents(ctx, ws, nil, 0, 0)
+	require.Error(t, err)
 }

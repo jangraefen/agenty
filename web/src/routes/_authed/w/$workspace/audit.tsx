@@ -17,7 +17,7 @@ function WorkspaceAudit() {
   return (
     <section className="grid gap-6">
       <h1 className="text-xl font-semibold">Audit log</h1>
-      <EventsTable events={events} empty="No changes yet." showActor />
+      <EventsTable events={events} empty="No changes yet." showActor showWorkspace={false} />
     </section>
   );
 }

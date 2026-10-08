@@ -19,7 +19,7 @@ function HarnessPage() {
   const id = useId();
 
   return (
-    <article className="grid max-w-4xl gap-6">
+    <article className="grid gap-6">
       <Link to="/w/$workspace/harnesses" params={{ workspace }} className="text-sm underline">
         All harnesses
       </Link>

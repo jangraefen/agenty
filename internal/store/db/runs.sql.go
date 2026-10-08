@@ -76,7 +76,7 @@ func (q *Queries) ClaimRun(ctx context.Context) (ClaimRunRow, error) {
 }
 
 const conversationRuns = `-- name: ConversationRuns :many
-SELECT runs.id, runs.harness_version_id, runs.input, runs.status, runs.output, runs.steps, runs.error, runs.created_at, runs.finished_at, runs.started_by, runs.conversation_id, runs.follows, runs.prompt_digest, runs.history_digest, runs.input_tokens, runs.output_tokens, runs.cache_write_tokens, runs.cache_read_tokens, harness_versions.name AS harness, harness_versions.version AS harness_version
+SELECT runs.id, runs.harness_version_id, runs.input, runs.started_by, runs.conversation_id, runs.follows, runs.status, runs.output, runs.steps, runs.error, runs.prompt_digest, runs.history_digest, runs.input_tokens, runs.output_tokens, runs.cache_write_tokens, runs.cache_read_tokens, runs.created_at, runs.finished_at, harness_versions.name AS harness, harness_versions.version AS harness_version
 FROM runs
 JOIN harness_versions ON harness_versions.id = runs.harness_version_id
 WHERE harness_versions.workspace = $1
@@ -110,21 +110,21 @@ func (q *Queries) ConversationRuns(ctx context.Context, arg ConversationRunsPara
 			&i.Run.ID,
 			&i.Run.HarnessVersionID,
 			&i.Run.Input,
+			&i.Run.StartedBy,
+			&i.Run.ConversationID,
+			&i.Run.Follows,
 			&i.Run.Status,
 			&i.Run.Output,
 			&i.Run.Steps,
 			&i.Run.Error,
-			&i.Run.CreatedAt,
-			&i.Run.FinishedAt,
-			&i.Run.StartedBy,
-			&i.Run.ConversationID,
-			&i.Run.Follows,
 			&i.Run.PromptDigest,
 			&i.Run.HistoryDigest,
 			&i.Run.InputTokens,
 			&i.Run.OutputTokens,
 			&i.Run.CacheWriteTokens,
 			&i.Run.CacheReadTokens,
+			&i.Run.CreatedAt,
+			&i.Run.FinishedAt,
 			&i.Harness,
 			&i.HarnessVersion,
 		); err != nil {
@@ -237,7 +237,7 @@ func (q *Queries) FinishRun(ctx context.Context, arg FinishRunParams) (int64, er
 }
 
 const getAuditRun = `-- name: GetAuditRun :one
-SELECT runs.id, runs.harness_version_id, runs.input, runs.status, runs.output, runs.steps, runs.error, runs.created_at, runs.finished_at, runs.started_by, runs.conversation_id, runs.follows, runs.prompt_digest, runs.history_digest, runs.input_tokens, runs.output_tokens, runs.cache_write_tokens, runs.cache_read_tokens, harness_versions.name AS harness, harness_versions.version AS harness_version,
+SELECT runs.id, runs.harness_version_id, runs.input, runs.started_by, runs.conversation_id, runs.follows, runs.status, runs.output, runs.steps, runs.error, runs.prompt_digest, runs.history_digest, runs.input_tokens, runs.output_tokens, runs.cache_write_tokens, runs.cache_read_tokens, runs.created_at, runs.finished_at, harness_versions.name AS harness, harness_versions.version AS harness_version,
        harness_versions.workspace
 FROM runs
 JOIN harness_versions ON harness_versions.id = runs.harness_version_id
@@ -259,21 +259,21 @@ func (q *Queries) GetAuditRun(ctx context.Context, id string) (GetAuditRunRow, e
 		&i.Run.ID,
 		&i.Run.HarnessVersionID,
 		&i.Run.Input,
+		&i.Run.StartedBy,
+		&i.Run.ConversationID,
+		&i.Run.Follows,
 		&i.Run.Status,
 		&i.Run.Output,
 		&i.Run.Steps,
 		&i.Run.Error,
-		&i.Run.CreatedAt,
-		&i.Run.FinishedAt,
-		&i.Run.StartedBy,
-		&i.Run.ConversationID,
-		&i.Run.Follows,
 		&i.Run.PromptDigest,
 		&i.Run.HistoryDigest,
 		&i.Run.InputTokens,
 		&i.Run.OutputTokens,
 		&i.Run.CacheWriteTokens,
 		&i.Run.CacheReadTokens,
+		&i.Run.CreatedAt,
+		&i.Run.FinishedAt,
 		&i.Harness,
 		&i.HarnessVersion,
 		&i.Workspace,
@@ -282,12 +282,11 @@ func (q *Queries) GetAuditRun(ctx context.Context, id string) (GetAuditRunRow, e
 }
 
 const getOwnRun = `-- name: GetOwnRun :one
-SELECT runs.id, runs.harness_version_id, runs.input, runs.status, runs.output, runs.steps, runs.error, runs.created_at, runs.finished_at, runs.started_by, runs.conversation_id, runs.follows, runs.prompt_digest, runs.history_digest, runs.input_tokens, runs.output_tokens, runs.cache_write_tokens, runs.cache_read_tokens, harness_versions.name AS harness, harness_versions.version AS harness_version
+SELECT runs.id, runs.harness_version_id, runs.input, runs.started_by, runs.conversation_id, runs.follows, runs.status, runs.output, runs.steps, runs.error, runs.prompt_digest, runs.history_digest, runs.input_tokens, runs.output_tokens, runs.cache_write_tokens, runs.cache_read_tokens, runs.created_at, runs.finished_at, harness_versions.name AS harness, harness_versions.version AS harness_version
 FROM runs
 JOIN harness_versions ON harness_versions.id = runs.harness_version_id
-JOIN runs first ON first.id = runs.conversation_id
 WHERE runs.id = $1 AND harness_versions.workspace = $2
-  AND first.started_by = $3
+  AND runs.started_by = $3
 `
 
 type GetOwnRunParams struct {
@@ -302,8 +301,8 @@ type GetOwnRunRow struct {
 	HarnessVersion int32
 }
 
-// A run of the workspace, found only for the user who started its
-// conversation.
+// A run of the workspace, found only for the user who started it, who
+// started its conversation: only they follow it up.
 func (q *Queries) GetOwnRun(ctx context.Context, arg GetOwnRunParams) (GetOwnRunRow, error) {
 	row := q.db.QueryRow(ctx, getOwnRun, arg.ID, arg.Workspace, arg.Owner)
 	var i GetOwnRunRow
@@ -311,21 +310,21 @@ func (q *Queries) GetOwnRun(ctx context.Context, arg GetOwnRunParams) (GetOwnRun
 		&i.Run.ID,
 		&i.Run.HarnessVersionID,
 		&i.Run.Input,
+		&i.Run.StartedBy,
+		&i.Run.ConversationID,
+		&i.Run.Follows,
 		&i.Run.Status,
 		&i.Run.Output,
 		&i.Run.Steps,
 		&i.Run.Error,
-		&i.Run.CreatedAt,
-		&i.Run.FinishedAt,
-		&i.Run.StartedBy,
-		&i.Run.ConversationID,
-		&i.Run.Follows,
 		&i.Run.PromptDigest,
 		&i.Run.HistoryDigest,
 		&i.Run.InputTokens,
 		&i.Run.OutputTokens,
 		&i.Run.CacheWriteTokens,
 		&i.Run.CacheReadTokens,
+		&i.Run.CreatedAt,
+		&i.Run.FinishedAt,
 		&i.Harness,
 		&i.HarnessVersion,
 	)
@@ -333,7 +332,7 @@ func (q *Queries) GetOwnRun(ctx context.Context, arg GetOwnRunParams) (GetOwnRun
 }
 
 const getRun = `-- name: GetRun :one
-SELECT runs.id, runs.harness_version_id, runs.input, runs.status, runs.output, runs.steps, runs.error, runs.created_at, runs.finished_at, runs.started_by, runs.conversation_id, runs.follows, runs.prompt_digest, runs.history_digest, runs.input_tokens, runs.output_tokens, runs.cache_write_tokens, runs.cache_read_tokens, harness_versions.name AS harness, harness_versions.version AS harness_version
+SELECT runs.id, runs.harness_version_id, runs.input, runs.started_by, runs.conversation_id, runs.follows, runs.status, runs.output, runs.steps, runs.error, runs.prompt_digest, runs.history_digest, runs.input_tokens, runs.output_tokens, runs.cache_write_tokens, runs.cache_read_tokens, runs.created_at, runs.finished_at, harness_versions.name AS harness, harness_versions.version AS harness_version
 FROM runs
 JOIN harness_versions ON harness_versions.id = runs.harness_version_id
 WHERE runs.id = $1 AND harness_versions.workspace = $2
@@ -358,21 +357,21 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (GetRunRow, erro
 		&i.Run.ID,
 		&i.Run.HarnessVersionID,
 		&i.Run.Input,
+		&i.Run.StartedBy,
+		&i.Run.ConversationID,
+		&i.Run.Follows,
 		&i.Run.Status,
 		&i.Run.Output,
 		&i.Run.Steps,
 		&i.Run.Error,
-		&i.Run.CreatedAt,
-		&i.Run.FinishedAt,
-		&i.Run.StartedBy,
-		&i.Run.ConversationID,
-		&i.Run.Follows,
 		&i.Run.PromptDigest,
 		&i.Run.HistoryDigest,
 		&i.Run.InputTokens,
 		&i.Run.OutputTokens,
 		&i.Run.CacheWriteTokens,
 		&i.Run.CacheReadTokens,
+		&i.Run.CreatedAt,
+		&i.Run.FinishedAt,
 		&i.Harness,
 		&i.HarnessVersion,
 	)
@@ -380,10 +379,9 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (GetRunRow, erro
 }
 
 const idleRuns = `-- name: IdleRuns :many
-SELECT runs.id, runs.status, harness_versions.workspace, harness_versions.name AS harness, first.started_by AS owner
+SELECT runs.id, runs.status, harness_versions.workspace, harness_versions.name AS harness, runs.started_by AS owner
 FROM runs
 JOIN harness_versions ON harness_versions.id = runs.harness_version_id
-JOIN runs first ON first.id = runs.conversation_id
 WHERE runs.status IN ('queued', 'waiting')
 ORDER BY runs.created_at, runs.id
 `
@@ -397,8 +395,7 @@ type IdleRunsRow struct {
 }
 
 // The runs no worker holds that have not finished, queued or waiting, oldest
-// first, with their workspaces, harnesses and the users who started their
-// conversations.
+// first, with their workspaces, harnesses and the users who started them.
 func (q *Queries) IdleRuns(ctx context.Context) ([]IdleRunsRow, error) {
 	rows, err := q.db.Query(ctx, idleRuns)
 	if err != nil {
@@ -432,7 +429,7 @@ VALUES (
     COALESCE((SELECT f.conversation_id FROM runs f WHERE f.id = $5), $1),
     $5
 )
-RETURNING runs.id, runs.harness_version_id, runs.input, runs.status, runs.output, runs.steps, runs.error, runs.created_at, runs.finished_at, runs.started_by, runs.conversation_id, runs.follows, runs.prompt_digest, runs.history_digest, runs.input_tokens, runs.output_tokens, runs.cache_write_tokens, runs.cache_read_tokens,
+RETURNING runs.id, runs.harness_version_id, runs.input, runs.started_by, runs.conversation_id, runs.follows, runs.status, runs.output, runs.steps, runs.error, runs.prompt_digest, runs.history_digest, runs.input_tokens, runs.output_tokens, runs.cache_write_tokens, runs.cache_read_tokens, runs.created_at, runs.finished_at,
     (SELECT hv.name FROM harness_versions hv WHERE hv.id = runs.harness_version_id)::text AS harness,
     (SELECT hv.version FROM harness_versions hv WHERE hv.id = runs.harness_version_id)::integer AS harness_version
 `
@@ -467,21 +464,21 @@ func (q *Queries) InsertRun(ctx context.Context, arg InsertRunParams) (InsertRun
 		&i.Run.ID,
 		&i.Run.HarnessVersionID,
 		&i.Run.Input,
+		&i.Run.StartedBy,
+		&i.Run.ConversationID,
+		&i.Run.Follows,
 		&i.Run.Status,
 		&i.Run.Output,
 		&i.Run.Steps,
 		&i.Run.Error,
-		&i.Run.CreatedAt,
-		&i.Run.FinishedAt,
-		&i.Run.StartedBy,
-		&i.Run.ConversationID,
-		&i.Run.Follows,
 		&i.Run.PromptDigest,
 		&i.Run.HistoryDigest,
 		&i.Run.InputTokens,
 		&i.Run.OutputTokens,
 		&i.Run.CacheWriteTokens,
 		&i.Run.CacheReadTokens,
+		&i.Run.CreatedAt,
+		&i.Run.FinishedAt,
 		&i.Harness,
 		&i.HarnessVersion,
 	)
@@ -489,7 +486,7 @@ func (q *Queries) InsertRun(ctx context.Context, arg InsertRunParams) (InsertRun
 }
 
 const listAuditRuns = `-- name: ListAuditRuns :many
-SELECT runs.id, runs.harness_version_id, runs.input, runs.status, runs.output, runs.steps, runs.error, runs.created_at, runs.finished_at, runs.started_by, runs.conversation_id, runs.follows, runs.prompt_digest, runs.history_digest, runs.input_tokens, runs.output_tokens, runs.cache_write_tokens, runs.cache_read_tokens, harness_versions.name AS harness, harness_versions.version AS harness_version,
+SELECT runs.id, runs.harness_version_id, runs.input, runs.started_by, runs.conversation_id, runs.follows, runs.status, runs.output, runs.steps, runs.error, runs.prompt_digest, runs.history_digest, runs.input_tokens, runs.output_tokens, runs.cache_write_tokens, runs.cache_read_tokens, runs.created_at, runs.finished_at, harness_versions.name AS harness, harness_versions.version AS harness_version,
        harness_versions.workspace
 FROM runs
 JOIN harness_versions ON harness_versions.id = runs.harness_version_id
@@ -543,21 +540,21 @@ func (q *Queries) ListAuditRuns(ctx context.Context, arg ListAuditRunsParams) ([
 			&i.Run.ID,
 			&i.Run.HarnessVersionID,
 			&i.Run.Input,
+			&i.Run.StartedBy,
+			&i.Run.ConversationID,
+			&i.Run.Follows,
 			&i.Run.Status,
 			&i.Run.Output,
 			&i.Run.Steps,
 			&i.Run.Error,
-			&i.Run.CreatedAt,
-			&i.Run.FinishedAt,
-			&i.Run.StartedBy,
-			&i.Run.ConversationID,
-			&i.Run.Follows,
 			&i.Run.PromptDigest,
 			&i.Run.HistoryDigest,
 			&i.Run.InputTokens,
 			&i.Run.OutputTokens,
 			&i.Run.CacheWriteTokens,
 			&i.Run.CacheReadTokens,
+			&i.Run.CreatedAt,
+			&i.Run.FinishedAt,
 			&i.Harness,
 			&i.HarnessVersion,
 			&i.Workspace,

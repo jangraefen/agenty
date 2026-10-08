@@ -3,7 +3,6 @@ package store_test
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -152,80 +151,6 @@ func TestInvariant_AuditLogIsTamperEvident(t *testing.T) {
 	require.NoError(t, err, "a consistent rewrite verifies on its own")
 	_, err = auditlog.Verify(bytes.NewReader(forged), anchor)
 	require.ErrorContains(t, err, fmt.Sprint("anchor ", anchor.ID), "but not against an anchor kept elsewhere")
-}
-
-func TestCopyAuditRecords(t *testing.T) {
-	ctx := context.Background()
-	s, url := storetest.NewWithURL(t)
-	v := newRun(t, s, "r1")
-	createRun(t, s, store.NewRun{ID: "r2", HarnessVersionID: v.ID, Input: "x", StartedBy: "bob"})
-	sqlDB, err := sql.Open("pgx", url)
-	require.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, sqlDB.Close()) })
-	// The log as migration 12 left it, empty: the runs above are events now.
-	_, err = sqlDB.ExecContext(ctx, `
-		ALTER TABLE audit_events DISABLE TRIGGER USER;
-		DELETE FROM audit_events;
-		ALTER TABLE audit_events ENABLE TRIGGER USER`)
-	require.NoError(t, err)
-	// The table as migration 1 made it, and records as the store kept them.
-	_, err = sqlDB.ExecContext(ctx, `
-		CREATE TABLE audit_records (
-		    id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-		    run_id      text        NOT NULL REFERENCES runs (id),
-		    call_id     text        NOT NULL,
-		    event       text        NOT NULL,
-		    tool        text        NOT NULL,
-		    args        json,
-		    decision    text        NOT NULL,
-		    reason      text        NOT NULL DEFAULT '',
-		    approver    text        NOT NULL DEFAULT '',
-		    result      json,
-		    error       text        NOT NULL DEFAULT '',
-		    recorded_at timestamptz NOT NULL DEFAULT now()
-		);
-		INSERT INTO audit_records (run_id, call_id, event, tool, args, decision, reason) VALUES
-		    ('r1', 'c1', 'decision', 'files_write', '{"b": 1, "a": "<x>"}', 'require_approval', 'writes need a human');
-		INSERT INTO audit_records (run_id, call_id, event, tool, decision, approver) VALUES
-		    ('r1', 'c1', 'approval', 'files_write', 'allow', 'carol');
-		INSERT INTO audit_records (run_id, call_id, event, tool, decision, reason) VALUES
-		    ('r2', 'c2', 'approval', 'files_write', 'deny', 'approval expired');
-		INSERT INTO audit_records (run_id, call_id, event, tool, decision, result, error) VALUES
-		    ('r1', 'c1', 'result', 'files_write', 'allow', '{"ok": true}', '')`)
-	require.NoError(t, err)
-
-	// Pages of 3, so the chain carries over from one page to the next.
-	t.Cleanup(store.SetCopyPage(3))
-	tx, err := sqlDB.BeginTx(ctx, nil)
-	require.NoError(t, err)
-	require.NoError(t, store.CopyAuditRecords(ctx, tx))
-	require.NoError(t, tx.Commit())
-
-	records, err := s.AuditRecords(ctx, "r1")
-	require.NoError(t, err)
-	require.Len(t, records, 3)
-	canonical, err := auditlog.Canonical([]byte(`{"b": 1, "a": "<x>"}`))
-	require.NoError(t, err)
-	assert.Equal(t, string(canonical), string(records[0].Args), "copied in the canonical form, in its order")
-	assert.Equal(t, "writes need a human", records[0].Reason)
-	assert.Equal(t, "carol", records[1].Approver)
-	assert.Nil(t, records[1].Args, "a NULL column stays absent")
-	assert.JSONEq(t, `{"ok":true}`, string(records[2].Result))
-	events, err := s.AuditEvents(ctx, 0, math.MaxInt64, 10)
-	require.NoError(t, err)
-	require.Len(t, events, 4)
-	assert.Empty(t, events[2].Actor, "an expired approval is no one's")
-	sum, err := auditlog.Verify(bytes.NewReader(export(t, s)))
-	require.NoError(t, err, "the copied records are chained")
-	assert.Equal(t, int64(4), sum.Last)
-
-	record(t, s, toolgateway.Record{RunID: "r2", CallID: "c3", Event: toolgateway.EventDecision, Tool: "files_read", Decision: toolgateway.Allow})
-	events, err = s.AuditEvents(ctx, 4, math.MaxInt64, 10)
-	require.NoError(t, err)
-	require.Len(t, events, 1)
-	assert.Equal(t, "bob", events[0].Actor)
-	_, err = auditlog.Verify(bytes.NewReader(export(t, s)))
-	require.NoError(t, err, "and the log goes on from them")
 }
 
 // TestRecord_ConcurrentAppendsStayLinear: appends from many workers at once

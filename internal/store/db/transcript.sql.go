@@ -64,7 +64,7 @@ func (q *Queries) InsertRunMessage(ctx context.Context, arg InsertRunMessagePara
 }
 
 const runMessages = `-- name: RunMessages :many
-SELECT run_id, position, role, text, tool_calls, tool_results, created_at, provider, provider_data, altered, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens FROM run_messages
+SELECT run_id, position, role, text, tool_calls, tool_results, provider, provider_data, altered, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens, created_at FROM run_messages
 WHERE run_id = $1
 ORDER BY position
 `
@@ -85,7 +85,6 @@ func (q *Queries) RunMessages(ctx context.Context, runID string) ([]RunMessage, 
 			&i.Text,
 			&i.ToolCalls,
 			&i.ToolResults,
-			&i.CreatedAt,
 			&i.Provider,
 			&i.ProviderData,
 			&i.Altered,
@@ -93,6 +92,7 @@ func (q *Queries) RunMessages(ctx context.Context, runID string) ([]RunMessage, 
 			&i.OutputTokens,
 			&i.CacheWriteTokens,
 			&i.CacheReadTokens,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}

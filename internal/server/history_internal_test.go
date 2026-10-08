@@ -55,7 +55,7 @@ func TestConversationHistory_SendsOnlyValidProviderForms(t *testing.T) {
 		{"a secret is configured, then no longer", []turn{
 			{digest: "a", pasted: true}, {digest: "a", configured: true}, {digest: "a"}, {digest: "a"},
 		}, []int{2}},
-		{"runs from before digests", []turn{{digest: "a", legacy: true}, {digest: "a"}, {digest: "a"}}, []int{1}},
+		{"runs without digests", []turn{{digest: "a", legacy: true}, {digest: "a"}, {digest: "a"}}, []int{1}},
 		{"runs that call tools", []turn{{digest: "a", tools: true}, {digest: "a"}, {digest: "a", tools: true}, {digest: "a"}}, []int{0, 1, 2}},
 	}
 	for _, tt := range tests {

@@ -424,11 +424,11 @@ func (q *Queries) IdleRuns(ctx context.Context) ([]IdleRunsRow, error) {
 
 const insertRun = `-- name: InsertRun :one
 INSERT INTO runs (id, harness_version_id, input, started_by, conversation_id, follows)
-VALUES (
-    $1, $2, $3, $4,
-    COALESCE((SELECT f.conversation_id FROM runs f WHERE f.id = $5), $1),
-    $5
-)
+SELECT $1::text, $2::bigint, $3::text, $4::text,
+    COALESCE(f.conversation_id, $1::text), f.id
+FROM (SELECT $5::text AS id) wanted
+LEFT JOIN runs f ON f.id = wanted.id AND f.started_by = $4::text
+WHERE wanted.id IS NULL OR f.id IS NOT NULL
 RETURNING runs.id, runs.harness_version_id, runs.input, runs.started_by, runs.conversation_id, runs.follows, runs.status, runs.output, runs.steps, runs.error, runs.prompt_digest, runs.history_digest, runs.input_tokens, runs.output_tokens, runs.cache_write_tokens, runs.cache_read_tokens, runs.created_at, runs.finished_at,
     (SELECT hv.name FROM harness_versions hv WHERE hv.id = runs.harness_version_id)::text AS harness,
     (SELECT hv.version FROM harness_versions hv WHERE hv.id = runs.harness_version_id)::integer AS harness_version
@@ -449,8 +449,10 @@ type InsertRunRow struct {
 }
 
 // A run is stored as queued. A run that follows another joins its
-// conversation; any other run starts one of its own. It is returned as
-// stored, before a worker may claim it, with its harness.
+// conversation, and follows only a run its own starter started, so a
+// conversation is one user's; any other run starts one of its own. It is
+// returned as stored, before a worker may claim it, with its harness; no
+// row is returned for a run that follows no run of its starter.
 func (q *Queries) InsertRun(ctx context.Context, arg InsertRunParams) (InsertRunRow, error) {
 	row := q.db.QueryRow(ctx, insertRun,
 		arg.ID,

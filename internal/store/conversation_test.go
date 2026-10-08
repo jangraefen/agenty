@@ -67,7 +67,11 @@ func TestRuns_ConversationErrors(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrNotFound)
 
 	_, err = s.CreateRun(ctx, store.NewRun{ID: "r4", HarnessVersionID: v.ID, Input: "y", StartedBy: "alice", Follows: "ghost"})
-	require.Error(t, err, "a run follows a stored run")
+	require.ErrorIs(t, err, store.ErrNotFound, "a run follows a stored run")
+	_, err = s.CreateRun(ctx, store.NewRun{ID: "r5", HarnessVersionID: v.ID, Input: "y", StartedBy: "bob", Follows: "r2"})
+	require.ErrorIs(t, err, store.ErrNotFound, "a run follows only its starter's runs, so a conversation is one user's")
+	_, err = s.Run(ctx, ws, "r5")
+	require.ErrorIs(t, err, store.ErrNotFound)
 
 	_, err = s.Conversation(ctx, ws, "ghost")
 	require.ErrorIs(t, err, store.ErrNotFound)

@@ -165,8 +165,7 @@ SELECT approvals.id, approvals.run_id, approvals.call_id, approvals.call_index, 
 FROM approvals
 JOIN runs ON runs.id = approvals.run_id
 JOIN harness_versions ON harness_versions.id = runs.harness_version_id
-JOIN runs first ON first.id = runs.conversation_id
-WHERE harness_versions.workspace = $1 AND first.started_by = $2
+WHERE harness_versions.workspace = $1 AND runs.started_by = $2
   AND approvals.status = 'pending'
 ORDER BY approvals.created_at, approvals.id
 `
@@ -181,8 +180,8 @@ type PendingApprovalsRow struct {
 	Harness  string
 }
 
-// The waiting approval requests of the runs of a workspace whose
-// conversations owner started, oldest first.
+// The waiting approval requests of the runs of a workspace that owner
+// started, oldest first.
 func (q *Queries) PendingApprovals(ctx context.Context, arg PendingApprovalsParams) ([]PendingApprovalsRow, error) {
 	rows, err := q.db.Query(ctx, pendingApprovals, arg.Workspace, arg.Owner)
 	if err != nil {

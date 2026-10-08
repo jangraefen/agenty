@@ -7,14 +7,13 @@ UPDATE runs SET status = 'waiting'
 WHERE id = $1 AND status = 'running';
 
 -- name: PendingApprovals :many
--- The waiting approval requests of the runs of a workspace whose
--- conversations owner started, oldest first.
+-- The waiting approval requests of the runs of a workspace that owner
+-- started, oldest first.
 SELECT sqlc.embed(approvals), harness_versions.name AS harness
 FROM approvals
 JOIN runs ON runs.id = approvals.run_id
 JOIN harness_versions ON harness_versions.id = runs.harness_version_id
-JOIN runs first ON first.id = runs.conversation_id
-WHERE harness_versions.workspace = sqlc.arg(workspace) AND first.started_by = sqlc.arg(owner)
+WHERE harness_versions.workspace = sqlc.arg(workspace) AND runs.started_by = sqlc.arg(owner)
   AND approvals.status = 'pending'
 ORDER BY approvals.created_at, approvals.id;
 

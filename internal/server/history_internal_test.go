@@ -22,8 +22,9 @@ type turn struct {
 	digest     string
 	configured bool
 	pasted     bool
-	// legacy stores the run as runs were before digests were recorded.
-	legacy bool
+	// noDigests stores the run without digests, as a run that never ran
+	// has none.
+	noDigests bool
 	// tools has the run call a tool before it answers.
 	tools bool
 }
@@ -55,7 +56,7 @@ func TestConversationHistory_SendsOnlyValidProviderForms(t *testing.T) {
 		{"a secret is configured, then no longer", []turn{
 			{digest: "a", pasted: true}, {digest: "a", configured: true}, {digest: "a"}, {digest: "a"},
 		}, []int{2}},
-		{"runs without digests", []turn{{digest: "a", legacy: true}, {digest: "a"}, {digest: "a"}}, []int{1}},
+		{"runs without digests", []turn{{digest: "a", noDigests: true}, {digest: "a"}, {digest: "a"}}, []int{1}},
 		{"runs that call tools", []turn{{digest: "a", tools: true}, {digest: "a"}, {digest: "a", tools: true}, {digest: "a"}}, []int{0, 1, 2}},
 	}
 	for _, tt := range tests {
@@ -78,7 +79,7 @@ func TestConversationHistory_SendsOnlyValidProviderFormsAtRandom(t *testing.T) {
 				digest:     []string{"a", "b"}[rnd.IntN(2)],
 				configured: rnd.IntN(2) == 0,
 				pasted:     rnd.IntN(4) == 0,
-				legacy:     rnd.IntN(8) == 0,
+				noDigests:  rnd.IntN(8) == 0,
 				tools:      rnd.IntN(2) == 0,
 			}
 		}
@@ -116,7 +117,7 @@ func simulate(t *testing.T, turns []turn) ([]model.Message, [][]model.Message) {
 		}
 		own = append(own, model.Message{Role: model.RoleAssistant, Text: fmt.Sprintf("reply %d", i), Provider: thinking(fmt.Sprintf("reply %d", i))})
 		run := priorRun{digest: tn.digest, historyDigest: historyDigest(history)}
-		if tn.legacy {
+		if tn.noDigests {
 			run = priorRun{}
 		}
 		for _, m := range own {

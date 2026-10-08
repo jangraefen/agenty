@@ -33,8 +33,9 @@ export interface paths {
          * @description The conversations whose first run the user started, in every
          *     workspace, those they left included, the one whose latest run was
          *     started last first. Only its starter continues, cancels and answers
-         *     a conversation, through its workspace. A conversation followed up while the pages are read moves to the
-         *     first page, so later pages leave it out.
+         *     a conversation, through its workspace. A conversation followed up
+         *     while the pages are read moves to the first page, so later pages
+         *     leave it out.
          */
         get: operations["listConversations"];
         put?: never;

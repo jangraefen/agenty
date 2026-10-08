@@ -93,3 +93,31 @@ WHERE id = $1 AND status IN ('queued', 'waiting');
 UPDATE runs
 SET prompt_digest = $2, history_digest = $3
 WHERE id = $1 AND status = 'running';
+
+-- name: ListConversations :many
+-- The conversations started_by started in the given workspaces, latest
+-- activity first, after the one with before_at and before_id when they are
+-- set. A conversation is its first run, whose ID names it, and its latest
+-- run, the one no run follows, whose creation is its latest activity.
+SELECT first.id, harness_versions.workspace, harness_versions.name AS harness,
+       left(first.input, 100)::text AS title, latest.created_at AS updated_at
+FROM runs first
+JOIN harness_versions ON harness_versions.id = first.harness_version_id
+JOIN runs latest ON latest.conversation_id = first.id
+ AND NOT EXISTS (SELECT 1 FROM runs n WHERE n.follows = latest.id)
+WHERE first.id = first.conversation_id
+  AND first.started_by = sqlc.arg(started_by)
+  AND harness_versions.workspace = ANY(sqlc.arg(workspaces)::text[])
+  AND (sqlc.narg(before_id)::text IS NULL
+       OR (latest.created_at, first.id) < (sqlc.narg(before_at)::timestamptz, sqlc.narg(before_id)::text))
+ORDER BY latest.created_at DESC, first.id DESC
+LIMIT sqlc.arg(max_rows);
+
+-- name: FindConversation :one
+-- The conversation named by id, if it is in one of the given workspaces.
+SELECT first.id, harness_versions.workspace, harness_versions.name AS harness,
+       left(first.input, 100)::text AS title
+FROM runs first
+JOIN harness_versions ON harness_versions.id = first.harness_version_id
+WHERE first.id = sqlc.arg(id) AND first.id = first.conversation_id
+  AND harness_versions.workspace = ANY(sqlc.arg(workspaces)::text[]);

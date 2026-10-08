@@ -431,6 +431,75 @@ func (s *Store) Runs(ctx context.Context, workspace string, f RunFilter) ([]Run,
 	return out, nil
 }
 
+// ConversationSummary is a conversation as a list shows it, named by the ID
+// of its first run.
+type ConversationSummary struct {
+	ID        string
+	Workspace string
+	Harness   string
+	// Title is the first run's input, cut to its first 100 characters.
+	Title string
+	// UpdatedAt is when the conversation's latest run was created. Only
+	// Conversations sets it.
+	UpdatedAt time.Time
+}
+
+// ConversationFilter selects conversations to list.
+type ConversationFilter struct {
+	// User started the conversations, in one of Workspaces.
+	User       string
+	Workspaces []string
+	// BeforeAt and BeforeID, when BeforeID is set, list the conversations
+	// after the one with that UpdatedAt and ID, in the order Conversations
+	// returns them.
+	BeforeAt time.Time
+	BeforeID string
+	// Limit is the most conversations to return; it must be greater than 0.
+	Limit int
+}
+
+// Conversations lists the conversations f selects, latest activity first.
+func (s *Store) Conversations(ctx context.Context, f ConversationFilter) ([]ConversationSummary, error) {
+	if f.Limit <= 0 || f.Limit > math.MaxInt32 {
+		return nil, fmt.Errorf("store: conversations: limit %d is out of range", f.Limit)
+	}
+	var before *time.Time
+	if f.BeforeID != "" {
+		before = &f.BeforeAt
+	}
+	rows, err := s.queries.ListConversations(ctx, db.ListConversationsParams{
+		StartedBy:  f.User,
+		Workspaces: f.Workspaces,
+		BeforeID:   optional(f.BeforeID),
+		BeforeAt:   before,
+		MaxRows:    int32(f.Limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("store: conversations: %w", err)
+	}
+	out := make([]ConversationSummary, len(rows))
+	for i, row := range rows {
+		out[i] = ConversationSummary{
+			ID:        row.ID,
+			Workspace: row.Workspace,
+			Harness:   row.Harness,
+			Title:     row.Title,
+			UpdatedAt: row.UpdatedAt,
+		}
+	}
+	return out, nil
+}
+
+// FindConversation returns the conversation named by id, if it is in one of
+// workspaces. A later run of a conversation does not name it.
+func (s *Store) FindConversation(ctx context.Context, workspaces []string, id string) (ConversationSummary, error) {
+	row, err := s.queries.FindConversation(ctx, db.FindConversationParams{ID: id, Workspaces: workspaces})
+	if err != nil {
+		return ConversationSummary{}, notFound("conversation "+id, err)
+	}
+	return ConversationSummary{ID: row.ID, Workspace: row.Workspace, Harness: row.Harness, Title: row.Title}, nil
+}
+
 // optional is s as a nullable query argument: empty is NULL.
 func optional(s string) pgtype.Text {
 	return pgtype.Text{String: s, Valid: s != ""}

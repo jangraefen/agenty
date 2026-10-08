@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -18,12 +19,22 @@ import (
 
 var _ toolgateway.Audit = (*Store)(nil)
 
-// toolActions are the actions of the tool gateway's records, by event.
-var toolActions = map[toolgateway.Event]string{
-	toolgateway.EventDecision: "tool.decision",
-	toolgateway.EventApproval: "tool.approval",
-	toolgateway.EventResult:   "tool.result",
-}
+// toolActions are the actions of the tool gateway's records, by event, and
+// toolEvents the events by action.
+var (
+	toolActions = map[toolgateway.Event]string{
+		toolgateway.EventDecision: "tool.decision",
+		toolgateway.EventApproval: "tool.approval",
+		toolgateway.EventResult:   "tool.result",
+	}
+	toolEvents = func() map[string]toolgateway.Event {
+		out := make(map[string]toolgateway.Event, len(toolActions))
+		for event, action := range toolActions {
+			out[action] = event
+		}
+		return out
+	}()
+)
 
 // toolDetails are the details of a tool event: its record but for the run
 // and the event, which the event holds itself.
@@ -82,6 +93,9 @@ func appendEvent(ctx context.Context, q *db.Queries, e auditlog.Event) (auditlog
 	if err != nil {
 		return auditlog.Event{}, err
 	}
+	if !bytes.HasPrefix(details, []byte("{")) {
+		return auditlog.Event{}, fmt.Errorf("store: audit: %s: details must be a JSON object", e.Action)
+	}
 	e.Details = details
 	if err := q.LockAuditLog(ctx); err != nil {
 		return auditlog.Event{}, fmt.Errorf("store: audit: %w", err)
@@ -128,14 +142,18 @@ func (s *Store) Record(ctx context.Context, rec toolgateway.Record) error {
 
 // RecordAt is Record, and returns when the record was recorded.
 func (s *Store) RecordAt(ctx context.Context, rec toolgateway.Record) (time.Time, error) {
-	tx, err := s.pool.Begin(ctx)
+	// An append must see the event appended just before it.
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return time.Time{}, fmt.Errorf("store: audit: %w", err)
 	}
 	q := s.queries.WithTx(tx)
 	owner, err := q.RunOwner(ctx, rec.RunID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = fmt.Errorf("run %s: %w", rec.RunID, ErrNotFound)
+	}
 	if err != nil {
-		return time.Time{}, errors.Join(fmt.Errorf("store: audit: %w", notFound("run "+rec.RunID, err)), tx.Rollback(ctx))
+		return time.Time{}, errors.Join(fmt.Errorf("store: audit: %w", err), tx.Rollback(ctx))
 	}
 	e, err := toolEvent(rec, owner.StartedBy, owner.Workspace)
 	if err == nil {
@@ -162,10 +180,6 @@ func (s *Store) AuditRecords(ctx context.Context, runID string) ([]AuditRecord, 
 	if err != nil {
 		return nil, fmt.Errorf("store: audit: %w", err)
 	}
-	events := make(map[string]toolgateway.Event, len(toolActions))
-	for event, action := range toolActions {
-		events[action] = event
-	}
 	out := make([]AuditRecord, len(rows))
 	for i, row := range rows {
 		var d toolDetails
@@ -176,7 +190,7 @@ func (s *Store) AuditRecords(ctx context.Context, runID string) ([]AuditRecord, 
 			Record: toolgateway.Record{
 				RunID:    runID,
 				CallID:   d.CallID,
-				Event:    events[row.Action],
+				Event:    toolEvents[row.Action],
 				Tool:     d.Tool,
 				Args:     d.Args,
 				Decision: d.Decision,
@@ -191,13 +205,24 @@ func (s *Store) AuditRecords(ctx context.Context, runID string) ([]AuditRecord, 
 	return out, nil
 }
 
+// LastAuditEventID returns the id of the audit log's latest event, 0 before
+// the first: an export reads up to it.
+func (s *Store) LastAuditEventID(ctx context.Context) (int64, error) {
+	id, err := s.queries.LastAuditEventID(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("store: audit: %w", err)
+	}
+	return id, nil
+}
+
 // AuditEvents returns up to limit events of the audit log after the one with
-// the given id, in order: an export reads the log a page at a time.
-func (s *Store) AuditEvents(ctx context.Context, after int64, limit int) ([]auditlog.Event, error) {
+// id after and up to the one with id last, in order: an export reads the log
+// a page at a time.
+func (s *Store) AuditEvents(ctx context.Context, after, last int64, limit int) ([]auditlog.Event, error) {
 	if limit <= 0 || limit > 1<<20 {
 		return nil, fmt.Errorf("store: audit: limit %d is out of range", limit)
 	}
-	rows, err := s.queries.AuditEventsAfter(ctx, db.AuditEventsAfterParams{ID: after, Limit: int32(limit)})
+	rows, err := s.queries.AuditEventsAfter(ctx, db.AuditEventsAfterParams{After: after, Last: last, MaxRows: int32(limit)})
 	if err != nil {
 		return nil, fmt.Errorf("store: audit: %w", err)
 	}
@@ -219,57 +244,86 @@ func (s *Store) AuditEvents(ctx context.Context, after int64, limit int) ([]audi
 	return out, nil
 }
 
+// copyPage is how many records migration 13 copies at a time.
+const copyPage = 1000
+
 // copyAuditRecords is migration 13: it copies every record of the table that
 // held the tool gateway's records before the audit log held every event,
-// into the log, in order, chained.
+// into the log, in order, chained. It reads them a page at a time, and fails
+// unless it copied every one: migration 14 drops the table.
 func copyAuditRecords(ctx context.Context, tx *sql.Tx) error {
+	var want int64
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM audit_records`).Scan(&want); err != nil {
+		return err
+	}
+	var prev auditlog.Hash
+	var copied, after int64
+	for {
+		page, last, err := readAuditRecords(ctx, tx, after)
+		if err != nil {
+			return err
+		}
+		if len(page) == 0 {
+			break
+		}
+		after = last
+		for _, e := range page {
+			if e.Details, err = auditlog.Canonical(e.Details); err != nil {
+				return err
+			}
+			copied++
+			e.ID = copied
+			e.PrevHash = prev
+			e.Hash = e.Sum()
+			prev = e.Hash
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO audit_events (id, recorded_at, actor, action, workspace, run_id, target, details, prev_hash, hash)
+				VALUES ($1, $2, $3, $4, $5, $6, '', $7, $8, $9)`,
+				e.ID, e.RecordedAt, e.Actor, e.Action, e.Workspace, e.RunID, string(e.Details), e.PrevHash[:], e.Hash[:]); err != nil {
+				return err
+			}
+		}
+	}
+	if copied != want {
+		return fmt.Errorf("copied %d of %d audit records", copied, want)
+	}
+	return nil
+}
+
+// readAuditRecords reads a page of the records after the one with the given
+// id, as events, and the id of the page's last record.
+func readAuditRecords(ctx context.Context, tx *sql.Tx, after int64) (_ []auditlog.Event, last int64, err error) {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT r.run_id, r.call_id, r.event, r.tool, r.args::text, r.decision, r.reason, r.approver,
+		SELECT r.id, r.run_id, r.call_id, r.event, r.tool, r.args::text, r.decision, r.reason, r.approver,
 		       r.result::text, r.error, r.recorded_at, runs.started_by, harness_versions.workspace
 		FROM audit_records r
 		JOIN runs ON runs.id = r.run_id
 		JOIN harness_versions ON harness_versions.id = runs.harness_version_id
-		ORDER BY r.id`)
+		WHERE r.id > $1
+		ORDER BY r.id
+		LIMIT $2`, after, copyPage)
 	if err != nil {
-		return err
+		return nil, 0, err
 	}
+	defer func() { err = errors.Join(err, rows.Close()) }()
 	var events []auditlog.Event
 	for rows.Next() {
 		var rec toolgateway.Record
 		var args, result sql.NullString
 		var at time.Time
 		var starter, workspace string
-		if err := rows.Scan(&rec.RunID, &rec.CallID, &rec.Event, &rec.Tool, &args, &rec.Decision, &rec.Reason,
+		if err := rows.Scan(&last, &rec.RunID, &rec.CallID, &rec.Event, &rec.Tool, &args, &rec.Decision, &rec.Reason,
 			&rec.Approver, &result, &rec.Err, &at, &starter, &workspace); err != nil {
-			return errors.Join(err, rows.Close())
+			return nil, 0, err
 		}
 		rec.Args = json.RawMessage(args.String)
 		rec.Result = json.RawMessage(result.String)
 		e, err := toolEvent(rec, starter, workspace)
 		if err != nil {
-			return errors.Join(err, rows.Close())
+			return nil, 0, err
 		}
 		e.RecordedAt = at.UTC().Truncate(time.Microsecond)
 		events = append(events, e)
 	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return err
-	}
-	var prev auditlog.Hash
-	for i, e := range events {
-		if e.Details, err = auditlog.Canonical(e.Details); err != nil {
-			return err
-		}
-		e.ID = int64(i + 1)
-		e.PrevHash = prev
-		e.Hash = e.Sum()
-		prev = e.Hash
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO audit_events (id, recorded_at, actor, action, workspace, run_id, target, details, prev_hash, hash)
-			VALUES ($1, $2, $3, $4, $5, $6, '', $7, $8, $9)`,
-			e.ID, e.RecordedAt, e.Actor, e.Action, e.Workspace, e.RunID, string(e.Details), e.PrevHash[:], e.Hash[:]); err != nil {
-			return err
-		}
-	}
-	return nil
+	return events, last, rows.Err()
 }

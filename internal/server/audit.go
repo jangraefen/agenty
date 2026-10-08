@@ -129,11 +129,18 @@ func (s handlers) ExportAuditLog(c *gin.Context, params api.ExportAuditLogParams
 		return
 	}
 	ctx := c.Request.Context()
+	// The log as it is now: events appended while it is written are left
+	// for the next export, so the export ends.
+	last, err := s.cfg.Store.LastAuditEventID(ctx)
+	if err != nil {
+		s.failStore(c, err)
+		return
+	}
 	c.Header("Content-Type", "application/jsonl")
 	c.Header("Trailer", exportComplete)
 	c.Status(http.StatusOK)
 	for after := params.After; ; {
-		page, err := s.cfg.Store.AuditEvents(ctx, after, exportPage)
+		page, err := s.cfg.Store.AuditEvents(ctx, after, last, exportPage)
 		if err != nil {
 			s.cfg.Logger.Error("cannot export the audit log", "error", s.cfg.Resolved.Redactor.String(err.Error()))
 			return

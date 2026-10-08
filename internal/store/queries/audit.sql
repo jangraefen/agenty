@@ -1,7 +1,8 @@
 -- name: LockAuditLog :exec
 -- Serialises appends to the audit log until the transaction ends, so its
--- chain stays linear.
-SELECT pg_advisory_xact_lock(hashtext('agenty audit log'));
+-- chain stays linear. Its two keys keep it apart from the one-key locks,
+-- such as LockHarnessName's.
+SELECT pg_advisory_xact_lock(hashtext('agenty'), hashtext('audit log'));
 
 -- name: LastAuditEvent :one
 -- The latest event's id and hash; call it holding the lock.
@@ -24,6 +25,11 @@ SELECT action, details, recorded_at FROM audit_events
 WHERE run_id = $1 AND action IN ('tool.decision', 'tool.approval', 'tool.result')
 ORDER BY id;
 
+-- name: LastAuditEventID :one
+-- The latest event's id, 0 before the first.
+SELECT COALESCE(max(id), 0)::bigint FROM audit_events;
+
 -- name: AuditEventsAfter :many
--- The events after the one with the given id, in order, a page at a time.
-SELECT * FROM audit_events WHERE id > $1 ORDER BY id LIMIT $2;
+-- The events after the one with the given id up to the one with the last,
+-- in order, a page at a time.
+SELECT * FROM audit_events WHERE id > sqlc.arg(after) AND id <= sqlc.arg(last) ORDER BY id LIMIT sqlc.arg(max_rows);

@@ -11,8 +11,6 @@
 package auditlog
 
 import (
-	"bufio"
-	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -154,25 +152,30 @@ type Summary struct {
 }
 
 // Verify reads an export and checks that every event's hash is its own, that
-// each links to the one before it, that ids rise by one, and that an export
-// from the first event starts at a zero hash. Each anchor must be one of its
-// events, or the one just before its first. It reads the export as a stream.
+// each links to the one before it, that ids rise by one from at least 1, and
+// that an export from the first event starts at a zero hash. Each anchor
+// must be one of its events, or the one just before its first. It reads the
+// export as a stream, so an event of any size verifies.
 func Verify(r io.Reader, anchors ...Anchor) (Summary, error) {
-	var s Summary
-	var first Event
 	pending := map[int64]Hash{}
 	for _, a := range anchors {
+		if h, ok := pending[a.ID]; ok && h != a.Hash {
+			return Summary{}, fmt.Errorf("auditlog: anchor %d: given twice, with different hashes", a.ID)
+		}
 		pending[a.ID] = a.Hash
 	}
-	lines := bufio.NewScanner(r)
-	// An event holds a tool's arguments and result, which may be large.
-	lines.Buffer(nil, 64<<20)
-	for n := 1; lines.Scan(); n++ {
+	var s Summary
+	var first Event
+	decoder := json.NewDecoder(r)
+	decoder.DisallowUnknownFields()
+	for {
 		var e Event
-		decoder := json.NewDecoder(bytes.NewReader(lines.Bytes()))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&e); err != nil {
-			return Summary{}, fmt.Errorf("auditlog: line %d: %w", n, err)
+		err := decoder.Decode(&e)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return Summary{}, fmt.Errorf("auditlog: entry %d: %w", s.Events+1, err)
 		}
 		if err := s.next(e); err != nil {
 			return Summary{}, err
@@ -186,9 +189,6 @@ func Verify(r io.Reader, anchors ...Anchor) (Summary, error) {
 			}
 			delete(pending, e.ID)
 		}
-	}
-	if err := lines.Err(); err != nil {
-		return Summary{}, fmt.Errorf("auditlog: %w", err)
 	}
 	if s.Events == 0 {
 		return Summary{}, errors.New("auditlog: the export holds no events")
@@ -208,6 +208,10 @@ func Verify(r io.Reader, anchors ...Anchor) (Summary, error) {
 // next checks e, the event after those s summarises, and adds it.
 func (s *Summary) next(e Event) error {
 	switch {
+	case e.ID < 1:
+		return fmt.Errorf("auditlog: event %d: ids start at 1", e.ID)
+	case e.RecordedAt.Truncate(time.Microsecond) != e.RecordedAt:
+		return fmt.Errorf("auditlog: event %d: its time is finer than the microseconds its hash covers", e.ID)
 	case s.Events == 0 && e.ID == 1 && e.PrevHash != (Hash{}):
 		return fmt.Errorf("auditlog: event 1: the first event follows no other")
 	case s.Events > 0 && e.ID != s.Last+1:

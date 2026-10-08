@@ -24,7 +24,11 @@ the hashes that chain them. verify checks such a file without the server:
 that no event in it was changed, removed or moved. It prints the last
 event's id and hash: keep that anchor apart from Agenty. A later export
 verified with --anchor must still hold it, which shows that the log was not
-written anew in between.
+written anew in between. Removing the newest events, or adding forged ones
+after the last anchor, does not show: keep anchors often.
+
+The server marks a complete export with an HTTP trailer; a proxy between
+that drops trailers makes export fail as cut short.
 `
 
 func audit(ctx context.Context, args []string, env Env) int {
@@ -68,7 +72,7 @@ func auditFlags(name string, nargs int, args []string, env Env, define func(*fla
 		return nil, exitUsage, false
 	}
 	if fs.NArg() != nargs {
-		if _, err := fmt.Fprintf(env.Stderr, "agenty audit %s: expected %d argument, got %d\n", name, nargs, fs.NArg()); err != nil {
+		if _, err := fmt.Fprintf(env.Stderr, "agenty audit %s: expected %d argument(s), got %d\n", name, nargs, fs.NArg()); err != nil {
 			return nil, exitFailure, false
 		}
 		fs.Usage()

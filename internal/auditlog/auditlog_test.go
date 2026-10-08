@@ -92,7 +92,11 @@ func TestVerify(t *testing.T) {
 		{"removed event", lines[0] + lines[2] + lines[3], nil, "event 3"},
 		{"reordered", lines[0] + lines[2] + lines[1] + lines[3], nil, "event 3"},
 		{"a first event that does not start the chain", lines[0][:0] + strings.Replace(lines[0], `"prev_hash":"`+events[0].PrevHash.String(), `"prev_hash":"`+events[1].Hash.String(), 1), nil, "event 1"},
-		{"not JSON", "nonsense\n", nil, "line 1"},
+		{"not JSON", "nonsense\n", nil, "entry 1"},
+		{"trailing data on a line", strings.Replace(whole, "}\n", `} {"more":1}`+"\n", 1), nil, "entry 2"},
+		{"an id below 1", strings.Replace(whole, `"id":1,`, `"id":0,`, 1), nil, "event 0"},
+		{"a time finer than a microsecond", strings.Replace(whole, ".123456Z", ".1234567Z", 1), nil, "finer"},
+		{"one anchor id given two hashes", whole, []auditlog.Anchor{{ID: 1, Hash: events[0].Hash}, {ID: 1, Hash: events[1].Hash}}, "given twice"},
 		{"empty", "", nil, "no events"},
 		{"an anchor that is not in it", whole, []auditlog.Anchor{{ID: 9, Hash: events[0].Hash}}, "anchor 9"},
 		{"an anchor whose hash differs", whole, []auditlog.Anchor{{ID: 2, Hash: events[0].Hash}}, "anchor 2"},
@@ -146,4 +150,12 @@ func TestWriteLine_IsTheExportFormat(t *testing.T) {
 	}
 	assert.True(t, strings.HasSuffix(line, "\n"))
 	assert.Equal(t, `"0000000000000000000000000000000000000000000000000000000000000000"`, string(fields["prev_hash"]))
+}
+
+func TestVerify_ReadsEventsOfAnySize(t *testing.T) {
+	big := `{"result":"` + strings.Repeat("x", 70<<20) + `"}`
+	events := chain(t, auditlog.Hash{}, 1, big, `{"after":"big"}`)
+	got, err := auditlog.Verify(strings.NewReader(export(t, events)))
+	require.NoError(t, err)
+	assert.Equal(t, 2, got.Events)
 }

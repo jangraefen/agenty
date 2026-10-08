@@ -5,6 +5,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"math"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -23,7 +25,7 @@ func export(t *testing.T, s *store.Store) []byte {
 	t.Helper()
 	var b bytes.Buffer
 	for after := int64(0); ; {
-		page, err := s.AuditEvents(context.Background(), after, 2)
+		page, err := s.AuditEvents(context.Background(), after, math.MaxInt64, 2)
 		require.NoError(t, err)
 		if len(page) == 0 {
 			return b.Bytes()
@@ -50,7 +52,7 @@ func TestAuditEvents_ToolRecords(t *testing.T) {
 	record(t, s, toolgateway.Record{RunID: "r2", CallID: "c2", Event: toolgateway.EventApproval, Tool: "files_write", Decision: toolgateway.Deny, Reason: "approval expired"})
 	record(t, s, toolgateway.Record{RunID: "r1", CallID: "c1", Event: toolgateway.EventResult, Tool: "files_write", Decision: toolgateway.Allow, Result: json.RawMessage(`{"ok":true}`)})
 
-	events, err := s.AuditEvents(ctx, 0, 10)
+	events, err := s.AuditEvents(ctx, 0, math.MaxInt64, 10)
 	require.NoError(t, err)
 	require.Len(t, events, 4)
 	type summary struct{ actor, action, workspace, run string }
@@ -78,7 +80,7 @@ func TestAuditEvents_ToolRecords(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 4, sum.Events)
 
-	_, err = s.AuditEvents(ctx, 0, 0)
+	_, err = s.AuditEvents(ctx, 0, math.MaxInt64, 0)
 	require.Error(t, err)
 }
 
@@ -123,6 +125,15 @@ func TestInvariant_AuditLogIsTamperEvident(t *testing.T) {
 	require.NoError(t, err)
 	_, err = auditlog.Verify(bytes.NewReader(export(t, s)))
 	require.ErrorContains(t, err, "event 3", "a removed event fails")
+
+	// The limit: the newest events removed leave a chain that verifies on
+	// its own; only an anchor at or past them shows it.
+	_, err = conn.Exec(ctx, `DELETE FROM audit_events WHERE id >= 2`)
+	require.NoError(t, err)
+	_, err = auditlog.Verify(bytes.NewReader(export(t, s)))
+	require.NoError(t, err, "a log without its newest events verifies on its own")
+	_, err = auditlog.Verify(bytes.NewReader(export(t, s)), anchor)
+	require.ErrorContains(t, err, "anchor", "but not against an anchor kept from before")
 
 	// A forger who knows the format writes the chain anew.
 	_, err = conn.Exec(ctx, `DELETE FROM audit_events`)
@@ -189,7 +200,7 @@ func TestCopyAuditRecords(t *testing.T) {
 	assert.Equal(t, "carol", records[1].Approver)
 	assert.Nil(t, records[1].Args, "a NULL column stays absent")
 	assert.JSONEq(t, `{"ok":true}`, string(records[2].Result))
-	events, err := s.AuditEvents(ctx, 0, 10)
+	events, err := s.AuditEvents(ctx, 0, math.MaxInt64, 10)
 	require.NoError(t, err)
 	require.Len(t, events, 4)
 	assert.Empty(t, events[2].Actor, "an expired approval is no one's")
@@ -198,10 +209,32 @@ func TestCopyAuditRecords(t *testing.T) {
 	assert.Equal(t, int64(4), sum.Last)
 
 	record(t, s, toolgateway.Record{RunID: "r2", CallID: "c3", Event: toolgateway.EventDecision, Tool: "files_read", Decision: toolgateway.Allow})
-	events, err = s.AuditEvents(ctx, 4, 10)
+	events, err = s.AuditEvents(ctx, 4, math.MaxInt64, 10)
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	assert.Equal(t, "bob", events[0].Actor)
 	_, err = auditlog.Verify(bytes.NewReader(export(t, s)))
 	require.NoError(t, err, "and the log goes on from them")
+}
+
+// TestRecord_ConcurrentAppendsStayLinear: appends from many workers at once
+// are serialised, so the chain neither forks nor skips an id.
+func TestRecord_ConcurrentAppendsStayLinear(t *testing.T) {
+	s := storetest.New(t)
+	newRun(t, s, "r1")
+	const n = 24
+	errs := make(chan error, n)
+	for i := range n {
+		go func() {
+			_, err := s.RecordAt(context.Background(), toolgateway.Record{RunID: "r1", CallID: fmt.Sprint("c", i), Event: toolgateway.EventDecision, Tool: "files_read", Decision: toolgateway.Allow})
+			errs <- err
+		}()
+	}
+	for range n {
+		require.NoError(t, <-errs)
+	}
+	sum, err := auditlog.Verify(bytes.NewReader(export(t, s)))
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), sum.First)
+	assert.Equal(t, n, sum.Events)
 }

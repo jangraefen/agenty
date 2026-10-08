@@ -13,17 +13,19 @@ import (
 )
 
 const auditEventsAfter = `-- name: AuditEventsAfter :many
-SELECT id, recorded_at, actor, action, workspace, run_id, target, details, prev_hash, hash FROM audit_events WHERE id > $1 ORDER BY id LIMIT $2
+SELECT id, recorded_at, actor, action, workspace, run_id, target, details, prev_hash, hash FROM audit_events WHERE id > $1 AND id <= $2 ORDER BY id LIMIT $3
 `
 
 type AuditEventsAfterParams struct {
-	ID    int64
-	Limit int32
+	After   int64
+	Last    int64
+	MaxRows int32
 }
 
-// The events after the one with the given id, in order, a page at a time.
+// The events after the one with the given id up to the one with the last,
+// in order, a page at a time.
 func (q *Queries) AuditEventsAfter(ctx context.Context, arg AuditEventsAfterParams) ([]AuditEvent, error) {
-	rows, err := q.db.Query(ctx, auditEventsAfter, arg.ID, arg.Limit)
+	rows, err := q.db.Query(ctx, auditEventsAfter, arg.After, arg.Last, arg.MaxRows)
 	if err != nil {
 		return nil, err
 	}
@@ -104,12 +106,25 @@ func (q *Queries) LastAuditEvent(ctx context.Context) (LastAuditEventRow, error)
 	return i, err
 }
 
+const lastAuditEventID = `-- name: LastAuditEventID :one
+SELECT COALESCE(max(id), 0)::bigint FROM audit_events
+`
+
+// The latest event's id, 0 before the first.
+func (q *Queries) LastAuditEventID(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, lastAuditEventID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const lockAuditLog = `-- name: LockAuditLog :exec
-SELECT pg_advisory_xact_lock(hashtext('agenty audit log'))
+SELECT pg_advisory_xact_lock(hashtext('agenty'), hashtext('audit log'))
 `
 
 // Serialises appends to the audit log until the transaction ends, so its
-// chain stays linear.
+// chain stays linear. Its two keys keep it apart from the one-key locks,
+// such as LockHarnessName's.
 func (q *Queries) LockAuditLog(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, lockAuditLog)
 	return err

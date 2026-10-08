@@ -50,10 +50,9 @@ LIMIT sqlc.arg(max_rows);
 
 -- name: ListActorEvents :many
 -- What actor did, newest first, before the event named by before (0 for
--- the newest), in the given workspaces.
+-- the newest).
 SELECT * FROM audit_events
 WHERE actor = sqlc.arg(actor)
-  AND workspace = ANY(sqlc.arg(workspaces)::text[])
   AND (sqlc.arg(before)::bigint = 0 OR id < sqlc.arg(before))
 ORDER BY id DESC
 LIMIT sqlc.arg(max_rows);

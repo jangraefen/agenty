@@ -100,11 +100,11 @@ func (s handlers) listEvents(c *gin.Context, limit int, before int64, list func(
 }
 
 // ListMyActivity lists what the user did: the events they are the actor of,
-// in the workspaces they are a member of now. What others did is not theirs.
+// in every workspace, those they left too. What others did is not theirs.
 func (s handlers) ListMyActivity(c *gin.Context, params api.ListMyActivityParams) {
 	user := c.GetString(userKey)
 	s.listEvents(c, params.Limit, params.Before, func(before int64, limit int) ([]auditlog.Event, error) {
-		return s.cfg.Store.ActorEvents(c.Request.Context(), user, s.memberships(user), before, limit)
+		return s.cfg.Store.ActorEvents(c.Request.Context(), user, before, limit)
 	})
 }
 

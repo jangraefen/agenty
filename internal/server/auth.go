@@ -65,10 +65,32 @@ func (s *Server) authenticate(c *gin.Context) {
 // workspaces they are not in. It runs in the generated routes, after their
 // parameters are read; a route under /v1/workspaces/ that does not name its
 // workspace {workspace} is refused.
+//
+// The one exception: a user who left a workspace still reads the
+// conversations they started there, read-only. The routes that read a run
+// let anyone through, whether the workspace exists or not, as their handlers
+// find only the user's own runs, and answer as for any other non-member.
 func (s *Server) member(c *gin.Context) {
 	ws, ok := c.Params.Get("workspace")
 	inWorkspace := strings.HasPrefix(c.FullPath(), "/v1/workspaces/")
-	if (ok || inWorkspace) && !slices.Contains(s.cfg.Operator.Workspaces[ws].Members, c.GetString(userKey)) {
+	if c.Request.Method == http.MethodGet && ownRunReads[c.FullPath()] {
+		return
+	}
+	if (ok || inWorkspace) && !s.isMember(c.GetString(userKey), ws) {
 		s.fail(c, http.StatusNotFound, fmt.Errorf("workspace %s: not found", ws))
 	}
+}
+
+// ownRunReads are the routes that read a run, which a run's owner may use
+// in a workspace they left.
+var ownRunReads = map[string]bool{
+	"/v1/workspaces/:workspace/runs/:id":              true,
+	"/v1/workspaces/:workspace/runs/:id/conversation": true,
+	"/v1/workspaces/:workspace/runs/:id/transcript":   true,
+	"/v1/workspaces/:workspace/runs/:id/events":       true,
+}
+
+// isMember reports whether user is a member of the workspace.
+func (s *Server) isMember(user, workspace string) bool {
+	return slices.Contains(s.cfg.Operator.Workspaces[workspace].Members, user)
 }

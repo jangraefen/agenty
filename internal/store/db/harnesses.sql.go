@@ -10,7 +10,7 @@ import (
 )
 
 const harnessVersionByID = `-- name: HarnessVersionByID :one
-SELECT id, name, version, definition, created_at, workspace FROM harness_versions
+SELECT id, workspace, name, version, definition, created_at FROM harness_versions
 WHERE id = $1
 `
 
@@ -19,11 +19,11 @@ func (q *Queries) HarnessVersionByID(ctx context.Context, id int64) (HarnessVers
 	var i HarnessVersion
 	err := row.Scan(
 		&i.ID,
+		&i.Workspace,
 		&i.Name,
 		&i.Version,
 		&i.Definition,
 		&i.CreatedAt,
-		&i.Workspace,
 	)
 	return i, err
 }
@@ -31,7 +31,7 @@ func (q *Queries) HarnessVersionByID(ctx context.Context, id int64) (HarnessVers
 const insertHarnessVersion = `-- name: InsertHarnessVersion :one
 INSERT INTO harness_versions (workspace, name, version, definition)
 VALUES ($1, $2, $3, $4)
-RETURNING id, name, version, definition, created_at, workspace
+RETURNING id, workspace, name, version, definition, created_at
 `
 
 type InsertHarnessVersionParams struct {
@@ -51,17 +51,17 @@ func (q *Queries) InsertHarnessVersion(ctx context.Context, arg InsertHarnessVer
 	var i HarnessVersion
 	err := row.Scan(
 		&i.ID,
+		&i.Workspace,
 		&i.Name,
 		&i.Version,
 		&i.Definition,
 		&i.CreatedAt,
-		&i.Workspace,
 	)
 	return i, err
 }
 
 const latestHarnessVersion = `-- name: LatestHarnessVersion :one
-SELECT id, name, version, definition, created_at, workspace FROM harness_versions
+SELECT id, workspace, name, version, definition, created_at FROM harness_versions
 WHERE workspace = $1 AND name = $2
 ORDER BY version DESC
 LIMIT 1
@@ -77,17 +77,17 @@ func (q *Queries) LatestHarnessVersion(ctx context.Context, arg LatestHarnessVer
 	var i HarnessVersion
 	err := row.Scan(
 		&i.ID,
+		&i.Workspace,
 		&i.Name,
 		&i.Version,
 		&i.Definition,
 		&i.CreatedAt,
-		&i.Workspace,
 	)
 	return i, err
 }
 
 const latestHarnessVersions = `-- name: LatestHarnessVersions :many
-SELECT DISTINCT ON (name) id, name, version, definition, created_at, workspace FROM harness_versions
+SELECT DISTINCT ON (name) id, workspace, name, version, definition, created_at FROM harness_versions
 WHERE workspace = $1
 ORDER BY name, version DESC
 `
@@ -103,11 +103,11 @@ func (q *Queries) LatestHarnessVersions(ctx context.Context, workspace string) (
 		var i HarnessVersion
 		if err := rows.Scan(
 			&i.ID,
+			&i.Workspace,
 			&i.Name,
 			&i.Version,
 			&i.Definition,
 			&i.CreatedAt,
-			&i.Workspace,
 		); err != nil {
 			return nil, err
 		}

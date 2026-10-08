@@ -42,32 +42,32 @@ type AuditEvent struct {
 
 type HarnessVersion struct {
 	ID         int64
+	Workspace  string
 	Name       string
 	Version    int32
 	Definition []byte
 	CreatedAt  time.Time
-	Workspace  string
 }
 
 type Run struct {
 	ID               string
 	HarnessVersionID int64
 	Input            string
+	StartedBy        string
+	ConversationID   string
+	Follows          pgtype.Text
 	Status           string
 	Output           string
 	Steps            int32
 	Error            string
-	CreatedAt        time.Time
-	FinishedAt       *time.Time
-	StartedBy        string
-	ConversationID   string
-	Follows          pgtype.Text
 	PromptDigest     string
 	HistoryDigest    string
 	InputTokens      int64
 	OutputTokens     int64
 	CacheWriteTokens int64
 	CacheReadTokens  int64
+	CreatedAt        time.Time
+	FinishedAt       *time.Time
 }
 
 type RunMessage struct {
@@ -77,7 +77,6 @@ type RunMessage struct {
 	Text             string
 	ToolCalls        []byte
 	ToolResults      []byte
-	CreatedAt        time.Time
 	Provider         string
 	ProviderData     []byte
 	Altered          bool
@@ -85,4 +84,5 @@ type RunMessage struct {
 	OutputTokens     int64
 	CacheWriteTokens int64
 	CacheReadTokens  int64
+	CreatedAt        time.Time
 }

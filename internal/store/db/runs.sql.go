@@ -34,12 +34,12 @@ const claimRun = `-- name: ClaimRun :one
 WITH claimed AS (
     UPDATE runs
     SET status = 'running'
-    WHERE id = (
+    WHERE status = 'queued' AND id = (
         SELECT q.id FROM runs q
         WHERE q.status = 'queued'
         ORDER BY q.created_at, q.id
         LIMIT 1
-        FOR UPDATE SKIP LOCKED)
+        FOR NO KEY UPDATE SKIP LOCKED)
     RETURNING runs.id, runs.harness_version_id
 )
 SELECT claimed.id, harness_versions.workspace
@@ -220,7 +220,9 @@ VALUES (
     COALESCE((SELECT f.conversation_id FROM runs f WHERE f.id = $5), $1),
     $5
 )
-RETURNING id, harness_version_id, input, status, output, steps, error, created_at, finished_at, started_by, conversation_id, follows, prompt_digest, history_digest, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens
+RETURNING runs.id, runs.harness_version_id, runs.input, runs.status, runs.output, runs.steps, runs.error, runs.created_at, runs.finished_at, runs.started_by, runs.conversation_id, runs.follows, runs.prompt_digest, runs.history_digest, runs.input_tokens, runs.output_tokens, runs.cache_write_tokens, runs.cache_read_tokens,
+    (SELECT hv.name FROM harness_versions hv WHERE hv.id = runs.harness_version_id)::text AS harness,
+    (SELECT hv.version FROM harness_versions hv WHERE hv.id = runs.harness_version_id)::integer AS harness_version
 `
 
 type InsertRunParams struct {
@@ -231,10 +233,16 @@ type InsertRunParams struct {
 	Follows          pgtype.Text
 }
 
+type InsertRunRow struct {
+	Run            Run
+	Harness        string
+	HarnessVersion int32
+}
+
 // A run is stored as queued. A run that follows another joins its
 // conversation; any other run starts one of its own. It is returned as
-// stored, before a worker may claim it.
-func (q *Queries) InsertRun(ctx context.Context, arg InsertRunParams) (Run, error) {
+// stored, before a worker may claim it, with its harness.
+func (q *Queries) InsertRun(ctx context.Context, arg InsertRunParams) (InsertRunRow, error) {
 	row := q.db.QueryRow(ctx, insertRun,
 		arg.ID,
 		arg.HarnessVersionID,
@@ -242,26 +250,28 @@ func (q *Queries) InsertRun(ctx context.Context, arg InsertRunParams) (Run, erro
 		arg.StartedBy,
 		arg.Follows,
 	)
-	var i Run
+	var i InsertRunRow
 	err := row.Scan(
-		&i.ID,
-		&i.HarnessVersionID,
-		&i.Input,
-		&i.Status,
-		&i.Output,
-		&i.Steps,
-		&i.Error,
-		&i.CreatedAt,
-		&i.FinishedAt,
-		&i.StartedBy,
-		&i.ConversationID,
-		&i.Follows,
-		&i.PromptDigest,
-		&i.HistoryDigest,
-		&i.InputTokens,
-		&i.OutputTokens,
-		&i.CacheWriteTokens,
-		&i.CacheReadTokens,
+		&i.Run.ID,
+		&i.Run.HarnessVersionID,
+		&i.Run.Input,
+		&i.Run.Status,
+		&i.Run.Output,
+		&i.Run.Steps,
+		&i.Run.Error,
+		&i.Run.CreatedAt,
+		&i.Run.FinishedAt,
+		&i.Run.StartedBy,
+		&i.Run.ConversationID,
+		&i.Run.Follows,
+		&i.Run.PromptDigest,
+		&i.Run.HistoryDigest,
+		&i.Run.InputTokens,
+		&i.Run.OutputTokens,
+		&i.Run.CacheWriteTokens,
+		&i.Run.CacheReadTokens,
+		&i.Harness,
+		&i.HarnessVersion,
 	)
 	return i, err
 }

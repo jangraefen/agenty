@@ -9,6 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jangraefen/agenty/internal/api"
+	"github.com/jangraefen/agenty/internal/harness"
+	"github.com/jangraefen/agenty/internal/model"
 	"github.com/jangraefen/agenty/internal/model/modeltest"
 )
 
@@ -138,4 +140,44 @@ func TestQueue_ManyWorkersRunAtOnce(t *testing.T) {
 	for _, run := range runs {
 		assert.Equal(t, api.RunStatusSucceeded, f.finish(t, run.ID).Status)
 	}
+}
+
+// TestQueue_ARunCancelledAsItStartsEndsCancelled: a cancel that comes after
+// a worker claimed the run, while it builds the run's model, ends the run as
+// cancelled, not failed.
+func TestQueue_ARunCancelledAsItStartsEndsCancelled(t *testing.T) {
+	building, proceed := make(chan struct{}), make(chan struct{})
+	m := modeltest.NewScripted(modeltest.Reply("never"))
+	f := newFixture(t, options{newModel: func(harness.Model) (model.Model, error) {
+		close(building)
+		<-proceed
+		return m, nil
+	}})
+	f.putNotes(t)
+	run := f.startRun(t, "tidy my notes")
+	<-building
+
+	require.Equal(t, http.StatusAccepted, f.do(t, http.MethodPost, home+"/runs/"+run.ID+"/cancel", nil, nil))
+	close(proceed)
+
+	finished := f.finish(t, run.ID)
+	assert.Equal(t, api.RunStatusCancelled, finished.Status)
+	assert.Equal(t, "cancelled by alice", finished.Error)
+	assert.Empty(t, m.Requests())
+}
+
+// TestQueue_AQueuedRunsStreamEndsWithTheServer: the next server takes up a
+// queued run, so its stream ends with the server without the run's end.
+func TestQueue_AQueuedRunsStreamEndsWithTheServer(t *testing.T) {
+	f := newFixture(t, options{workers: 1})
+	f.putNotes(t)
+	f.busy(t)
+	f.script(modeltest.Reply("later"))
+	queued := f.startRun(t, "tidy my notes")
+	events := f.events(t, queued.ID)
+
+	f.server.Close()
+
+	assert.Empty(t, events.rest(), "the stream ends without the run's end")
+	assert.Equal(t, api.RunStatusQueued, f.status(t, queued.ID))
 }

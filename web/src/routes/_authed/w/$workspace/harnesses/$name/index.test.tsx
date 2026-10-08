@@ -84,7 +84,7 @@ test("starts a run and opens it", async () => {
 test("reports a run the server refuses to start", async () => {
   server.use(
     http.post(`${base}/runs`, () =>
-      HttpResponse.json({ error: "tool files_delete is not served" }, { status: 422 }),
+      HttpResponse.json({ error: "cannot start run: the server is stopping" }, { status: 503 }),
     ),
   );
   const { user } = renderApp("/w/notes/harnesses/notes", TOKEN);
@@ -92,10 +92,10 @@ test("reports a run the server refuses to start", async () => {
   await user.type(await screen.findByLabelText("Input"), "go");
   await user.click(screen.getByRole("button", { name: "Start run" }));
 
-  expect(await screen.findByRole("alert")).toHaveTextContent("tool files_delete is not served");
+  expect(await screen.findByRole("alert")).toHaveTextContent("the server is stopping");
   const input = screen.getByLabelText("Input");
   expect(input).toHaveAttribute("aria-invalid", "true");
-  expect(input).toHaveAccessibleDescription(/tool files_delete is not served/);
+  expect(input).toHaveAccessibleDescription(/the server is stopping/);
 });
 
 test("links to the harness's runs", async () => {

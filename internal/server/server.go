@@ -114,7 +114,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	if _, err := policy.New(ctx, policy.Layer{Name: "central", Modules: cfg.Operator.Policy}); err != nil {
 		return nil, fmt.Errorf("server: %w", err)
 	}
-	n, err := cfg.Store.FailRunningRuns(ctx, "the server stopped before the run finished")
+	n, err := cfg.Store.FailRunningRuns(ctx, errStopped)
 	if err != nil {
 		return nil, fmt.Errorf("server: %w", err)
 	}
@@ -159,9 +159,10 @@ func (s *Server) Handler() http.Handler {
 	return s.engine
 }
 
-// Close cancels every run and waits until each has been recorded as finished,
-// then stops the MCP servers kept for conversations. Event streams end with
-// it, and no run starts after it.
+// Close cancels every running run and waits until each has been recorded as
+// finished, then stops the MCP servers kept for conversations. No run is
+// queued after it. Event streams end with it; those of queued runs, which
+// the next server takes up, end without the run's end.
 func (s *Server) Close() {
 	s.mu.Lock()
 	s.closed = true
@@ -424,18 +425,26 @@ func (s *Server) take(claimed store.ClaimedRun) {
 		s.finish(context.Background(), nil, claimed.ID, store.RunFailed, agent.Result{}, "the server lost the run")
 		return
 	}
-	var by cancelledBy
-	if errors.As(context.Cause(h.ctx), &by) {
-		s.finish(h.ctx, h, claimed.ID, store.RunCancelled, agent.Result{}, by.Error())
-		return
-	}
 	p, err := s.prepare(h, claimed)
 	if err != nil {
-		s.finish(h.ctx, h, claimed.ID, store.RunFailed, agent.Result{}, s.cfg.Resolved.Redactor.String(err.Error()))
+		// A run cancelled while it was queued, or while it was being
+		// prepared, fails to prepare, as its context is cancelled.
+		var by cancelledBy
+		switch {
+		case errors.As(context.Cause(h.ctx), &by):
+			s.finish(h.ctx, h, claimed.ID, store.RunCancelled, agent.Result{}, by.Error())
+		case s.ctx.Err() != nil:
+			s.finish(h.ctx, h, claimed.ID, store.RunFailed, agent.Result{}, errStopped)
+		default:
+			s.finish(h.ctx, h, claimed.ID, store.RunFailed, agent.Result{}, s.cfg.Resolved.Redactor.String(err.Error()))
+		}
 		return
 	}
 	s.execute(h.ctx, h, p)
 }
+
+// errStopped is how a run ends that the server stopped before it finished.
+const errStopped = "the server stopped before the run finished"
 
 // prepared is a run ready to execute.
 type prepared struct {
@@ -455,6 +464,9 @@ type prepared struct {
 // back the servers it took.
 func (s *Server) prepare(h *hub, claimed store.ClaimedRun) (prepared, error) {
 	ctx := h.ctx
+	if err := context.Cause(ctx); err != nil {
+		return prepared{}, err
+	}
 	stored, err := s.cfg.Store.Run(ctx, claimed.Workspace, claimed.ID)
 	if err != nil {
 		return prepared{}, err

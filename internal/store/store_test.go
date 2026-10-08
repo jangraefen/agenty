@@ -7,7 +7,9 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -461,6 +463,33 @@ func TestClaimRun_ConcurrentClaimsClaimEachRunOnce(t *testing.T) {
 		want[i] = fmt.Sprintf("r%02d", i)
 	}
 	assert.Equal(t, want, claimed, "every run is claimed, and once")
+}
+
+// TestClaimRun_SkipsARunAnotherClaimHolds: a claim never waits for another:
+// it takes the next queued run while the oldest is locked.
+func TestClaimRun_SkipsARunAnotherClaimHolds(t *testing.T) {
+	ctx := context.Background()
+	s, url := storetest.NewWithURL(t)
+	v, err := s.PutHarness(ctx, ws, notes())
+	require.NoError(t, err)
+	createRun(t, s, store.NewRun{ID: "r1", HarnessVersionID: v.ID, Input: "x", StartedBy: "alice"})
+	createRun(t, s, store.NewRun{ID: "r2", HarnessVersionID: v.ID, Input: "x", StartedBy: "alice"})
+	conn, err := pgx.Connect(ctx, url)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, conn.Close(ctx)) })
+	tx, err := conn.Begin(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, tx.Rollback(ctx)) })
+	_, err = tx.Exec(ctx, "SELECT id FROM runs WHERE id = 'r1' FOR NO KEY UPDATE")
+	require.NoError(t, err)
+	timeout, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	claimed, ok, err := s.ClaimRun(timeout)
+
+	require.NoError(t, err, "the claim does not wait for the lock")
+	require.True(t, ok)
+	assert.Equal(t, "r2", claimed.ID)
 }
 
 func TestCancelQueuedRun(t *testing.T) {

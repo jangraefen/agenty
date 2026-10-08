@@ -268,11 +268,7 @@ func (s *Store) CreateRun(ctx context.Context, r NewRun) (Run, error) {
 	case err != nil:
 		return Run{}, fmt.Errorf("store: run %s: %w", r.ID, err)
 	}
-	v, err := s.HarnessVersionByID(ctx, r.HarnessVersionID)
-	if err != nil {
-		return Run{}, err
-	}
-	return run(row, v.Harness.Name, int32(v.Version)), nil //nolint:gosec // G115: versions count a harness's changes.
+	return run(row.Run, row.Harness, row.HarnessVersion), nil
 }
 
 // ClaimedRun is a run a worker claimed, and its workspace.

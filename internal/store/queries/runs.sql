@@ -1,14 +1,16 @@
 -- name: InsertRun :one
 -- A run is stored as queued. A run that follows another joins its
 -- conversation; any other run starts one of its own. It is returned as
--- stored, before a worker may claim it.
+-- stored, before a worker may claim it, with its harness.
 INSERT INTO runs (id, harness_version_id, input, started_by, conversation_id, follows)
 VALUES (
     sqlc.arg(id), sqlc.arg(harness_version_id), sqlc.arg(input), sqlc.arg(started_by),
     COALESCE((SELECT f.conversation_id FROM runs f WHERE f.id = sqlc.narg(follows)), sqlc.arg(id)),
     sqlc.narg(follows)
 )
-RETURNING *;
+RETURNING sqlc.embed(runs),
+    (SELECT hv.name FROM harness_versions hv WHERE hv.id = runs.harness_version_id)::text AS harness,
+    (SELECT hv.version FROM harness_versions hv WHERE hv.id = runs.harness_version_id)::integer AS harness_version;
 
 -- name: FinishRun :execrows
 UPDATE runs
@@ -61,12 +63,12 @@ ORDER BY runs.created_at, runs.id;
 WITH claimed AS (
     UPDATE runs
     SET status = 'running'
-    WHERE id = (
+    WHERE status = 'queued' AND id = (
         SELECT q.id FROM runs q
         WHERE q.status = 'queued'
         ORDER BY q.created_at, q.id
         LIMIT 1
-        FOR UPDATE SKIP LOCKED)
+        FOR NO KEY UPDATE SKIP LOCKED)
     RETURNING runs.id, runs.harness_version_id
 )
 SELECT claimed.id, harness_versions.workspace

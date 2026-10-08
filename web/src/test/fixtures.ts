@@ -84,3 +84,20 @@ export function conversation(
     ...overrides,
   };
 }
+
+export function auditRun(overrides: Partial<Schemas["AuditRun"]> = {}): Schemas["AuditRun"] {
+  return {
+    id: "run-1",
+    conversation_id: "run-1",
+    workspace: "notes",
+    harness: "notes",
+    harness_version: 3,
+    started_by: "demo",
+    status: "succeeded",
+    steps: 2,
+    usage: { input_tokens: 0, output_tokens: 0, cache_write_tokens: 0, cache_read_tokens: 0 },
+    created_at: "2026-10-06T10:00:00Z",
+    finished_at: "2026-10-06T10:01:30Z",
+    ...overrides,
+  };
+}

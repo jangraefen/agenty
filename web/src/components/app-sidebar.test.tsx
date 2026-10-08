@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
-import { beforeEach, expect, test } from "vitest";
+import { act } from "react";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { apiUrl } from "@/config";
 import { conversation } from "@/test/fixtures";
 import { renderApp } from "@/test/render";
@@ -11,6 +12,10 @@ import {
   server,
   TOKEN,
 } from "@/test/server";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 beforeEach(() => {
   server.use(
@@ -148,4 +153,63 @@ test("signs out from the sidebar", async () => {
   expect(history.location.pathname).toBe("/sign-in");
   expect(session.token).toBeNull();
   expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
+});
+
+test("marks a chat that waits for approval", async () => {
+  server.use(
+    conversationsHandler({
+      "": {
+        conversations: [
+          conversation({ id: "c2", title: "write the notes", status: "waiting" }),
+          conversation({ id: "c1", title: "tidy my notes" }),
+        ],
+      },
+    }),
+  );
+  renderApp("/w/notes/harnesses", TOKEN);
+
+  const recent = await screen.findByRole("navigation", { name: "Recent chats" });
+  expect(
+    await within(recent).findByRole("link", {
+      name: "write the notes (waiting for approval)",
+    }),
+  ).toHaveAttribute("href", "/c/c2");
+  expect(within(recent).getByRole("link", { name: "tidy my notes" })).toBeInTheDocument();
+});
+
+test("offers the audit log to auditors only", async () => {
+  renderApp("/w/notes/harnesses", TOKEN);
+  await screen.findByRole("navigation", { name: "Manage" });
+  expect(screen.queryByRole("navigation", { name: "Compliance" })).not.toBeInTheDocument();
+});
+
+test("an auditor finds the audit log in the sidebar", async () => {
+  server.use(meHandler({ user: "demo", workspaces: ["notes"], auditor: true }));
+  renderApp("/w/notes/harnesses", TOKEN);
+
+  const compliance = await screen.findByRole("navigation", { name: "Compliance" });
+  expect(within(compliance).getByRole("link", { name: "Audit log" })).toHaveAttribute(
+    "href",
+    "/audit",
+  );
+});
+
+test("follows a running chat until it waits for approval", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  let status: "running" | "waiting" = "running";
+  server.use(
+    http.get(`${apiUrl}/v1/conversations`, () =>
+      HttpResponse.json({ conversations: [conversation({ title: "write the notes", status })] }),
+    ),
+  );
+  renderApp("/w/notes/harnesses", TOKEN);
+  const recent = await screen.findByRole("navigation", { name: "Recent chats" });
+  await within(recent).findByRole("link", { name: "write the notes" });
+
+  status = "waiting";
+  await act(() => vi.advanceTimersByTimeAsync(5000));
+
+  expect(
+    await within(recent).findByRole("link", { name: "write the notes (waiting for approval)" }),
+  ).toBeInTheDocument();
 });

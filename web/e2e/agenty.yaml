@@ -12,6 +12,7 @@ database:
 users:
   smoke:
     token: {env: AGENTY_E2E_TOKEN}
+    auditor: true
 workspaces:
   smoke:
     members: [smoke]

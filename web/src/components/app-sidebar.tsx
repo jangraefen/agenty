@@ -1,6 +1,14 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useRouteContext } from "@tanstack/react-router";
-import { LuBot, LuChevronsUpDown, LuLogOut, LuSquarePen, LuUser } from "react-icons/lu";
+import {
+  LuBot,
+  LuChevronsUpDown,
+  LuCircleAlert,
+  LuLogOut,
+  LuScrollText,
+  LuSquarePen,
+  LuUser,
+} from "react-icons/lu";
 import { recentChatsQuery } from "@/api/queries";
 import { ThemeMenu } from "@/components/theme-menu";
 import { Button } from "@/components/ui/button";
@@ -11,9 +19,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-const linkClass =
-  "rounded-md px-2 py-1.5 text-sm hover:bg-accent aria-[current=page]:bg-accent aria-[current=page]:font-medium";
-const itemClass = `flex items-center gap-2 ${linkClass}`;
+const itemClass =
+  "flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent aria-[current=page]:bg-accent aria-[current=page]:font-medium";
 
 // AppSidebar is beside every page of a signed-in user: a new chat, their
 // recent chats, the management of a workspace, and signing out.
@@ -39,6 +46,15 @@ export function AppSidebar() {
       </Link>
       <RecentChats />
       {workspace !== undefined && <Manage workspace={workspace} workspaces={me.workspaces} />}
+      {me.auditor && (
+        <nav aria-label="Compliance" className="grid gap-1">
+          <h2 className="px-2 text-xs font-medium text-muted-foreground">Compliance</h2>
+          <Link to="/audit" className={itemClass}>
+            <LuScrollText aria-hidden="true" className="size-4 shrink-0" />
+            Audit log
+          </Link>
+        </nav>
+      )}
       <div className="grid gap-2 border-t pt-3">
         <div className="flex items-center gap-2">
           <span className="flex min-w-0 flex-1 items-center gap-2 px-2 text-sm text-muted-foreground">
@@ -79,9 +95,18 @@ function RecentChats() {
               to="/c/$conversationId"
               params={{ conversationId: chat.id }}
               title={chat.title}
-              className={`block truncate ${linkClass}`}
+              className={itemClass}
             >
-              {chat.title}
+              <span className="truncate">{chat.title}</span>
+              {chat.status === "waiting" && (
+                <>
+                  <LuCircleAlert
+                    aria-hidden="true"
+                    className="ml-auto size-4 shrink-0 text-amber-500"
+                  />{" "}
+                  <span className="sr-only">(waiting for approval)</span>
+                </>
+              )}
             </Link>
           </li>
         ))}

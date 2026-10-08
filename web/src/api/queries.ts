@@ -55,6 +55,17 @@ export function recentChatsQuery(api: Api) {
     initialPageParam: "",
     getNextPageParam: (page) =>
       page.next === undefined || page.next === "" ? undefined : page.next,
+    // Statuses follow: soon while a chat's run is under way, slowly while one
+    // waits for an approval, which only expires on its own.
+    refetchInterval: (query) => {
+      const statuses = query.state.data?.pages.flatMap((page) =>
+        page.conversations.map((chat) => chat.status),
+      );
+      if (statuses?.some((status) => status === "queued" || status === "running")) {
+        return 5000;
+      }
+      return statuses?.includes("waiting") ? 60_000 : false;
+    },
   });
 }
 
@@ -65,6 +76,37 @@ export function conversationSummaryQuery(api: Api, id: string) {
     queryFn: () => unwrap(api.GET("/v1/conversations/{id}", { params: { path: { id } } })),
     // A conversation stays in its workspace, and its title is its first input.
     staleTime: Number.POSITIVE_INFINITY,
+  });
+}
+
+export interface AuditFilters {
+  workspace?: string;
+  harness?: string;
+  started_by?: string;
+  status?: RunStatus;
+}
+
+// The runs of every workspace, newest first, a page at a time, for auditors.
+export function auditRunsQuery(api: Api, filters: AuditFilters) {
+  return infiniteQueryOptions({
+    queryKey: ["audit", "runs", filters],
+    queryFn: ({ pageParam }) =>
+      unwrap(
+        api.GET("/v1/audit/runs", {
+          params: { query: { ...filters, ...(pageParam === "" ? {} : { before: pageParam }) } },
+        }),
+      ),
+    initialPageParam: "",
+    getNextPageParam: (page) =>
+      page.next === undefined || page.next === "" ? undefined : page.next,
+  });
+}
+
+// A run of any workspace with its audit records, for auditors.
+export function auditRunQuery(api: Api, id: string) {
+  return queryOptions({
+    queryKey: ["audit", "run", id],
+    queryFn: () => unwrap(api.GET("/v1/audit/runs/{id}", { params: { path: { id } } })),
   });
 }
 

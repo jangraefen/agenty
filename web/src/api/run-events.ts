@@ -51,6 +51,8 @@ export function runEventsQuery(api: Api, workspace: string, id: string) {
             }
             case "approval":
               invalidate(approvals);
+              // The run waits: its chat is marked in the recent chats.
+              invalidate(recentChatsKey());
               break;
             case "finished": {
               const { queryKey } = runQuery(api, workspace, id);

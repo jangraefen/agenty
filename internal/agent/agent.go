@@ -167,6 +167,12 @@ func (a *Agent) Start() *Run {
 	return &Run{agent: a, gateway: a.gateway.Start()}
 }
 
+// StartAs is Start for a run whose ID was minted before, such as a run
+// stored before it executes.
+func (a *Agent) StartAs(id string) *Run {
+	return &Run{agent: a, gateway: a.gateway.StartAs(id)}
+}
+
 // Run is one run of an agent, in a gateway run of its own.
 type Run struct {
 	agent    *Agent

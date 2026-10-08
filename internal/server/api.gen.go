@@ -44,7 +44,7 @@ type ServerInterface interface {
 	// GetRunAudit A run's audit records, in the order they were recorded
 	// (GET /v1/workspaces/{workspace}/runs/{id}/audit)
 	GetRunAudit(c *gin.Context, workspace Workspace, id RunID)
-	// CancelRun Cancel a running run
+	// CancelRun Cancel a queued or running run
 	// (POST /v1/workspaces/{workspace}/runs/{id}/cancel)
 	CancelRun(c *gin.Context, workspace Workspace, id RunID)
 	// GetRunConversation The runs of the conversation a run belongs to, oldest first

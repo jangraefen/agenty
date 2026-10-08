@@ -78,7 +78,11 @@ export interface paths {
         /** The runs, newest first, a page at a time */
         get: operations["listRuns"];
         put?: never;
-        /** Start a run of a harness's latest version */
+        /**
+         * Start a run of a harness's latest version
+         * @description Queues the run, which starts once a worker is free; its events tell
+         *     when. A run whose MCP servers cannot serve its grants fails.
+         */
         post: operations["createRun"];
         delete?: never;
         options?: never;
@@ -168,9 +172,9 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Cancel a running run
-         * @description The run ends as soon as what it is doing stops, as cancelled by the
-         *     user; its events tell when.
+         * Cancel a queued or running run
+         * @description A queued run ends at once; a running one as soon as what it is doing
+         *     stops. Either ends as cancelled by the user; its events tell when.
          */
         post: operations["cancelRun"];
         delete?: never;
@@ -351,7 +355,7 @@ export interface components {
             input: string;
         };
         /** @enum {string} */
-        RunStatus: "running" | "succeeded" | "failed" | "cancelled";
+        RunStatus: "queued" | "running" | "succeeded" | "failed" | "cancelled";
         Run: {
             id: string;
             /**
@@ -383,7 +387,7 @@ export interface components {
             created_at: string;
             /**
              * Format: date-time
-             * @description Unset while the run is running.
+             * @description Unset until the run has finished.
              */
             finished_at?: string;
         };
@@ -666,7 +670,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The started run. */
+            /** @description The run, queued. */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -718,7 +722,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The started run. */
+            /** @description The run, queued. */
             201: {
                 headers: {
                     [name: string]: unknown;

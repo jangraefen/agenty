@@ -11,6 +11,56 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const cancelQueuedRun = `-- name: CancelQueuedRun :execrows
+UPDATE runs
+SET status = 'cancelled', error = $2, finished_at = now()
+WHERE id = $1 AND status = 'queued'
+`
+
+type CancelQueuedRunParams struct {
+	ID    string
+	Error string
+}
+
+func (q *Queries) CancelQueuedRun(ctx context.Context, arg CancelQueuedRunParams) (int64, error) {
+	result, err := q.db.Exec(ctx, cancelQueuedRun, arg.ID, arg.Error)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const claimRun = `-- name: ClaimRun :one
+WITH claimed AS (
+    UPDATE runs
+    SET status = 'running'
+    WHERE id = (
+        SELECT q.id FROM runs q
+        WHERE q.status = 'queued'
+        ORDER BY q.created_at, q.id
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED)
+    RETURNING runs.id, runs.harness_version_id
+)
+SELECT claimed.id, harness_versions.workspace
+FROM claimed
+JOIN harness_versions ON harness_versions.id = claimed.harness_version_id
+`
+
+type ClaimRunRow struct {
+	ID        string
+	Workspace string
+}
+
+// Marks the oldest queued run as running and returns it with its workspace.
+// Concurrent claims skip each other's rows, so each run is claimed once.
+func (q *Queries) ClaimRun(ctx context.Context) (ClaimRunRow, error) {
+	row := q.db.QueryRow(ctx, claimRun)
+	var i ClaimRunRow
+	err := row.Scan(&i.ID, &i.Workspace)
+	return i, err
+}
+
 const conversationRuns = `-- name: ConversationRuns :many
 SELECT runs.id, runs.harness_version_id, runs.input, runs.status, runs.output, runs.steps, runs.error, runs.created_at, runs.finished_at, runs.started_by, runs.conversation_id, runs.follows, runs.prompt_digest, runs.history_digest, runs.input_tokens, runs.output_tokens, runs.cache_write_tokens, runs.cache_read_tokens, harness_versions.name AS harness, harness_versions.version AS harness_version
 FROM runs
@@ -163,13 +213,14 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (GetRunRow, erro
 	return i, err
 }
 
-const insertRun = `-- name: InsertRun :exec
-INSERT INTO runs (id, harness_version_id, input, started_by, prompt_digest, history_digest, conversation_id, follows)
+const insertRun = `-- name: InsertRun :one
+INSERT INTO runs (id, harness_version_id, input, started_by, conversation_id, follows)
 VALUES (
-    $1, $2, $3, $4, $5, $6,
-    COALESCE((SELECT f.conversation_id FROM runs f WHERE f.id = $7), $1),
-    $7
+    $1, $2, $3, $4,
+    COALESCE((SELECT f.conversation_id FROM runs f WHERE f.id = $5), $1),
+    $5
 )
+RETURNING id, harness_version_id, input, status, output, steps, error, created_at, finished_at, started_by, conversation_id, follows, prompt_digest, history_digest, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens
 `
 
 type InsertRunParams struct {
@@ -177,24 +228,42 @@ type InsertRunParams struct {
 	HarnessVersionID int64
 	Input            string
 	StartedBy        string
-	PromptDigest     string
-	HistoryDigest    string
 	Follows          pgtype.Text
 }
 
-// A run that follows another joins its conversation; any other run starts
-// one of its own.
-func (q *Queries) InsertRun(ctx context.Context, arg InsertRunParams) error {
-	_, err := q.db.Exec(ctx, insertRun,
+// A run is stored as queued. A run that follows another joins its
+// conversation; any other run starts one of its own. It is returned as
+// stored, before a worker may claim it.
+func (q *Queries) InsertRun(ctx context.Context, arg InsertRunParams) (Run, error) {
+	row := q.db.QueryRow(ctx, insertRun,
 		arg.ID,
 		arg.HarnessVersionID,
 		arg.Input,
 		arg.StartedBy,
-		arg.PromptDigest,
-		arg.HistoryDigest,
 		arg.Follows,
 	)
-	return err
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.HarnessVersionID,
+		&i.Input,
+		&i.Status,
+		&i.Output,
+		&i.Steps,
+		&i.Error,
+		&i.CreatedAt,
+		&i.FinishedAt,
+		&i.StartedBy,
+		&i.ConversationID,
+		&i.Follows,
+		&i.PromptDigest,
+		&i.HistoryDigest,
+		&i.InputTokens,
+		&i.OutputTokens,
+		&i.CacheWriteTokens,
+		&i.CacheReadTokens,
+	)
+	return i, err
 }
 
 const listRuns = `-- name: ListRuns :many
@@ -275,4 +344,59 @@ func (q *Queries) ListRuns(ctx context.Context, arg ListRunsParams) ([]ListRunsR
 		return nil, err
 	}
 	return items, nil
+}
+
+const queuedRuns = `-- name: QueuedRuns :many
+SELECT runs.id, harness_versions.workspace, harness_versions.name AS harness
+FROM runs
+JOIN harness_versions ON harness_versions.id = runs.harness_version_id
+WHERE runs.status = 'queued'
+ORDER BY runs.created_at, runs.id
+`
+
+type QueuedRunsRow struct {
+	ID        string
+	Workspace string
+	Harness   string
+}
+
+// The queued runs, oldest first, with their workspaces and harnesses.
+func (q *Queries) QueuedRuns(ctx context.Context) ([]QueuedRunsRow, error) {
+	rows, err := q.db.Query(ctx, queuedRuns)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []QueuedRunsRow
+	for rows.Next() {
+		var i QueuedRunsRow
+		if err := rows.Scan(&i.ID, &i.Workspace, &i.Harness); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const setRunDigests = `-- name: SetRunDigests :execrows
+UPDATE runs
+SET prompt_digest = $2, history_digest = $3
+WHERE id = $1 AND status = 'running'
+`
+
+type SetRunDigestsParams struct {
+	ID            string
+	PromptDigest  string
+	HistoryDigest string
+}
+
+func (q *Queries) SetRunDigests(ctx context.Context, arg SetRunDigestsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setRunDigests, arg.ID, arg.PromptDigest, arg.HistoryDigest)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

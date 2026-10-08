@@ -3,7 +3,18 @@ import { type Api, type Schemas, unwrap } from "./client";
 
 export type RunStatus = Schemas["RunStatus"];
 
-export const runStatuses: readonly RunStatus[] = ["running", "succeeded", "failed", "cancelled"];
+export const runStatuses: readonly RunStatus[] = [
+  "queued",
+  "running",
+  "succeeded",
+  "failed",
+  "cancelled",
+];
+
+/** Whether a run with this status has yet to end: queued or running. */
+export function unfinished(status: RunStatus): boolean {
+  return status === "queued" || status === "running";
+}
 
 export function isRunStatus(value: unknown): value is RunStatus {
   return runStatuses.some((status) => status === value);
@@ -52,7 +63,7 @@ export function runsQuery(api: Api, workspace: string, filters: RunFilters) {
     getNextPageParam: (page) =>
       page.next === undefined || page.next === "" ? undefined : page.next,
     refetchInterval: (query) =>
-      query.state.data?.pages.some((page) => page.runs.some((run) => run.status === "running"))
+      query.state.data?.pages.some((page) => page.runs.some((run) => unfinished(run.status)))
         ? 5000
         : false,
   });

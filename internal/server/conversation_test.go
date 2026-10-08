@@ -180,7 +180,7 @@ func TestFollowUp_Rejects(t *testing.T) {
 		{"no input", home + "/runs/" + followed.ID + "/follow-up", api.FollowUp{}, http.StatusBadRequest, "input is required"},
 		{"unknown field", home + "/runs/" + followed.ID + "/follow-up", `{"input":"x","bogus":1}`, http.StatusBadRequest, "bogus"},
 		{"a run already followed up", home + "/runs/" + done.ID + "/follow-up", api.FollowUp{Input: "x"}, http.StatusConflict, "already followed"},
-		{"a running run", home + "/runs/" + running.ID + "/follow-up", api.FollowUp{Input: "x"}, http.StatusConflict, "still running"},
+		{"a running run", home + "/runs/" + running.ID + "/follow-up", api.FollowUp{Input: "x"}, http.StatusConflict, "has not finished"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -457,7 +457,7 @@ func TestInvariant_InterruptedCallsAreNotRepeated(t *testing.T) {
 	ctx := context.Background()
 	v, err := f.store.Harness(ctx, "home", "notes")
 	require.NoError(t, err)
-	require.NoError(t, f.store.CreateRun(ctx, store.NewRun{ID: "crashed", HarnessVersionID: v.ID, Input: "write my notes", StartedBy: "alice"}))
+	f.storeRunning(t, store.NewRun{ID: "crashed", HarnessVersionID: v.ID, Input: "write my notes", StartedBy: "alice"})
 	calls := []model.ToolCall{call("c1", "files_write", `{"path":"notes.md"}`), call("c2", "files_read", `{"path":"notes.md"}`)}
 	require.NoError(t, f.store.AppendMessage(ctx, "crashed", store.NewMessage{Position: 0, Message: model.Message{Role: model.RoleUser, Text: "write my notes"}}))
 	require.NoError(t, f.store.AppendMessage(ctx, "crashed", store.NewMessage{Position: 1, Message: model.Message{Role: model.RoleAssistant, ToolCalls: calls}}))
@@ -536,9 +536,9 @@ func TestFollowUp_TellsTheModelWhatAServerLost(t *testing.T) {
 	assert.Equal(t, "and sort them", stored.Input, "the run's input is the user's")
 }
 
-// TestFollowUp_ARefusedFollowUpKeepsTheConversationsServers: a follow-up
-// that cannot run gives the conversation's servers back.
-func TestFollowUp_ARefusedFollowUpKeepsTheConversationsServers(t *testing.T) {
+// TestFollowUp_AFollowUpThatCannotRunKeepsTheConversationsServers: a
+// follow-up that fails before it runs gives the conversation's servers back.
+func TestFollowUp_AFollowUpThatCannotRunKeepsTheConversationsServers(t *testing.T) {
 	f := newFixture(t, options{})
 	f.putNotes(t)
 	f.script(modeltest.Reply("ok"))
@@ -546,13 +546,13 @@ func TestFollowUp_ARefusedFollowUpKeepsTheConversationsServers(t *testing.T) {
 	f.finish(t, first.ID)
 	f.files.Tools = []toolgateway.Tool{f.read}
 
-	var refused api.Error
-	require.Equal(t, http.StatusUnprocessableEntity, f.do(t, http.MethodPost, home+"/runs/"+first.ID+"/follow-up", api.FollowUp{Input: "two"}, &refused))
+	failed := f.followUp(t, aliceToken, first.ID, "two")
+	require.Equal(t, api.RunStatusFailed, f.finish(t, failed.ID).Status)
 
 	assert.Zero(t, f.files.ClosedCount(), "the conversation's server is still its own")
 	f.files.Tools = []toolgateway.Tool{f.read, f.write}
 	f.script(modeltest.Reply("ok"))
-	second := f.followUp(t, aliceToken, first.ID, "two")
+	second := f.followUp(t, aliceToken, failed.ID, "two")
 	f.finish(t, second.ID)
 	assert.Equal(t, []string{"files"}, f.files.StartedAs)
 }

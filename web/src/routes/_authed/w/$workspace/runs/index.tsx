@@ -205,7 +205,7 @@ function Runs() {
                       {run.finished_at === undefined ? (
                         <>
                           <span aria-hidden="true">—</span>
-                          <span className="sr-only">still running</span>
+                          <span className="sr-only">not finished</span>
                         </>
                       ) : (
                         formatDuration(run.created_at, run.finished_at)

@@ -14,6 +14,7 @@ import {
   conversationsKey,
   runQuery,
   runsKey,
+  unfinished,
 } from "@/api/queries";
 import { runEventsQuery } from "@/api/run-events";
 import { AnswerNotice, type AnswerOutcome } from "@/components/answer-notice";
@@ -93,7 +94,7 @@ function RunNotFound() {
 function Header({ run, latest }: { run: Run; latest: Run }) {
   const { workspace } = Route.useParams();
   const { api } = Route.useRouteContext();
-  const running = latest.status === "running";
+  const running = unfinished(latest.status);
   const cancel = useMutation({
     mutationFn: () =>
       unwrap(
@@ -151,7 +152,7 @@ function Chat({
 }) {
   const { workspace } = Route.useParams();
   const { api } = Route.useRouteContext();
-  const running = latest.status === "running";
+  const running = unfinished(latest.status);
   const approvals = useQuery({ ...approvalsQuery(api, workspace), enabled: running });
   const waiting = running
     ? (approvals.data?.filter((request) => request.run_id === latest.id) ?? [])
@@ -234,7 +235,7 @@ function Composer({ runs, latest, ready }: { runs: Run[]; latest: Run; ready: bo
     },
   });
 
-  const waiting = latest.status === "running";
+  const waiting = unfinished(latest.status);
   const blocked = waiting || !ready || reply.isPending;
 
   function send() {

@@ -160,6 +160,35 @@ func TestStart_EachRunHasItsOwnID(t *testing.T) {
 	}
 }
 
+// TestStartAs_RunsUnderTheGivenID: a run stored before it executes, such as
+// a queued one, keeps its stored ID in the gateway.
+func TestStartAs_RunsUnderTheGivenID(t *testing.T) {
+	audit := &gatewaytest.Audit{}
+	policy := &gatewaytest.Policy{}
+	gw, err := toolgateway.New(context.Background(), toolgateway.Config{
+		Redactor:     gatewaytest.NoSecrets,
+		MaxToolCalls: 100,
+		Policy:       policy,
+		Granted:      []string{"tickets_read"},
+		Servers:      gatewaytest.Servers(&gatewaytest.Tool{Name: "tickets_read"}),
+		Audit:        audit,
+	})
+	require.NoError(t, err)
+	run := gw.StartAs("r1")
+
+	_, err = run.Call(context.Background(), toolgateway.ToolCall{Name: "tickets_read"})
+
+	require.NoError(t, err)
+	assert.Equal(t, "r1", run.ID())
+	require.NotEmpty(t, audit.Records)
+	for _, r := range audit.Records {
+		assert.Equal(t, "r1", r.RunID)
+	}
+	require.Len(t, policy.Inputs, 1)
+	assert.Equal(t, "r1", policy.Inputs[0].RunID)
+	assert.Zero(t, policy.Inputs[0].Calls.Total)
+}
+
 func TestStart_EachRunHasItsOwnLimitAndCounts(t *testing.T) {
 	policy := &gatewaytest.Policy{}
 	read := &gatewaytest.Tool{Name: "tickets_read"}

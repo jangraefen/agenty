@@ -194,12 +194,19 @@ func harnessVersion(row db.HarnessVersion) (HarnessVersion, error) {
 type RunStatus string
 
 const (
+	// RunQueued is a run waiting for a worker.
+	RunQueued    RunStatus = "queued"
 	RunRunning   RunStatus = "running"
 	RunSucceeded RunStatus = "succeeded"
 	RunFailed    RunStatus = "failed"
 	// RunCancelled is a run a user cancelled.
 	RunCancelled RunStatus = "cancelled"
 )
+
+// Finished reports whether the run has ended, neither queued nor running.
+func (r Run) Finished() bool {
+	return r.Status != RunQueued && r.Status != RunRunning
+}
 
 // Run is a stored run.
 type Run struct {
@@ -216,7 +223,7 @@ type Run struct {
 	Steps     int
 	Error     string
 	CreatedAt time.Time
-	// FinishedAt is nil while the run is running.
+	// FinishedAt is nil until the run has finished.
 	FinishedAt *time.Time
 	// ConversationID names the conversation the run belongs to by the ID of
 	// its first run, which may be this one.
@@ -243,26 +250,86 @@ type NewRun struct {
 	// Follows, when set, is the ID of the run whose conversation the run
 	// continues.
 	Follows string
-	// PromptDigest and HistoryDigest identify what the run sends the model;
-	// see Run.
-	PromptDigest, HistoryDigest string
 }
 
 // uniqueViolation is PostgreSQL's error code for a violated unique constraint.
 const uniqueViolation = "23505"
 
-// CreateRun stores a new running run. It belongs to the workspace of its
-// harness version. A run that follows another joins its conversation; a run
-// that another run already follows returns ErrConflict, so a conversation
-// never branches.
-func (s *Store) CreateRun(ctx context.Context, r NewRun) error {
-	err := s.queries.InsertRun(ctx, db.InsertRunParams{ID: r.ID, HarnessVersionID: r.HarnessVersionID, Input: r.Input, StartedBy: r.StartedBy, PromptDigest: r.PromptDigest, HistoryDigest: r.HistoryDigest, Follows: optional(r.Follows)})
+// CreateRun stores a new queued run and returns it as stored, before a
+// worker may claim it. It belongs to the workspace of its harness version. A
+// run that follows another joins its conversation; a run that another run
+// already follows returns ErrConflict, so a conversation never branches.
+func (s *Store) CreateRun(ctx context.Context, r NewRun) (Run, error) {
+	row, err := s.queries.InsertRun(ctx, db.InsertRunParams{ID: r.ID, HarnessVersionID: r.HarnessVersionID, Input: r.Input, StartedBy: r.StartedBy, Follows: optional(r.Follows)})
 	var pgErr *pgconn.PgError
 	switch {
 	case errors.As(err, &pgErr) && pgErr.Code == uniqueViolation && pgErr.ConstraintName == "runs_follows_key":
-		return fmt.Errorf("store: run %s: run %s is already followed: %w", r.ID, r.Follows, ErrConflict)
+		return Run{}, fmt.Errorf("store: run %s: run %s is already followed: %w", r.ID, r.Follows, ErrConflict)
 	case err != nil:
-		return fmt.Errorf("store: run %s: %w", r.ID, err)
+		return Run{}, fmt.Errorf("store: run %s: %w", r.ID, err)
+	}
+	v, err := s.HarnessVersionByID(ctx, r.HarnessVersionID)
+	if err != nil {
+		return Run{}, err
+	}
+	return run(row, v.Harness.Name, int32(v.Version)), nil //nolint:gosec // G115: versions count a harness's changes.
+}
+
+// ClaimedRun is a run a worker claimed, and its workspace.
+type ClaimedRun struct {
+	ID, Workspace string
+}
+
+// ClaimRun marks the oldest queued run as running and returns it. It reports
+// false if no run is queued. Each run is claimed once, also by concurrent
+// claims.
+func (s *Store) ClaimRun(ctx context.Context) (ClaimedRun, bool, error) {
+	row, err := s.queries.ClaimRun(ctx)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return ClaimedRun{}, false, nil
+	case err != nil:
+		return ClaimedRun{}, false, fmt.Errorf("store: claim a run: %w", err)
+	}
+	return ClaimedRun{ID: row.ID, Workspace: row.Workspace}, true, nil
+}
+
+// QueuedRun is a queued run, with its workspace and harness.
+type QueuedRun struct {
+	ID, Workspace, Harness string
+}
+
+// QueuedRuns returns the queued runs, oldest first.
+func (s *Store) QueuedRuns(ctx context.Context) ([]QueuedRun, error) {
+	rows, err := s.queries.QueuedRuns(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("store: queued runs: %w", err)
+	}
+	out := make([]QueuedRun, len(rows))
+	for i, r := range rows {
+		out[i] = QueuedRun{ID: r.ID, Workspace: r.Workspace, Harness: r.Harness}
+	}
+	return out, nil
+}
+
+// CancelQueuedRun records a queued run as cancelled, giving why. It reports
+// false if the run is not queued, such as one a worker has claimed.
+func (s *Store) CancelQueuedRun(ctx context.Context, id, why string) (bool, error) {
+	n, err := s.queries.CancelQueuedRun(ctx, db.CancelQueuedRunParams{ID: id, Error: why})
+	if err != nil {
+		return false, fmt.Errorf("store: run %s: %w", id, err)
+	}
+	return n > 0, nil
+}
+
+// SetRunDigests records what a running run sends the model; see Run.
+func (s *Store) SetRunDigests(ctx context.Context, id, prompt, history string) error {
+	n, err := s.queries.SetRunDigests(ctx, db.SetRunDigestsParams{ID: id, PromptDigest: prompt, HistoryDigest: history})
+	switch {
+	case err != nil:
+		return fmt.Errorf("store: run %s: %w", id, err)
+	case n == 0:
+		return fmt.Errorf("store: running run %s: %w", id, ErrNotFound)
 	}
 	return nil
 }
@@ -270,7 +337,7 @@ func (s *Store) CreateRun(ctx context.Context, r NewRun) error {
 // FinishRun records the end of a running run. Finishing a run that does not
 // exist or has already finished returns ErrNotFound.
 func (s *Store) FinishRun(ctx context.Context, id string, status RunStatus, output string, steps int, runErr string) error {
-	if status == RunRunning {
+	if status == RunRunning || status == RunQueued {
 		return fmt.Errorf("store: run %s: cannot finish as %s", id, status)
 	}
 	n, err := s.queries.FinishRun(ctx, db.FinishRunParams{ID: id, Status: string(status), Output: output, Steps: int32(steps), Error: runErr}) //nolint:gosec // G115: steps is bounded by the harness's max_steps.

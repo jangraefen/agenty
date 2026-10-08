@@ -72,6 +72,8 @@ type options struct {
 	// models.
 	configuredModel bool
 	approvalTimeout time.Duration
+	// workers is how many runs execute at once; unset means the default.
+	workers int
 	// serverIdleTimeout is the files server's idle timeout; unset means the
 	// default.
 	serverIdleTimeout *time.Duration
@@ -121,6 +123,7 @@ func (f *fixture) serve(t *testing.T, opts options) {
 				"work": {Members: []string{"bob"}},
 			},
 			CORS:      config.CORS{Origins: []string{origin}},
+			Runs:      config.Runs{Workers: opts.workers},
 			Approvals: config.Approvals{Timeout: opts.approvalTimeout},
 		},
 		Resolved: &config.Resolved{Redactor: redactor, UserTokens: userTokens},
@@ -147,6 +150,19 @@ func newHTTP(t *testing.T, srv *server.Server) *httptest.Server {
 		srv.Close()
 	})
 	return h
+}
+
+// storeRunning stores r as a run that a worker has claimed but no server
+// runs, as a server that stopped leaves it.
+func (f *fixture) storeRunning(t *testing.T, r store.NewRun) {
+	t.Helper()
+	ctx := context.Background()
+	_, err := f.store.CreateRun(ctx, r)
+	require.NoError(t, err)
+	claimed, ok, err := f.store.ClaimRun(ctx)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, r.ID, claimed.ID)
 }
 
 // script queues a scripted model for the next run.

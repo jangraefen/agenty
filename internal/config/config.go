@@ -39,6 +39,7 @@ type Config struct {
 	Workspaces map[string]Workspace `yaml:"workspaces"`
 	// CORS lists the web origins whose pages may call the API.
 	CORS      CORS      `yaml:"cors"`
+	Runs      Runs      `yaml:"runs"`
 	Approvals Approvals `yaml:"approvals"`
 	// Policy is central policy: Rego modules in package agenty.tool. Load
 	// reads them from the files the config names.
@@ -122,6 +123,24 @@ type Workspace struct {
 type CORS struct {
 	// Origins are written as browsers send them: scheme://host[:port].
 	Origins []string `yaml:"origins"`
+}
+
+// Runs configures how runs execute.
+type Runs struct {
+	// Workers is how many runs execute at once; the others wait, queued.
+	// Zero means DefaultRunWorkers.
+	Workers int `yaml:"workers"`
+}
+
+// DefaultRunWorkers is the number of workers when none is configured.
+const DefaultRunWorkers = 16
+
+// WorkersOrDefault returns the number of workers.
+func (r Runs) WorkersOrDefault() int {
+	if r.Workers == 0 {
+		return DefaultRunWorkers
+	}
+	return r.Workers
 }
 
 // Approvals configures approval requests.
@@ -277,6 +296,9 @@ func (f *file) validate() error {
 				add(field, fmt.Sprintf("%q is not a configured user", member))
 			}
 		}
+	}
+	if f.Runs.Workers < 0 {
+		add("runs.workers", "must not be negative")
 	}
 	if f.Approvals.Timeout < 0 {
 		add("approvals.timeout", "must not be negative")

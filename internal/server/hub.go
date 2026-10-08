@@ -24,15 +24,18 @@ type event struct {
 	data any
 }
 
-// hub holds the events of one running run, for any number of subscribers,
-// and the approvals the run is waiting for. It is also the run's approver.
+// hub holds the events of one queued or running run, for any number of
+// subscribers, and the approvals the run is waiting for. It is also the
+// run's approver.
 type hub struct {
 	workspace, harness string
 	// runID is set once the run has an ID, before it executes.
 	runID string
 	// timeout is how long an approval request waits for an answer.
 	timeout time.Duration
-	// cancel cancels the run, with the cause recorded as its end.
+	// ctx is the run's context, and cancel cancels it, with the cause
+	// recorded as the run's end.
+	ctx    context.Context
 	cancel context.CancelCauseFunc
 
 	mu       sync.Mutex
@@ -63,6 +66,19 @@ func (h *hub) publish(e event) {
 	}
 	h.events = append(h.events, e)
 	h.finished = e.name == api.EventFinished
+	close(h.changed)
+	h.changed = make(chan struct{})
+}
+
+// stop ends the hub's event streams without an end: the run is left to
+// another server.
+func (h *hub) stop() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.finished {
+		return
+	}
+	h.finished = true
 	close(h.changed)
 	h.changed = make(chan struct{})
 }

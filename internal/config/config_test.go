@@ -48,6 +48,8 @@ func TestLoad_Valid(t *testing.T) {
 	}, got.Workspaces)
 	assert.Equal(t, config.CORS{Origins: []string{"http://localhost:5173"}}, got.CORS)
 	assert.Equal(t, 15*time.Minute, got.Approvals.Timeout)
+	assert.Equal(t, 4, got.Runs.WorkersOrDefault())
+	assert.Equal(t, config.DefaultRunWorkers, config.Runs{}.WorkersOrDefault())
 	require.Len(t, got.Policy, 1)
 	assert.Equal(t, "policies/central.rego", got.Policy[0].Name)
 	assert.Contains(t, got.Policy[0].Source, "writes need a human", "policy files are read relative to the config file")
@@ -113,6 +115,7 @@ func TestLoad_InvalidFields(t *testing.T) {
 		{"origin without a scheme", provider + "cors: {origins: [localhost:5173]}", []string{"cors.origins[0]"}},
 		{"wildcard origin", provider + "cors: {origins: [\"*\"]}", []string{"cors.origins[0]"}},
 		{"negative approval timeout", provider + "approvals: {timeout: -1m}", []string{"approvals.timeout"}},
+		{"negative workers", provider + "runs: {workers: -1}", []string{"runs.workers"}},
 		{"origin with another scheme", provider + "cors: {origins: [\"ftp://localhost\"]}", []string{"cors.origins[0]"}},
 	}
 	for _, tt := range tests {

@@ -21,6 +21,7 @@ updates:
       go:
         patterns: ["*"]
 
+  # Major versions come one pull request each, as they may need changes.
   - package-ecosystem: npm
     directory: /web
     schedule:
@@ -30,3 +31,9 @@ updates:
     groups:
       web:
         patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      # openapi-typescript generates code with TypeScript 6's JavaScript
+      # API (see pnpm-workspace.yaml).
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]

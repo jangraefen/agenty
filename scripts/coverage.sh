@@ -6,7 +6,7 @@ set -eu
 dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
 for pkg in toolgateway policy secret; do
-  go test -coverprofile="$dir/$pkg.out" "./internal/$pkg/" >/dev/null
+  go test -coverprofile="$dir/$pkg.out" "./internal/$pkg/"
   total=$(go tool cover -func="$dir/$pkg.out" | awk '/^total:/ {print $3}')
   echo "$pkg coverage: $total"
   [ "$total" = "100.0%" ] || exit 1

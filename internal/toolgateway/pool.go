@@ -49,7 +49,6 @@ func NewPool(idleTimeout map[string]time.Duration, logger *slog.Logger) *Pool {
 }
 
 // Lease returns a lease on the servers of conversation, for one run of it.
-// A run that starts a conversation has none yet: conversation is empty.
 func (p *Pool) Lease(conversation string, servers map[string]ToolServer) *Lease {
 	l := &Lease{pool: p, conversation: conversation, servers: map[string]ToolServer{}, held: map[string]ToolSession{}, taken: map[string]bool{}}
 	for name, srv := range servers {
@@ -60,9 +59,6 @@ func (p *Pool) Lease(conversation string, servers map[string]ToolServer) *Lease 
 
 // take removes the kept server name of conversation from the pool.
 func (p *Pool) take(conversation, name string) ToolSession {
-	if conversation == "" {
-		return nil
-	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	key := poolKey{conversation, name}
@@ -76,15 +72,15 @@ func (p *Pool) take(conversation, name string) ToolSession {
 }
 
 // keep keeps session as the idle server name of conversation, and stops it
-// once idle for its timeout. What was kept under that name before is stopped,
-// unless returning: then session, taken by a run that did not go ahead, is
-// older than what another run kept since, and is stopped instead. A closed
-// pool, or a server without idle timeout, stops session at once.
-func (p *Pool) keep(conversation, name string, session ToolSession, returning bool) error {
+// once idle for its timeout. A conversation has one run at a time, so nothing
+// else is kept under that name; should something be, it is stopped, not
+// leaked. A closed pool, or a server without idle timeout, stops session at
+// once.
+func (p *Pool) keep(conversation, name string, session ToolSession) error {
 	timeout := p.idleTimeout[name]
 	key := poolKey{conversation, name}
 	p.mu.Lock()
-	if p.closed || timeout <= 0 || (returning && p.idle[key] != nil) {
+	if p.closed || timeout <= 0 {
 		p.mu.Unlock()
 		return closeSession(name, session)
 	}
@@ -175,52 +171,46 @@ func (l *Lease) Fresh() []string {
 }
 
 // Keep hands the servers the gateway stopped back to the pool, as the
-// servers of conversation, which names the run's conversation now that it
-// has one. Errors stopping servers the pool does not keep are returned.
-func (l *Lease) Keep(conversation string) error {
-	var errs []error
-	for name, session := range l.release() {
-		errs = append(errs, l.pool.keep(conversation, name, session, false))
-	}
-	return errors.Join(errs...)
+// servers of the lease's conversation. Errors stopping servers the pool does
+// not keep are returned.
+func (l *Lease) Keep() error {
+	return l.keepIf(func(string) bool { return true })
 }
 
 // Return gives the conversation back the servers the lease took from the
-// pool and stops those it started, for a run that does not go ahead. It never
-// replaces what another run of the conversation kept since: a taken server
-// the conversation has a newer one of is stopped.
+// pool and stops those it started, for a run that does not go ahead: its
+// next run starts them anew, and learns that it did.
 func (l *Lease) Return() error {
 	l.mu.Lock()
 	taken := maps.Clone(l.taken)
 	l.mu.Unlock()
-	var errs []error
-	for name, session := range l.release() {
-		if taken[name] {
-			errs = append(errs, l.pool.keep(l.conversation, name, session, true))
-		} else {
-			errs = append(errs, closeSession(name, session))
-		}
-	}
-	return errors.Join(errs...)
+	return l.keepIf(func(name string) bool { return taken[name] })
 }
 
 // Close stops the servers the gateway stopped, for a run whose servers
 // cannot be kept.
 func (l *Lease) Close() error {
-	var errs []error
-	for name, session := range l.release() {
-		errs = append(errs, closeSession(name, session))
-	}
-	return errors.Join(errs...)
+	return l.keepIf(func(string) bool { return false })
 }
 
-// release takes the held servers off the lease.
-func (l *Lease) release() map[string]ToolSession {
+// keepIf hands the servers the gateway stopped that kept names back to the
+// pool, and stops the others, all at once, as a server may take seconds to
+// stop.
+func (l *Lease) keepIf(kept func(name string) bool) error {
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	held := l.held
 	l.held = map[string]ToolSession{}
-	return held
+	l.mu.Unlock()
+	var errs []error
+	var stop []namedSession
+	for _, name := range slices.Sorted(maps.Keys(held)) {
+		if kept(name) {
+			errs = append(errs, l.pool.keep(l.conversation, name, held[name]))
+		} else {
+			stop = append(stop, namedSession{name: name, session: held[name]})
+		}
+	}
+	return errors.Join(append(errs, closeSessions(stop))...)
 }
 
 // leasedServer starts a server of a lease: it takes the conversation's kept

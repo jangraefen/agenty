@@ -54,7 +54,6 @@ const origin = "http://localhost:5173"
 // scripted models handed out one per run.
 type fixture struct {
 	store  *store.Store
-	dbURL  string
 	server *server.Server
 	http   *httptest.Server
 	logs   *syncBuffer
@@ -88,7 +87,7 @@ func newFixture(t *testing.T, opts options) *fixture {
 		read:  &gatewaytest.Tool{Name: "files_read", Result: json.RawMessage(`{"content":"- milk"}`)},
 		write: &gatewaytest.Tool{Name: "files_write", Result: json.RawMessage(`{"ok":true}`)},
 	}
-	f.store, f.dbURL = storetest.NewWithURL(t)
+	f.store = storetest.New(t)
 	f.files = &gatewaytest.Server{Tools: []toolgateway.Tool{f.read, f.write}}
 	f.serve(t, opts)
 	return f

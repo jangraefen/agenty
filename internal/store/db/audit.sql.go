@@ -121,7 +121,7 @@ func (q *Queries) LastAuditEventID(ctx context.Context) (int64, error) {
 const listActorEvents = `-- name: ListActorEvents :many
 SELECT id, recorded_at, actor, action, workspace, run_id, target, details, prev_hash, hash FROM audit_events
 WHERE actor = $1
-  AND (workspace = '' OR workspace = ANY($2::text[]))
+  AND workspace = ANY($2::text[])
   AND ($3::bigint = 0 OR id < $3)
 ORDER BY id DESC
 LIMIT $4
@@ -135,7 +135,7 @@ type ListActorEventsParams struct {
 }
 
 // What actor did, newest first, before the event named by before (0 for
-// the newest), in the given workspaces or in none.
+// the newest), in the given workspaces.
 func (q *Queries) ListActorEvents(ctx context.Context, arg ListActorEventsParams) ([]AuditEvent, error) {
 	rows, err := q.db.Query(ctx, listActorEvents,
 		arg.Actor,

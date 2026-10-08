@@ -102,6 +102,7 @@ func TestAuditEvents_CancelAndNoReads(t *testing.T) {
 
 	all, err := f.store.AuditEvents(context.Background(), 0, math.MaxInt64, 1000)
 	require.NoError(t, err)
+	require.NotEmpty(t, all)
 	for _, e := range all {
 		assert.NotEqual(t, "dana", e.Actor, "an auditor's reads are not part of any log")
 	}

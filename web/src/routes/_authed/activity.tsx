@@ -4,8 +4,7 @@ import { myActivityQuery } from "@/api/queries";
 import { EventsTable } from "@/components/events-table";
 
 // What the user did, from the audit log: their runs' calls, their answers,
-// cancels and harness changes. Not what others did, auditors' reads of the
-// user's runs included.
+// cancels and harness changes. Not what others did.
 export const Route = createFileRoute("/_authed/activity")({
   component: Activity,
 });

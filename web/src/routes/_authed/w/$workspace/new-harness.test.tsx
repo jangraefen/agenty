@@ -33,7 +33,6 @@ function harnessServer(existing: Schemas["HarnessVersion"][] = []) {
 beforeEach(() => {
   server.use(
     meHandler({ user: "demo", workspaces: ["notes"] }),
-    http.get(`${base}/approvals`, () => HttpResponse.json([])),
     http.get(`${base}/harnesses`, () => HttpResponse.json([])),
   );
 });

@@ -2,7 +2,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { beforeEach, expect, test } from "vitest";
 import { apiUrl } from "@/config";
-import { conversation, harnessVersion, run } from "@/test/fixtures";
+import { conversation, run, storedHarness } from "@/test/fixtures";
 import { renderApp } from "@/test/render";
 import {
   conversationsHandler,
@@ -19,8 +19,8 @@ const path = "/";
 beforeEach(() => {
   server.use(
     meHandler({ user: "demo", workspaces: ["notes"] }),
-    http.get(`${base}/harnesses`, () => HttpResponse.json([harnessVersion("notes")])),
-    http.get(`${base}/harnesses/notes`, () => HttpResponse.json(harnessVersion("notes"))),
+    http.get(`${base}/harnesses`, () => HttpResponse.json([storedHarness({ name: "notes" })])),
+    http.get(`${base}/harnesses/notes`, () => HttpResponse.json(storedHarness({ name: "notes" }))),
     ...emptyWorkspaceHandlers("notes"),
   );
 });
@@ -31,10 +31,10 @@ function twoWorkspaces() {
   server.use(
     meHandler({ user: "demo", workspaces: ["notes", "work"] }),
     http.get(`${base}/harnesses`, () =>
-      HttpResponse.json([harnessVersion("notes"), harnessVersion("tidy")]),
+      HttpResponse.json([storedHarness({ name: "notes" }), storedHarness({ name: "tidy" })]),
     ),
     http.get(`${apiUrl}/v1/workspaces/work/harnesses`, () =>
-      HttpResponse.json([harnessVersion("triage")]),
+      HttpResponse.json([storedHarness({ name: "triage" })]),
     ),
     ...emptyWorkspaceHandlers("work"),
   );

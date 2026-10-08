@@ -2,7 +2,7 @@ import { screen, within } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { beforeEach, expect, test } from "vitest";
 import { apiUrl } from "@/config";
-import { harnessVersion, logEvent } from "@/test/fixtures";
+import { logEvent, storedHarness } from "@/test/fixtures";
 import { renderApp } from "@/test/render";
 import { emptyWorkspaceHandlers, meHandler, type Schemas, server, TOKEN } from "@/test/server";
 
@@ -14,21 +14,26 @@ beforeEach(() => {
 });
 
 test("shows the workspace's members, harnesses and latest changes", async () => {
+  const limits: (string | null)[] = [];
   server.use(
     http.get(`${apiUrl}/v1/workspaces/notes`, () =>
       HttpResponse.json<Schemas["WorkspaceDetail"]>({ name: "notes", members: ["ana", "demo"] }),
     ),
     http.get(`${apiUrl}/v1/workspaces/notes/harnesses`, () =>
-      HttpResponse.json<Schemas["HarnessVersion"][]>([harnessVersion("tidy")]),
+      HttpResponse.json<Schemas["HarnessVersion"][]>([storedHarness({ name: "tidy" })]),
     ),
-    http.get(`${apiUrl}/v1/workspaces/notes/audit`, () =>
-      HttpResponse.json<Schemas["AuditLogEventList"]>({
-        events: Array.from({ length: 7 }, (_, i) =>
+    // The page size asked for, of seven events.
+    http.get(`${apiUrl}/v1/workspaces/notes/audit`, ({ request }) => {
+      const limit = new URL(request.url).searchParams.get("limit");
+      limits.push(limit);
+      const size = Math.min(Number(limit ?? 50), 7);
+      return HttpResponse.json<Schemas["AuditLogEventList"]>({
+        events: Array.from({ length: size }, (_, i) =>
           logEvent({ id: 7 - i, actor: "ana", target: "tidy", details: { version: 7 - i } }),
         ),
-        next: 1,
-      }),
-    ),
+        next: 8 - size,
+      });
+    }),
   );
   const { history } = renderApp("/w/notes", TOKEN);
 
@@ -56,9 +61,16 @@ test("shows the workspace's members, harnesses and latest changes", async () => 
 
   const changes = screen.getByRole("region", { name: "Recent changes" });
   const table = await within(changes).findByRole("table", { name: "Events" });
+  expect(limits).toEqual(["5"]);
   expect(within(table).getAllByRole("row")).toHaveLength(1 + 5);
   expect(table).toHaveTextContent("version 7");
   expect(table).not.toHaveTextContent("version 2");
+  // The toggles are named by the cells shown: there is no workspace column.
+  for (const toggle of within(table).getAllByRole("button", { name: /^Details of/ })) {
+    for (const id of toggle.getAttribute("aria-labelledby")?.split(" ") ?? []) {
+      expect(document.getElementById(id)).not.toBeNull();
+    }
+  }
   expect(within(changes).queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
   expect(within(changes).getByRole("link", { name: "All changes" })).toHaveAttribute(
     "href",

@@ -11,12 +11,15 @@ export const Route = createFileRoute("/_authed/w/$workspace/")({
   component: Overview,
 });
 
+// How many of the latest changes the overview shows, and so fetches.
+const latestChanges = 5;
+
 function Overview() {
   const { workspace } = Route.useParams();
   const { api } = Route.useRouteContext();
   const detail = useQuery(workspaceQuery(api, workspace));
   const harnesses = useQuery(harnessesQuery(api, workspace));
-  const changes = useInfiniteQuery(workspaceAuditQuery(api, workspace));
+  const changes = useInfiniteQuery(workspaceAuditQuery(api, workspace, latestChanges));
 
   return (
     <div className="grid gap-8">
@@ -98,7 +101,7 @@ function Overview() {
           empty="No changes yet."
           showActor
           showWorkspace={false}
-          limit={5}
+          limit={latestChanges}
         />
       </Section>
     </div>

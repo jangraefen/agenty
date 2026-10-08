@@ -4,8 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { type AuditFilters, auditRunsQuery, isRunStatus, runStatuses } from "@/api/queries";
 import { AuditHeader } from "@/components/audit-header";
 import { FilterForm, textFilters } from "@/components/filter-form";
+import { LoadMore } from "@/components/load-more";
 import { RunStatusBadge } from "@/components/run-status";
-import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { formatDuration, formatTime } from "@/lib/format";
 
@@ -57,16 +57,6 @@ function AuditRuns() {
     (link ?? table.current)?.focus();
     setFocusRun(null);
   }, [focusRun]);
-
-  async function loadMore() {
-    if (runs.isFetchingNextPage) {
-      return;
-    }
-    const result = await runs.fetchNextPage();
-    if (result.isSuccess) {
-      setFocusRun(result.data.pages.at(-1)?.runs[0]?.id ?? "");
-    }
-  }
 
   return (
     <section className="grid gap-6">
@@ -174,16 +164,12 @@ function AuditRuns() {
           </table>
         </div>
       )}
-      {runs.hasNextPage && (
-        <Button
-          variant="outline"
-          className="justify-self-start"
-          aria-disabled={runs.isFetchingNextPage}
-          onClick={() => void loadMore()}
-        >
-          Load more
-        </Button>
-      )}
+      <LoadMore
+        query={runs}
+        onLoaded={(data) => setFocusRun(data.pages.at(-1)?.runs[0]?.id ?? "")}
+        variant="outline"
+        className="justify-self-start"
+      />
     </section>
   );
 }

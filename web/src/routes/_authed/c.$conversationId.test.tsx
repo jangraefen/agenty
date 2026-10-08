@@ -380,12 +380,13 @@ describe("the conversation page", () => {
     expect(await within(recent).findByRole("link", { name: "tidy my notes" })).toBeInTheDocument();
   });
 
-  test("an answer given elsewhere clears the chat's waiting mark", async () => {
+  test("an answer given elsewhere clears the waiting approval and the chat's mark", async () => {
     const live = liveEventStream();
     let answered = false;
     server.use(
       ...conversationHandlers([runningRun]),
       http.get(`${base}/runs/run-1/events`, () => live.response()),
+      http.get(`${base}/approvals`, () => HttpResponse.json(answered ? [] : [approvalRequest()])),
       http.get(`${apiUrl}/v1/conversations`, () =>
         HttpResponse.json<Schemas["ConversationList"]>({
           conversations: [conversation({ status: answered ? "running" : "waiting" })],
@@ -395,11 +396,17 @@ describe("the conversation page", () => {
     renderApp(path, TOKEN);
     const recent = await screen.findByRole("navigation", { name: "Recent chats" });
     await within(recent).findByRole("link", { name: "tidy my notes (waiting for approval)" });
+    await screen.findByRole("region", { name: "Waiting for approval" });
 
     answered = true;
     live.send("audit", auditRecord({ event: "approval", decision: "allow", approver: "demo" }));
 
     expect(await within(recent).findByRole("link", { name: "tidy my notes" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("region", { name: "Waiting for approval" }),
+      ).not.toBeInTheDocument();
+    });
   });
 
   test("refreshes the waiting approvals and the recent chats when the run asks for one", async () => {

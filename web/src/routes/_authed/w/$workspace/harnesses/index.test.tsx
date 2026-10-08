@@ -9,10 +9,7 @@ import { meHandler, server, TOKEN } from "@/test/server";
 const base = `${apiUrl}/v1/workspaces/notes`;
 
 beforeEach(() => {
-  server.use(
-    meHandler({ user: "demo", workspaces: ["notes"] }),
-    http.get(`${base}/approvals`, () => HttpResponse.json([])),
-  );
+  server.use(meHandler({ user: "demo", workspaces: ["notes"] }));
 });
 
 test("lists the workspace's harnesses", async () => {

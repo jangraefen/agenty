@@ -1,4 +1,5 @@
 import { createContext, useContext, useSyncExternalStore } from "react";
+import { StoredValue } from "@/lib/stored-value";
 
 // public/theme.js reads the same key and query, before the app loads.
 const KEY = "agenty.theme";
@@ -15,33 +16,31 @@ export type ThemeChoice = (typeof themeChoices)[number];
 // first paint; Theme takes over from there. When the browser refuses
 // storage, the choice lasts as long as the page.
 export class Theme {
-  #choice: ThemeChoice;
-  readonly #storage: Storage;
+  readonly #choice: StoredValue<ThemeChoice>;
   readonly #dark: MediaQueryList | null;
   readonly #root: HTMLElement;
-  readonly #listeners = new Set<() => void>();
 
   /** Reads the stored choice and applies it at once. */
   constructor(storage: Storage, target: Window) {
-    this.#storage = storage;
     // jsdom, for one, has no matchMedia; without it, System is light.
     this.#dark = typeof target.matchMedia === "function" ? target.matchMedia(DARK) : null;
     this.#root = target.document.documentElement;
-    this.#choice = readStored(storage);
+    this.#choice = new StoredValue(
+      storage,
+      KEY,
+      (stored) => themeChoices.find((choice) => choice === stored) ?? "system",
+    );
+    // Subscribed first, so a choice applies before the subscribers hear of it.
+    this.#choice.subscribe(() => this.#apply());
     this.#apply();
   }
 
   get choice(): ThemeChoice {
-    return this.#choice;
+    return this.#choice.value;
   }
 
   choose(choice: ThemeChoice): void {
-    try {
-      this.#storage.setItem(KEY, choice);
-    } catch {
-      // Storage refused: the choice lasts as long as the page.
-    }
-    this.#change(choice);
+    this.#choice.set(choice);
   }
 
   /**
@@ -65,56 +64,20 @@ export class Theme {
    * storage; returns the function that stops following.
    */
   followOtherTabs(target: Window): () => void {
-    const follow = (event: StorageEvent) => {
-      // A null key means another tab cleared the storage.
-      if (event.key !== KEY && event.key !== null) {
-        return;
-      }
-      const choice = readStored(this.#storage);
-      if (choice !== this.#choice) {
-        this.#change(choice);
-      }
-    };
-    target.addEventListener("storage", follow);
-    return () => {
-      target.removeEventListener("storage", follow);
-    };
+    return this.#choice.followOtherTabs(target);
   }
 
   /**
    * Calls listener after every change of the choice; returns the
    * unsubscribe. Bound, so React can keep it from one render to the next.
    */
-  readonly subscribe = (listener: () => void): (() => void) => {
-    this.#listeners.add(listener);
-    return () => {
-      this.#listeners.delete(listener);
-    };
-  };
-
-  #change(choice: ThemeChoice): void {
-    this.#choice = choice;
-    this.#apply();
-    for (const listener of this.#listeners) {
-      listener();
-    }
-  }
+  readonly subscribe = (listener: () => void): (() => void) => this.#choice.subscribe(listener);
 
   #apply(): void {
-    const dark =
-      this.#choice === "system" ? (this.#dark?.matches ?? false) : this.#choice === "dark";
+    const choice = this.#choice.value;
+    const dark = choice === "system" ? (this.#dark?.matches ?? false) : choice === "dark";
     this.#root.dataset.theme = dark ? "dark" : "light";
   }
-}
-
-function readStored(storage: Storage): ThemeChoice {
-  let stored: string | null = null;
-  try {
-    stored = storage.getItem(KEY);
-  } catch {
-    // Storage refused: nothing was stored.
-  }
-  return themeChoices.find((choice) => choice === stored) ?? "system";
 }
 
 export const ThemeContext = createContext<Theme | null>(null);

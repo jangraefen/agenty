@@ -1,4 +1,5 @@
 import { createFileRoute, Link, notFound, Outlet } from "@tanstack/react-router";
+import { NotFoundPage } from "@/components/route-states";
 
 // The management of a workspace. The membership check runs before any of its
 // pages loads its data.
@@ -9,19 +10,15 @@ export const Route = createFileRoute("/_authed/w/$workspace")({
     }
   },
   component: Outlet,
-  notFoundComponent: WorkspaceNotFound,
-});
-
-function WorkspaceNotFound() {
-  return (
-    <section className="mx-auto max-w-xl">
-      <h1 className="text-xl font-semibold">Workspace not found</h1>
-      <p className="mt-2 text-muted-foreground">
-        It does not exist, or you are not a member of it.
-      </p>
-      <Link to="/" className="mt-2 inline-block underline">
+  notFoundComponent: () => (
+    <NotFoundPage
+      title="Workspace not found"
+      detail="It does not exist, or you are not a member of it."
+      className="mx-auto max-w-xl"
+    >
+      <Link to="/" className="underline">
         Start a new chat
       </Link>
-    </section>
-  );
-}
+    </NotFoundPage>
+  ),
+});

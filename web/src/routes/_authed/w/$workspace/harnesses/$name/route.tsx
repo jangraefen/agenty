@@ -1,5 +1,6 @@
 import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
 import { harnessQuery } from "@/api/queries";
+import { NotFoundPage } from "@/components/route-states";
 import { orNotFound } from "@/lib/not-found";
 
 // A harness's pages, which need it loaded.
@@ -13,15 +14,10 @@ export const Route = createFileRoute("/_authed/w/$workspace/harnesses/$name")({
 function HarnessNotFound() {
   const { workspace } = Route.useParams();
   return (
-    <section>
-      <h1 className="text-xl font-semibold">Harness not found</h1>
-      <Link
-        to="/w/$workspace/harnesses"
-        params={{ workspace }}
-        className="mt-2 inline-block underline"
-      >
+    <NotFoundPage title="Harness not found">
+      <Link to="/w/$workspace/harnesses" params={{ workspace }} className="underline">
         All harnesses
       </Link>
-    </section>
+    </NotFoundPage>
   );
 }

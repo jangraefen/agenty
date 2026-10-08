@@ -34,8 +34,9 @@ export interface paths {
          *     workspaces they are a member of, the one whose latest run was
          *     started last first. Only its starter continues, cancels and answers
          *     a conversation, through its workspace; in one from before runs were
-         *     private, another member's follow-up belongs to the starter too. A conversation followed up while the pages
-         *     are read moves to the first page, so later pages leave it out.
+         *     private, another member's follow-up belongs to the starter too. A
+         *     conversation followed up while the pages are read moves to the
+         *     first page, so later pages leave it out.
          */
         get: operations["listConversations"];
         put?: never;

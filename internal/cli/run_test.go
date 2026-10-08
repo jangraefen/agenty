@@ -56,6 +56,7 @@ mcp_servers:
 users:
   alice:
     token: {env: ALICE_TOKEN}
+    auditor: true
   bob:
     token: {env: BOB_TOKEN}
 workspaces:

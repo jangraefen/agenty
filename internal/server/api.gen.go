@@ -14,6 +14,9 @@ import (
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// ExportAuditLog The audit log as JSON lines, for auditors
+	// (GET /v1/audit/export)
+	ExportAuditLog(c *gin.Context, params ExportAuditLogParams)
 	// ListAuditRuns The runs of every workspace, newest first, a page at a time, for auditors
 	// (GET /v1/audit/runs)
 	ListAuditRuns(c *gin.Context, params ListAuditRunsParams)
@@ -75,6 +78,33 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(c *gin.Context)
+
+// ExportAuditLog operation middleware
+func (siw *ServerInterfaceWrapper) ExportAuditLog(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ExportAuditLogParams
+
+	// ------------- Optional query parameter "after" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "after", c.Request.URL.Query(), &params.After, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter after: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ExportAuditLog(c, params)
+}
 
 // ListAuditRuns operation middleware
 func (siw *ServerInterfaceWrapper) ListAuditRuns(c *gin.Context) {
@@ -663,6 +693,7 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.GET(options.BaseURL+"/v1/conversations/:id", wrapper.GetConversation)
 	router.GET(options.BaseURL+"/v1/audit/runs", wrapper.ListAuditRuns)
 	router.GET(options.BaseURL+"/v1/audit/runs/:id", wrapper.GetAuditRun)
+	router.GET(options.BaseURL+"/v1/audit/export", wrapper.ExportAuditLog)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace/harnesses", wrapper.ListHarnesses)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace/harnesses/:name", wrapper.GetHarness)
 	router.PUT(options.BaseURL+"/v1/workspaces/:workspace/harnesses/:name", wrapper.PutHarness)

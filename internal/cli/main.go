@@ -56,6 +56,8 @@ func Main(ctx context.Context, args []string, env Env) int {
 		return apply(ctx, args[1:], env)
 	case "run":
 		return run(ctx, args[1:], env)
+	case "audit":
+		return audit(ctx, args[1:], env)
 	case "help", "-h", "--help":
 		return printUsage(env.Stderr, "", exitOK)
 	default:
@@ -69,6 +71,7 @@ Commands:
   serve   serves the HTTP API on localhost
   apply   stores a harness file on the server
   run     runs a harness on the server and prints the answer
+  audit   exports the audit log, or verifies an export
 
 Run "agenty <command> -h" for a command's flags.
 `

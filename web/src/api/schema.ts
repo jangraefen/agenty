@@ -110,6 +110,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/audit/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The audit log as JSON lines, for auditors
+         * @description Every event after the one named by after, in order, one AuditLogEvent a
+         *     line, with the hashes that chain them; agenty audit verify checks
+         *     such an export. Only auditors may export it; anyone else is
+         *     forbidden. The trailer Audit-Export-Complete is true once the last
+         *     event is written: an export without it was cut short.
+         */
+        get: operations["exportAuditLog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{workspace}/harnesses": {
         parameters: {
             query?: never;
@@ -537,6 +561,30 @@ export interface components {
              */
             finished_at?: string;
         };
+        /**
+         * @description One event of the audit log, as package auditlog hashes it: hash is
+         *     the SHA-256 of a fixed encoding of the other fields, prev_hash the
+         *     hash of the event before it, zero before the first.
+         */
+        AuditLogEvent: {
+            /**
+             * Format: int64
+             * @description The event's position in the log, from 1 without gaps.
+             */
+            id: number;
+            /** Format: date-time */
+            recorded_at: string;
+            /** @description The user who acted; empty for the server itself. */
+            actor: string;
+            action: string;
+            /** @description Empty for an event of the whole organisation. */
+            workspace: string;
+            run_id: string;
+            target: string;
+            details: Record<string, never>;
+            prev_hash: string;
+            hash: string;
+        };
         AuditRunList: {
             runs: components["schemas"]["AuditRun"][];
             /** @description The before parameter of the next page, which may be empty. */
@@ -798,6 +846,30 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuditRunDetail"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    exportAuditLog: {
+        parameters: {
+            query?: {
+                /** @description Start after the event with this id; 0, the default, starts at the first. */
+                after?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The events, one a line. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/jsonl": string;
                 };
             };
             default: components["responses"]["Error"];

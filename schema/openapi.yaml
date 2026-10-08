@@ -145,6 +145,29 @@ paths:
               schema: {$ref: "#/components/schemas/AuditRunDetail"}
         default: {$ref: "#/components/responses/Error"}
 
+  /v1/audit/export:
+    get:
+      operationId: exportAuditLog
+      summary: The audit log as JSON lines, for auditors
+      description: |
+        Every event after the one named by after, in order, one AuditLogEvent a
+        line, with the hashes that chain them; agenty audit verify checks
+        such an export. Only auditors may export it; anyone else is
+        forbidden. The trailer Audit-Export-Complete is true once the last
+        event is written: an export without it was cut short.
+      parameters:
+        - name: after
+          in: query
+          description: Start after the event with this id; 0, the default, starts at the first.
+          schema: {type: integer, format: int64, minimum: 0, default: 0}
+      responses:
+        "200":
+          description: The events, one a line.
+          content:
+            application/jsonl:
+              schema: {type: string}
+        default: {$ref: "#/components/responses/Error"}
+
   /v1/workspaces/{workspace}/harnesses:
     parameters:
       - $ref: "#/components/parameters/Workspace"
@@ -596,6 +619,33 @@ components:
           type: string
           format: date-time
           x-omitzero: true
+
+    AuditLogEvent:
+      description: |
+        One event of the audit log, as package auditlog hashes it: hash is
+        the SHA-256 of a fixed encoding of the other fields, prev_hash the
+        hash of the event before it, zero before the first.
+      type: object
+      additionalProperties: false
+      required: [id, recorded_at, actor, action, workspace, run_id, target, details, prev_hash, hash]
+      properties:
+        id:
+          description: The event's position in the log, from 1 without gaps.
+          type: integer
+          format: int64
+        recorded_at: {type: string, format: date-time}
+        actor:
+          description: The user who acted; empty for the server itself.
+          type: string
+        action: {type: string}
+        workspace:
+          description: Empty for an event of the whole organisation.
+          type: string
+        run_id: {type: string}
+        target: {type: string}
+        details: {type: object}
+        prev_hash: {type: string, pattern: "^[0-9a-f]{64}$"}
+        hash: {type: string, pattern: "^[0-9a-f]{64}$"}
 
     AuditRunList:
       type: object

@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"slices"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jangraefen/agenty/internal/api"
+	"github.com/jangraefen/agenty/internal/auditlog"
 	"github.com/jangraefen/agenty/internal/model/modeltest"
 )
 
@@ -127,4 +129,57 @@ func TestInvariant_OnlyAuditorsReadTheAuditLog(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, f.doAs(t, danaToken, http.MethodGet, "/v1/audit/runs/ghost", nil, &e))
 	assert.Equal(t, http.StatusNotFound, f.doAs(t, danaToken, http.MethodGet, "/v1/workspaces/work/harnesses", nil, &e), "an auditor is no member")
 	assert.Equal(t, http.StatusNotFound, f.doAs(t, danaToken, http.MethodGet, home+"/runs/"+mine.ID, nil, &e), "nor does an auditor see a run as a member")
+}
+
+func TestExportAuditLog(t *testing.T) {
+	f := newFixture(t, options{})
+	f.putNotes(t)
+	f.script(modeltest.CallTools(call("c1", "files_read", `{"path":"notes.md"}`)), modeltest.Reply("read"))
+	run := f.startRun(t, "read my notes")
+	f.finish(t, run.ID)
+
+	for _, bearer := range []string{aliceToken, carolToken} {
+		var e api.Error
+		assert.Equal(t, http.StatusForbidden, f.doAs(t, bearer, http.MethodGet, "/v1/audit/export", nil, &e))
+	}
+	whole, trailer := f.export(t, "")
+	assert.Equal(t, "true", trailer, "a complete export says so")
+	sum, err := auditlog.Verify(strings.NewReader(whole))
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), sum.First)
+	assert.Equal(t, 2, sum.Events, "the run's decision and result")
+
+	rest, trailer := f.export(t, "?after=1")
+	assert.Equal(t, "true", trailer)
+	_, err = auditlog.Verify(strings.NewReader(rest), auditlog.Anchor{ID: 1, Hash: mustFirstHash(t, whole)})
+	require.NoError(t, err, "a later part verifies against the hash before it")
+
+	var e api.Error
+	assert.Equal(t, http.StatusBadRequest, f.doAs(t, danaToken, http.MethodGet, "/v1/audit/export?after=-1", nil, &e))
+}
+
+// export reads the audit log as dana, the auditor, with the given query, and
+// returns it with its completion trailer.
+func (f *fixture) export(t *testing.T, query string) (string, string) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, f.http.URL+"/v1/audit/export"+query, nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+danaToken)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body := readChecked(t, req, resp)
+	b, err := io.ReadAll(body)
+	require.NoError(t, err)
+	return string(b), resp.Trailer.Get("Audit-Export-Complete")
+}
+
+// mustFirstHash returns the hash of an export's first event.
+func mustFirstHash(t *testing.T, export string) auditlog.Hash {
+	t.Helper()
+	var first auditlog.Event
+	line, _, _ := strings.Cut(export, "\n")
+	require.NoError(t, json.Unmarshal([]byte(line), &first))
+	return first.Hash
 }

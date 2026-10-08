@@ -85,7 +85,7 @@ func TestServe_ServesTheAPIUntilStopped(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&me))
 	require.NoError(t, resp.Body.Close())
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, api.Me{User: "alice", Workspaces: []string{"home"}}, me)
+	assert.Equal(t, api.Me{User: "alice", Workspaces: []string{"home"}, Auditor: true}, me)
 
 	cancel()
 	select {

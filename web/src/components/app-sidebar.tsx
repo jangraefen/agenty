@@ -5,6 +5,7 @@ import {
   LuChevronsUpDown,
   LuCircleAlert,
   LuFileClock,
+  LuLock,
   LuLogOut,
   LuScrollText,
   LuSquarePen,
@@ -78,7 +79,7 @@ export function AppSidebar() {
 }
 
 function RecentChats() {
-  const { api } = useRouteContext({ from: "/_authed" });
+  const { api, me } = useRouteContext({ from: "/_authed" });
   const chats = useInfiniteQuery(recentChatsQuery(api));
   const listed = chats.data?.pages.flatMap((page) => page.conversations) ?? [];
 
@@ -103,6 +104,16 @@ function RecentChats() {
               className={itemClass}
             >
               <span className="truncate">{chat.title}</span>
+              {!me.workspaces.includes(chat.workspace) && (
+                <>
+                  <LuLock
+                    aria-hidden="true"
+                    title="Read-only: you left its workspace"
+                    className="ml-auto size-4 shrink-0 text-muted-foreground"
+                  />{" "}
+                  <span className="sr-only">(read-only)</span>
+                </>
+              )}
               {chat.status === "waiting" && (
                 <>
                   <LuCircleAlert

@@ -441,7 +441,11 @@ func TestClaimRun_ClaimsOldestFirst(t *testing.T) {
 	}
 	queued, err := s.IdleRuns(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, []store.IdleRun{{ID: "r1", Status: store.RunQueued, Workspace: ws, Harness: "notes"}, {ID: "w1", Status: store.RunQueued, Workspace: "work", Harness: "notes"}, {ID: "r2", Status: store.RunQueued, Workspace: ws, Harness: "notes"}}, queued)
+	assert.Equal(t, []store.IdleRun{
+		{ID: "r1", Status: store.RunQueued, Workspace: ws, Harness: "notes", Owner: "alice"},
+		{ID: "w1", Status: store.RunQueued, Workspace: "work", Harness: "notes", Owner: "bob"},
+		{ID: "r2", Status: store.RunQueued, Workspace: ws, Harness: "notes", Owner: "alice"},
+	}, queued, "with who started each run's conversation")
 
 	var got []store.ClaimedRun
 	for {

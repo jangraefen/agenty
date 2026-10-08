@@ -227,3 +227,23 @@ test("follows a chat's status soon while it runs, slowly while it waits, and not
   await tick(120_000);
   expect(requests, "nor at all once every chat is done").toBe(waiting + 1);
 });
+
+test("marks a chat of a workspace the user left as read-only", async () => {
+  server.use(
+    conversationsHandler({
+      "": {
+        conversations: [
+          conversation({ id: "c2", title: "old notes", workspace: "gone" }),
+          conversation({ id: "c1", title: "tidy my notes" }),
+        ],
+      },
+    }),
+  );
+  renderApp("/w/notes/harnesses", TOKEN);
+
+  const recent = await screen.findByRole("navigation", { name: "Recent chats" });
+  expect(
+    await within(recent).findByRole("link", { name: "old notes (read-only)" }),
+  ).toHaveAttribute("href", "/c/c2");
+  expect(within(recent).getByRole("link", { name: "tidy my notes" })).toBeInTheDocument();
+});

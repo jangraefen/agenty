@@ -29,7 +29,7 @@ type ServerInterface interface {
 	// ListConversations The conversations the user started, latest activity first, a page at a time
 	// (GET /v1/conversations)
 	ListConversations(c *gin.Context, params ListConversationsParams)
-	// GetConversation A conversation the user started, in one of their workspaces
+	// GetConversation A conversation the user started
 	// (GET /v1/conversations/{id})
 	GetConversation(c *gin.Context, id string)
 	// GetMe The signed-in user and their workspaces

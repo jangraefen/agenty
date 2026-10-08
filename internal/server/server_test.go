@@ -698,6 +698,14 @@ func TestInvariant_WorkspacesAreSeparate(t *testing.T) {
 	cancelled, err := f.store.CancelIdleRun(ctx, "carols", "seeded")
 	require.NoError(t, err)
 	require.True(t, cancelled)
+	// alice's conversation in a workspace the config no longer has.
+	gone, err := f.store.PutHarness(ctx, "gone", "alice", notes())
+	require.NoError(t, err)
+	_, err = f.store.CreateRun(ctx, store.NewRun{ID: "alices-gone", HarnessVersionID: gone.ID, Input: "x", StartedBy: "alice"})
+	require.NoError(t, err)
+	cancelled, err = f.store.CancelIdleRun(ctx, "alices-gone", "seeded")
+	require.NoError(t, err)
+	require.True(t, cancelled)
 	f.script(modeltest.CallTools(call("c1", "files_write", `{}`)))
 	// The run resumes, once answered, on a model of its own.
 	f.script(modeltest.Reply("done"))
@@ -756,14 +764,46 @@ func TestInvariant_WorkspacesAreSeparate(t *testing.T) {
 	t.Run("conversations", func(t *testing.T) {
 		var mine api.ConversationList
 		require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, "/v1/conversations", nil, &mine))
-		require.Len(t, mine.Conversations, 1)
+		require.Len(t, mine.Conversations, 2)
 		assert.Equal(t, run.ID, mine.Conversations[0].ID, "only the user's own conversations are listed")
-		var none api.ConversationList
-		require.Equal(t, http.StatusOK, f.doAs(t, carolToken, http.MethodGet, "/v1/conversations", nil, &none))
-		assert.Empty(t, none.Conversations, "only conversations of the user's workspaces are listed")
-		for _, id := range []string{"carols", run.ID} {
+		assert.Equal(t, "alices-gone", mine.Conversations[1].ID, "those of a workspace she left too")
+		var e api.Error
+		assert.Equal(t, http.StatusNotFound, f.doAs(t, carolToken, http.MethodGet, "/v1/conversations/"+run.ID, nil, &e))
+	})
+	// The one exception: carol, who left home, still reads the
+	// conversation she started there, and changes nothing.
+	t.Run("a member who left", func(t *testing.T) {
+		var hers api.ConversationList
+		require.Equal(t, http.StatusOK, f.doAs(t, carolToken, http.MethodGet, "/v1/conversations", nil, &hers))
+		require.Len(t, hers.Conversations, 1)
+		assert.Equal(t, "carols", hers.Conversations[0].ID)
+		var found api.ConversationSummary
+		require.Equal(t, http.StatusOK, f.doAs(t, carolToken, http.MethodGet, "/v1/conversations/carols", nil, &found))
+		var own api.Run
+		require.Equal(t, http.StatusOK, f.doAs(t, carolToken, http.MethodGet, home+"/runs/carols", nil, &own))
+		var runs []api.Run
+		require.Equal(t, http.StatusOK, f.doAs(t, carolToken, http.MethodGet, home+"/runs/carols/conversation", nil, &runs))
+		var transcript []api.TranscriptMessage
+		require.Equal(t, http.StatusOK, f.doAs(t, carolToken, http.MethodGet, home+"/runs/carols/transcript", nil, &transcript))
+		assert.Equal(t, http.StatusOK, f.doAs(t, carolToken, http.MethodGet, home+"/runs/carols/events", nil, nil), "her run's events replay: it has finished")
+		for _, r := range []struct{ method, path string }{
+			{http.MethodPost, home + "/runs/carols/follow-up"},
+			{http.MethodPost, home + "/runs/carols/cancel"},
+			{http.MethodPost, home + "/runs/carols/approvals/a1"},
+			{http.MethodPost, home + "/runs"},
+			{http.MethodGet, home + "/approvals"},
+			{http.MethodGet, home + "/harnesses/notes"},
+		} {
 			var e api.Error
-			assert.Equal(t, http.StatusNotFound, f.doAs(t, carolToken, http.MethodGet, "/v1/conversations/"+id, nil, &e), id)
+			assert.Equal(t, http.StatusNotFound, f.doAs(t, carolToken, r.method, r.path, map[string]any{"input": "x", "harness": "notes"}, &e), r.path)
+			assert.Contains(t, e.Error, "workspace", r.path)
+		}
+		var inGone api.Run
+		assert.Equal(t, http.StatusOK, f.do(t, http.MethodGet, "/v1/workspaces/gone/runs/alices-gone", nil, &inGone), "a workspace the config no longer has is left too")
+		for _, path := range []string{home + "/runs/" + run.ID, home + "/runs/" + run.ID + "/transcript", "/v1/workspaces/ghost/runs/carols", "/v1/workspaces/gone/runs/alices-gone"} {
+			var e api.Error
+			assert.Equal(t, http.StatusNotFound, f.doAs(t, carolToken, http.MethodGet, path, nil, &e), path)
+			assert.Equal(t, "workspace "+strings.Split(path, "/")[3]+": not found", e.Error, "as for any non-member: %s", path)
 		}
 	})
 

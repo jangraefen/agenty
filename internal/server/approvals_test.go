@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"sync"
@@ -10,10 +11,12 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jangraefen/agenty/internal/api"
+	"github.com/jangraefen/agenty/internal/config"
 	"github.com/jangraefen/agenty/internal/harness"
 	"github.com/jangraefen/agenty/internal/model"
 	"github.com/jangraefen/agenty/internal/model/modeltest"
 	"github.com/jangraefen/agenty/internal/policy"
+	"github.com/jangraefen/agenty/internal/store"
 )
 
 // writesNeedApproval is central policy that asks before every write.
@@ -269,4 +272,50 @@ func TestInvariant_AWaitingCallNeverHoldsACredential(t *testing.T) {
 	auditJSON, err := json.Marshal(audit)
 	require.NoError(t, err)
 	assert.NotContains(t, string(auditJSON), token)
+}
+
+// TestApprovals_LeavingCancelsTheRunsOfWhoLeft: a run whose owner is no
+// longer a member of its workspace when a server starts is cancelled before
+// any worker takes it up; its waiting request is withdrawn and its
+// conversation records the call as not run. Another member's run goes on,
+// and the one who left still reads theirs.
+func TestApprovals_LeavingCancelsTheRunsOfWhoLeft(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, options{policy: writesNeedApproval})
+	f.putNotes(t)
+	alices, _ := f.waitForApproval(t)
+	f.script(modeltest.CallTools(call("c2", "files_write", `{"path":"bob.md"}`)))
+	var bobs api.Run
+	require.Equal(t, http.StatusCreated, f.doAs(t, bobToken, http.MethodPost, home+"/runs", api.CreateRun{Harness: "notes", Input: "write mine"}, &bobs))
+	for e := f.eventsAs(t, bobToken, bobs.ID); e.next().name != api.EventApproval; {
+	}
+
+	f.restart(t, options{policy: writesNeedApproval, workspaces: map[string]config.Workspace{
+		"home": {Members: []string{"bob", "dana"}},
+	}})
+
+	cancelled, err := f.store.Run(ctx, "home", alices.ID)
+	require.NoError(t, err)
+	assert.Equal(t, store.RunCancelled, cancelled.Status)
+	assert.Equal(t, "cancelled by the server, as alice is no longer a member of home", cancelled.Error)
+	request, ok, err := f.store.LatestApproval(ctx, alices.ID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, store.ApprovalWithdrawn, request.Status)
+	transcript, err := f.store.Transcript(ctx, alices.ID)
+	require.NoError(t, err)
+	assert.NotEmpty(t, transcript[len(transcript)-1].ToolResults, "the call is recorded as not run")
+	finished := f.logEvents(t, "run.finished")
+	require.Len(t, finished, 1, "only the run of who left ended")
+	assert.Equal(t, alices.ID, finished[0].RunID)
+	assert.Contains(t, string(finished[0].Details), `"status":"cancelled"`)
+	assert.Zero(t, f.write.Calls, "the agent never acted for someone who left")
+
+	still, err := f.store.Run(ctx, "home", bobs.ID)
+	require.NoError(t, err)
+	assert.Equal(t, store.RunWaiting, still.Status, "another member's run goes on waiting")
+
+	var read api.Run
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+alices.ID, nil, &read), "alice still reads her run")
+	assert.Equal(t, api.RunStatusCancelled, read.Status)
 }

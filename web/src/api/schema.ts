@@ -30,8 +30,8 @@ export interface paths {
         };
         /**
          * The conversations the user started, latest activity first, a page at a time
-         * @description The conversations whose first run the user started, in the
-         *     workspaces they are a member of, the one whose latest run was
+         * @description The conversations whose first run the user started, in every
+         *     workspace, those they left included, the one whose latest run was
          *     started last first. Only its starter continues, cancels and answers
          *     a conversation, through its workspace; in one from before runs were
          *     private, another member's follow-up belongs to the starter too. A
@@ -55,10 +55,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * A conversation the user started, in one of their workspaces
-         * @description Only the user who started the conversation finds it, and only while
-         *     they are a member of its workspace. Only the ID of its first run
-         *     names it.
+         * A conversation the user started
+         * @description Only the user who started the conversation finds it, in any
+         *     workspace; one of a workspace they left is read-only. Only the ID
+         *     of its first run names it.
          */
         get: operations["getConversation"];
         put?: never;
@@ -119,8 +119,8 @@ export interface paths {
         };
         /**
          * What the user did, newest first, a page at a time
-         * @description The events whose actor is the user, in the workspaces they are a
-         *     member of now: their runs and their calls, their approvals, cancels
+         * @description The events whose actor is the user, in every workspace, those they
+         *     left included: their runs and their calls, their approvals, cancels
          *     and harness changes. Not what others did, nor how a run ended, which
          *     the server records.
          */

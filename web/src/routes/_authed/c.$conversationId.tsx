@@ -40,9 +40,7 @@ function ConversationNotFound() {
   return (
     <section className="mx-auto max-w-3xl">
       <h1 className="text-xl font-semibold">Conversation not found</h1>
-      <p className="mt-2 text-muted-foreground">
-        It does not exist, or it is in a workspace you are not a member of.
-      </p>
+      <p className="mt-2 text-muted-foreground">It does not exist, or someone else started it.</p>
       <Link to="/" className="mt-2 inline-block underline">
         Start a new chat
       </Link>

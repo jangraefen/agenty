@@ -389,12 +389,11 @@ func TestListAuditEvents(t *testing.T) {
 		}
 		return out
 	}
-	assert.Equal(t, []string{"4 tool.decision", "3 run.started", "1 harness.changed"}, ids(s.ActorEvents(ctx, "alice", []string{ws}, 0, 10)))
-	assert.Equal(t, []string{"3 run.started", "1 harness.changed"}, ids(s.ActorEvents(ctx, "alice", []string{ws}, 4, 10)), "before an event")
-	assert.Empty(t, ids(s.ActorEvents(ctx, "alice", []string{"work"}, 0, 10)), "nothing of a workspace the actor left")
+	assert.Equal(t, []string{"4 tool.decision", "3 run.started", "1 harness.changed"}, ids(s.ActorEvents(ctx, "alice", 0, 10)))
+	assert.Equal(t, []string{"3 run.started", "1 harness.changed"}, ids(s.ActorEvents(ctx, "alice", 4, 10)), "before an event")
 	assert.Equal(t, []string{"1 harness.changed"}, ids(s.WorkspaceEvents(ctx, ws, []string{"harness.changed"}, 0, 10)))
 	assert.Empty(t, ids(s.WorkspaceEvents(ctx, ws, []string{"harness.changed"}, 1, 10)))
-	_, err = s.ActorEvents(ctx, "alice", nil, 0, 0)
+	_, err = s.ActorEvents(ctx, "alice", 0, 0)
 	require.Error(t, err)
 	_, err = s.WorkspaceEvents(ctx, ws, nil, 0, 0)
 	require.Error(t, err)

@@ -23,7 +23,13 @@ import (
 // finish waits until the run has finished and returns how it ended.
 func (f *fixture) finish(t *testing.T, runID string) api.Run {
 	t.Helper()
-	events := f.events(t, runID).rest()
+	return f.finishAs(t, aliceToken, runID)
+}
+
+// finishAs is finish, for the run's owner with the given token.
+func (f *fixture) finishAs(t *testing.T, bearer, runID string) api.Run {
+	t.Helper()
+	events := f.eventsAs(t, bearer, runID).rest()
 	require.NotEmpty(t, events)
 	return decodeAs[api.Run](t, events[len(events)-1])
 }

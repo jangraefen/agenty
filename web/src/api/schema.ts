@@ -21,6 +21,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The conversations the user started, latest activity first, a page at a time
+         * @description The conversations whose first run the user started, in the
+         *     workspaces they are a member of, the one whose latest run was
+         *     started last first. Following up a conversation does not make it
+         *     the follower's. A conversation is continued, cancelled and answered
+         *     through its workspace. A conversation followed up while the pages
+         *     are read moves to the first page, so later pages leave it out.
+         */
+        get: operations["listConversations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A conversation in one of the user's workspaces
+         * @description Any member of the conversation's workspace finds it, not only the
+         *     user who started it; in a workspace the user is not a member of, it
+         *     is not found. Only the ID of its first run names it.
+         */
+        get: operations["getConversation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{workspace}/harnesses": {
         parameters: {
             query?: never;
@@ -422,6 +469,19 @@ export interface components {
             /** @description The before parameter of the next page, which may be empty. */
             next?: string;
         };
+        ConversationSummary: {
+            /** @description The ID of the conversation's first run, which names it. */
+            id: string;
+            workspace: string;
+            harness: string;
+            /** @description The first run's input, cut to its first 100 characters. */
+            title: string;
+        };
+        ConversationList: {
+            conversations: components["schemas"]["ConversationSummary"][];
+            /** @description The before parameter of the next page, which may be empty. */
+            next?: string;
+        };
         /** @enum {string} */
         AuditEvent: "decision" | "approval" | "result";
         /** @enum {string} */
@@ -520,6 +580,8 @@ export interface components {
     parameters: {
         Workspace: string;
         RunID: string;
+        /** @description The page size. */
+        Limit: number;
     };
     requestBodies: never;
     headers: never;
@@ -543,6 +605,56 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Me"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listConversations: {
+        parameters: {
+            query?: {
+                /** @description The page size. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Continue after the conversation this cursor names, as ConversationList.next gives it. */
+                before?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of conversations. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getConversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The ID of the conversation's first run. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The conversation. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationSummary"];
                 };
             };
             default: components["responses"]["Error"];
@@ -631,7 +743,7 @@ export interface operations {
                 /** @description Only the runs with this status. */
                 status?: components["schemas"]["RunStatus"];
                 /** @description The page size. */
-                limit?: number;
+                limit?: components["parameters"]["Limit"];
                 /**
                  * @description Continue after the run with this ID, as RunList.next gives it. A
                  *     run that is not one of the workspace's gives an empty page.

@@ -145,6 +145,26 @@ type AuditRecord struct {
 	Tool   string `json:"tool"`
 }
 
+// ConversationList defines model for ConversationList.
+type ConversationList struct {
+	Conversations []ConversationSummary `json:"conversations"`
+
+	// Next The before parameter of the next page, which may be empty.
+	Next string `json:"next,omitempty"`
+}
+
+// ConversationSummary defines model for ConversationSummary.
+type ConversationSummary struct {
+	Harness string `json:"harness"`
+
+	// ID The ID of the conversation's first run, which names it.
+	ID string `json:"id"`
+
+	// Title The first run's input, cut to its first 100 characters.
+	Title     string `json:"title"`
+	Workspace string `json:"workspace"`
+}
+
 // CreateRun defines model for CreateRun.
 type CreateRun struct {
 	// Harness The harness to run, by name; the run uses its latest version.
@@ -324,11 +344,23 @@ type Usage struct {
 	OutputTokens int64 `json:"output_tokens"`
 }
 
+// Limit defines model for Limit.
+type Limit = int
+
 // RunID defines model for RunID.
 type RunID = string
 
 // Workspace defines model for Workspace.
 type Workspace = string
+
+// ListConversationsParams defines parameters for ListConversations.
+type ListConversationsParams struct {
+	// Limit The page size.
+	Limit Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Before Continue after the conversation this cursor names, as ConversationList.next gives it.
+	Before string `form:"before,omitempty" json:"before,omitempty"`
+}
 
 // ListRunsParams defines parameters for ListRuns.
 type ListRunsParams struct {
@@ -339,7 +371,7 @@ type ListRunsParams struct {
 	Status RunStatus `form:"status,omitempty" json:"status,omitempty"`
 
 	// Limit The page size.
-	Limit int `form:"limit,omitempty" json:"limit,omitempty"`
+	Limit Limit `form:"limit,omitempty" json:"limit,omitempty"`
 
 	// Before Continue after the run with this ID, as RunList.next gives it. A
 	// run that is not one of the workspace's gives an empty page.

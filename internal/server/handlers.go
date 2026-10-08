@@ -6,6 +6,9 @@ import (
 	"maps"
 	"net/http"
 	"slices"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -24,13 +27,94 @@ var _ ServerInterface = handlers{}
 
 func (s handlers) GetMe(c *gin.Context) {
 	user := c.GetString(userKey)
+	c.JSON(http.StatusOK, api.Me{User: user, Workspaces: s.memberships(user)})
+}
+
+// memberships are the workspaces user is a member of, sorted by name.
+func (s handlers) memberships(user string) []string {
 	workspaces := []string{}
 	for _, name := range slices.Sorted(maps.Keys(s.cfg.Operator.Workspaces)) {
 		if slices.Contains(s.cfg.Operator.Workspaces[name].Members, user) {
 			workspaces = append(workspaces, name)
 		}
 	}
-	c.JSON(http.StatusOK, api.Me{User: user, Workspaces: workspaces})
+	return workspaces
+}
+
+// ListConversations lists the conversations the user started in the
+// workspaces they are a member of. Its route is in no workspace, so the
+// membership middleware leaves it alone and the workspaces are checked here.
+func (s handlers) ListConversations(c *gin.Context, params api.ListConversationsParams) {
+	limit, ok := s.pageLimit(c, params.Limit)
+	if !ok {
+		return
+	}
+	user := c.GetString(userKey)
+	filter := store.ConversationFilter{User: user, Workspaces: s.memberships(user), Limit: limit}
+	if params.Before != "" {
+		var err error
+		if filter.BeforeAt, filter.BeforeID, err = parseConversationCursor(params.Before); err != nil {
+			s.fail(c, http.StatusBadRequest, err)
+			return
+		}
+	}
+	list, err := s.cfg.Store.Conversations(c.Request.Context(), filter)
+	if err != nil {
+		s.failStore(c, err)
+		return
+	}
+	out := api.ConversationList{Conversations: make([]api.ConversationSummary, len(list))}
+	for i, cv := range list {
+		out.Conversations[i] = apiConversation(cv)
+	}
+	// A full page may be the last: the next one is then empty.
+	if len(list) == limit {
+		out.Next = conversationCursor(list[len(list)-1])
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// GetConversation finds a conversation in one of the user's workspaces.
+func (s handlers) GetConversation(c *gin.Context, id string) {
+	cv, err := s.cfg.Store.FindConversation(c.Request.Context(), s.memberships(c.GetString(userKey)), id)
+	if err != nil {
+		s.failStore(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, apiConversation(cv))
+}
+
+func apiConversation(cv store.ConversationSummary) api.ConversationSummary {
+	return api.ConversationSummary{ID: cv.ID, Workspace: cv.Workspace, Harness: cv.Harness, Title: cv.Title}
+}
+
+// conversationCursor names the conversation a page of them ends with, for
+// the next page: its latest activity, in microseconds as stored, and its ID.
+func conversationCursor(cv store.ConversationSummary) string {
+	return strconv.FormatInt(cv.UpdatedAt.UnixMicro(), 10) + "." + cv.ID
+}
+
+func parseConversationCursor(cursor string) (time.Time, string, error) {
+	micros, id, ok := strings.Cut(cursor, ".")
+	at, err := strconv.ParseInt(micros, 10, 64)
+	if !ok || err != nil || id == "" {
+		return time.Time{}, "", fmt.Errorf("before %q: not a cursor of this API", cursor)
+	}
+	return time.UnixMicro(at), id, nil
+}
+
+// pageLimit is the page size a list's limit parameter asks for, the default
+// when it is not given. It answers a size out of range itself, and is then
+// not ok.
+func (s handlers) pageLimit(c *gin.Context, limit int) (int, bool) {
+	if _, set := c.GetQuery("limit"); !set {
+		return api.DefaultPageLimit, true
+	}
+	if limit < 1 || limit > api.MaxPageLimit {
+		s.fail(c, http.StatusBadRequest, fmt.Errorf("limit %d: must be from 1 to %d", limit, api.MaxPageLimit))
+		return 0, false
+	}
+	return limit, true
 }
 
 func (s handlers) PutHarness(c *gin.Context, workspace, name string) {
@@ -175,13 +259,9 @@ func (s handlers) ListRuns(c *gin.Context, workspace string, params api.ListRuns
 		s.fail(c, http.StatusBadRequest, fmt.Errorf("status %q: must be running, succeeded, failed or cancelled", params.Status))
 		return
 	}
-	limit := api.DefaultRunsLimit
-	if _, set := c.GetQuery("limit"); set {
-		if params.Limit < 1 || params.Limit > api.MaxRunsLimit {
-			s.fail(c, http.StatusBadRequest, fmt.Errorf("limit %d: must be from 1 to %d", params.Limit, api.MaxRunsLimit))
-			return
-		}
-		limit = params.Limit
+	limit, ok := s.pageLimit(c, params.Limit)
+	if !ok {
+		return
 	}
 	runs, err := s.cfg.Store.Runs(c.Request.Context(), workspace, store.RunFilter{
 		Harness: params.Harness,

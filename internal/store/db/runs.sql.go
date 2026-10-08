@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -136,6 +137,40 @@ func (q *Queries) FailRunningRuns(ctx context.Context, error string) (int64, err
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const findConversation = `-- name: FindConversation :one
+SELECT first.id, harness_versions.workspace, harness_versions.name AS harness,
+       left(first.input, 100)::text AS title
+FROM runs first
+JOIN harness_versions ON harness_versions.id = first.harness_version_id
+WHERE first.id = $1 AND first.id = first.conversation_id
+  AND harness_versions.workspace = ANY($2::text[])
+`
+
+type FindConversationParams struct {
+	ID         string
+	Workspaces []string
+}
+
+type FindConversationRow struct {
+	ID        string
+	Workspace string
+	Harness   string
+	Title     string
+}
+
+// The conversation named by id, if it is in one of the given workspaces.
+func (q *Queries) FindConversation(ctx context.Context, arg FindConversationParams) (FindConversationRow, error) {
+	row := q.db.QueryRow(ctx, findConversation, arg.ID, arg.Workspaces)
+	var i FindConversationRow
+	err := row.Scan(
+		&i.ID,
+		&i.Workspace,
+		&i.Harness,
+		&i.Title,
+	)
+	return i, err
 }
 
 const finishRun = `-- name: FinishRun :execrows
@@ -316,6 +351,74 @@ func (q *Queries) InsertRun(ctx context.Context, arg InsertRunParams) (InsertRun
 		&i.HarnessVersion,
 	)
 	return i, err
+}
+
+const listConversations = `-- name: ListConversations :many
+SELECT first.id, harness_versions.workspace, harness_versions.name AS harness,
+       left(first.input, 100)::text AS title, latest.created_at AS updated_at
+FROM runs first
+JOIN harness_versions ON harness_versions.id = first.harness_version_id
+JOIN runs latest ON latest.conversation_id = first.id
+ AND NOT EXISTS (SELECT 1 FROM runs n WHERE n.follows = latest.id)
+WHERE first.id = first.conversation_id
+  AND first.started_by = $1
+  AND harness_versions.workspace = ANY($2::text[])
+  AND ($3::text IS NULL
+       OR (latest.created_at, first.id) < ($4::timestamptz, $3::text))
+ORDER BY latest.created_at DESC, first.id DESC
+LIMIT $5
+`
+
+type ListConversationsParams struct {
+	StartedBy  string
+	Workspaces []string
+	BeforeID   pgtype.Text
+	BeforeAt   *time.Time
+	MaxRows    int32
+}
+
+type ListConversationsRow struct {
+	ID        string
+	Workspace string
+	Harness   string
+	Title     string
+	UpdatedAt time.Time
+}
+
+// The conversations started_by started in the given workspaces, latest
+// activity first, after the one with before_at and before_id when they are
+// set. A conversation is its first run, whose ID names it, and its latest
+// run, the one no run follows, whose creation is its latest activity.
+func (q *Queries) ListConversations(ctx context.Context, arg ListConversationsParams) ([]ListConversationsRow, error) {
+	rows, err := q.db.Query(ctx, listConversations,
+		arg.StartedBy,
+		arg.Workspaces,
+		arg.BeforeID,
+		arg.BeforeAt,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListConversationsRow
+	for rows.Next() {
+		var i ListConversationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Workspace,
+			&i.Harness,
+			&i.Title,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listRuns = `-- name: ListRuns :many

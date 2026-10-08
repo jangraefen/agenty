@@ -570,3 +570,40 @@ func TestRun_ACancelledRunStopsItsServers(t *testing.T) {
 
 	assert.Equal(t, 1, f.files.ClosedCount())
 }
+
+func TestListConversations(t *testing.T) {
+	f := newFixture(t, options{})
+	f.putNotes(t)
+	f.script(modeltest.Reply("tidied"))
+	first := f.startRun(t, "tidy my notes")
+	f.finish(t, first.ID)
+	f.script(modeltest.Reply("listed"))
+	second := f.startRun(t, "and the shopping list")
+	f.finish(t, second.ID)
+
+	var page api.ConversationList
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, "/v1/conversations?limit=1", nil, &page))
+	assert.Equal(t, []api.ConversationSummary{{ID: second.ID, Workspace: "home", Harness: "notes", Title: "and the shopping list"}}, page.Conversations)
+	require.NotEmpty(t, page.Next, "a full page may not be the last")
+
+	var rest api.ConversationList
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, "/v1/conversations?before="+page.Next, nil, &rest))
+	assert.Equal(t, []api.ConversationSummary{{ID: first.ID, Workspace: "home", Harness: "notes", Title: "tidy my notes"}}, rest.Conversations)
+	assert.Empty(t, rest.Next)
+
+	var theirs api.ConversationList
+	require.Equal(t, http.StatusOK, f.doAs(t, bobToken, http.MethodGet, "/v1/conversations", nil, &theirs))
+	assert.Empty(t, theirs.Conversations, "another member's conversations are not listed")
+
+	var found api.ConversationSummary
+	require.Equal(t, http.StatusOK, f.doAs(t, bobToken, http.MethodGet, "/v1/conversations/"+first.ID, nil, &found))
+	assert.Equal(t, rest.Conversations[0], found, "any member finds a conversation of the workspace")
+
+	for _, path := range []string{"/v1/conversations?limit=0", "/v1/conversations?limit=201", "/v1/conversations?before=nonsense", "/v1/conversations?before=12.", "/v1/conversations?before=x.y"} {
+		var e api.Error
+		assert.Equal(t, http.StatusBadRequest, f.do(t, http.MethodGet, path, nil, &e), path)
+	}
+	var e api.Error
+	assert.Equal(t, http.StatusNotFound, f.do(t, http.MethodGet, "/v1/conversations/ghost", nil, &e))
+	assert.Equal(t, http.StatusNotFound, f.do(t, http.MethodGet, "/v1/conversations/"+second.ID+"x", nil, &e))
+}

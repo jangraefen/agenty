@@ -686,6 +686,17 @@ func TestMe(t *testing.T) {
 func TestInvariant_WorkspacesAreSeparate(t *testing.T) {
 	f := newFixture(t, options{policy: []policy.Module{policy.RulesModule("central", `require_approval contains "writes need a human" if input.tool == "files_write"`)}})
 	f.putNotes(t)
+	// carol's own conversation in home, a workspace she is not in, as after
+	// she was removed from it; cancelled before any worker wakes, so none
+	// runs it.
+	ctx := context.Background()
+	v, err := f.store.Harness(ctx, "home", "notes")
+	require.NoError(t, err)
+	_, err = f.store.CreateRun(ctx, store.NewRun{ID: "carols", HarnessVersionID: v.ID, Input: "x", StartedBy: "carol"})
+	require.NoError(t, err)
+	cancelled, err := f.store.CancelIdleRun(ctx, "carols", "seeded")
+	require.NoError(t, err)
+	require.True(t, cancelled)
 	f.script(modeltest.CallTools(call("c1", "files_write", `{}`)))
 	// The run resumes, once answered, on a model of its own.
 	f.script(modeltest.Reply("done"))
@@ -744,6 +755,20 @@ func TestInvariant_WorkspacesAreSeparate(t *testing.T) {
 		var mine []api.ApprovalRequest
 		require.Equal(t, http.StatusOK, f.doAs(t, bobToken, http.MethodGet, home+"/approvals", nil, &mine))
 		assert.Len(t, mine, 1, "the request is listed in its own workspace")
+	})
+
+	t.Run("conversations", func(t *testing.T) {
+		var mine api.ConversationList
+		require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, "/v1/conversations", nil, &mine))
+		require.Len(t, mine.Conversations, 1)
+		assert.Equal(t, run.ID, mine.Conversations[0].ID, "only the user's own conversations are listed")
+		var none api.ConversationList
+		require.Equal(t, http.StatusOK, f.doAs(t, carolToken, http.MethodGet, "/v1/conversations", nil, &none))
+		assert.Empty(t, none.Conversations, "only conversations of the user's workspaces are listed")
+		for _, id := range []string{"carols", run.ID} {
+			var e api.Error
+			assert.Equal(t, http.StatusNotFound, f.doAs(t, carolToken, http.MethodGet, "/v1/conversations/"+id, nil, &e), id)
+		}
 	})
 
 	assert.Zero(t, f.write.Calls, "no outsider answered the approval")

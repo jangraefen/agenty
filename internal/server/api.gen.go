@@ -14,6 +14,12 @@ import (
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// ListConversations The conversations the user started, latest activity first, a page at a time
+	// (GET /v1/conversations)
+	ListConversations(c *gin.Context, params ListConversationsParams)
+	// GetConversation A conversation in one of the user's workspaces
+	// (GET /v1/conversations/{id})
+	GetConversation(c *gin.Context, id string)
 	// GetMe The signed-in user and their workspaces
 	// (GET /v1/me)
 	GetMe(c *gin.Context)
@@ -69,6 +75,66 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(c *gin.Context)
+
+// ListConversations operation middleware
+func (siw *ServerInterfaceWrapper) ListConversations(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListConversationsParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", c.Request.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter limit: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "before" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "before", c.Request.URL.Query(), &params.Before, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter before: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ListConversations(c, params)
+}
+
+// GetConversation operation middleware
+func (siw *ServerInterfaceWrapper) GetConversation(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", c.Param("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter id: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetConversation(c, id)
+}
 
 // GetMe operation middleware
 func (siw *ServerInterfaceWrapper) GetMe(c *gin.Context) {
@@ -595,6 +661,8 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	}
 
 	router.GET(options.BaseURL+"/v1/me", wrapper.GetMe)
+	router.GET(options.BaseURL+"/v1/conversations", wrapper.ListConversations)
+	router.GET(options.BaseURL+"/v1/conversations/:id", wrapper.GetConversation)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace/harnesses", wrapper.ListHarnesses)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace/harnesses/:name", wrapper.GetHarness)
 	router.PUT(options.BaseURL+"/v1/workspaces/:workspace/harnesses/:name", wrapper.PutHarness)

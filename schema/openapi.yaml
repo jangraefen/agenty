@@ -40,6 +40,53 @@ paths:
               schema: {$ref: "#/components/schemas/Me"}
         default: {$ref: "#/components/responses/Error"}
 
+  /v1/conversations:
+    get:
+      operationId: listConversations
+      summary: The conversations the user started, latest activity first, a page at a time
+      description: |
+        The conversations whose first run the user started, in the
+        workspaces they are a member of, the one whose latest run was
+        started last first. Following up a conversation does not make it
+        the follower's. A conversation is continued, cancelled and answered
+        through its workspace. A conversation followed up while the pages
+        are read moves to the first page, so later pages leave it out.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - name: before
+          in: query
+          description: Continue after the conversation this cursor names, as ConversationList.next gives it.
+          schema: {type: string}
+      responses:
+        "200":
+          description: A page of conversations.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ConversationList"}
+        default: {$ref: "#/components/responses/Error"}
+
+  /v1/conversations/{id}:
+    get:
+      operationId: getConversation
+      summary: A conversation in one of the user's workspaces
+      description: |
+        Any member of the conversation's workspace finds it, not only the
+        user who started it; in a workspace the user is not a member of, it
+        is not found. Only the ID of its first run names it.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The ID of the conversation's first run.
+          schema: {type: string}
+      responses:
+        "200":
+          description: The conversation.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ConversationSummary"}
+        default: {$ref: "#/components/responses/Error"}
+
   /v1/workspaces/{workspace}/harnesses:
     parameters:
       - $ref: "#/components/parameters/Workspace"
@@ -108,10 +155,7 @@ paths:
           in: query
           description: Only the runs with this status.
           schema: {$ref: "#/components/schemas/RunStatus"}
-        - name: limit
-          in: query
-          description: The page size.
-          schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+        - $ref: "#/components/parameters/Limit"
         - name: before
           in: query
           description: |
@@ -335,6 +379,11 @@ components:
       in: path
       required: true
       schema: {type: string}
+    Limit:
+      name: limit
+      in: query
+      description: The page size.
+      schema: {type: integer, minimum: 1, maximum: 200, default: 50}
 
   responses:
     Error:
@@ -509,6 +558,30 @@ components:
         runs:
           type: array
           items: {$ref: "#/components/schemas/Run"}
+        next:
+          description: The before parameter of the next page, which may be empty.
+          type: string
+
+    ConversationSummary:
+      type: object
+      required: [id, workspace, harness, title]
+      properties:
+        id:
+          description: The ID of the conversation's first run, which names it.
+          type: string
+        workspace: {type: string}
+        harness: {type: string}
+        title:
+          description: The first run's input, cut to its first 100 characters.
+          type: string
+
+    ConversationList:
+      type: object
+      required: [conversations]
+      properties:
+        conversations:
+          type: array
+          items: {$ref: "#/components/schemas/ConversationSummary"}
         next:
           description: The before parameter of the next page, which may be empty.
           type: string

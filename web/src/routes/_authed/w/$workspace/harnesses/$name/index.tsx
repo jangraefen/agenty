@@ -1,12 +1,9 @@
-import { useMutation, useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { type FormEvent, useId, useState } from "react";
-import { unwrap } from "@/api/client";
+import { useSuspenseQuery } from "@tanstack/react-query";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useId } from "react";
 import { harnessQuery } from "@/api/queries";
 import { CodeBlock } from "@/components/code-block";
-import { Button, buttonVariants } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { buttonVariants } from "@/components/ui/button";
 import { formatTime } from "@/lib/format";
 import { harnessYaml } from "@/lib/harness-yaml";
 
@@ -41,6 +38,13 @@ function HarnessPage() {
           Runs of this harness
         </Link>
         <Link
+          to="/w/$workspace/harnesses/$name/new"
+          params={{ workspace, name: harness.name }}
+          className={buttonVariants({ size: "sm" })}
+        >
+          New conversation
+        </Link>
+        <Link
           to="/w/$workspace/harnesses/$name/edit"
           params={{ workspace, name: harness.name }}
           className={buttonVariants({ variant: "outline", size: "sm" })}
@@ -48,8 +52,6 @@ function HarnessPage() {
           Edit
         </Link>
       </header>
-
-      <StartRun name={harness.name} />
 
       <section>
         <h2 className="text-sm font-semibold">Instructions</h2>
@@ -109,54 +111,5 @@ function HarnessPage() {
         </figure>
       </section>
     </article>
-  );
-}
-
-function StartRun({ name }: { name: string }) {
-  const { workspace } = Route.useParams();
-  const { api } = Route.useRouteContext();
-  const navigate = useNavigate();
-  const [input, setInput] = useState("");
-  const id = useId();
-  const start = useMutation({
-    mutationFn: () =>
-      unwrap(
-        api.POST("/v1/workspaces/{workspace}/runs", {
-          params: { path: { workspace } },
-          body: { harness: name, input },
-        }),
-      ),
-    onSuccess: (run) =>
-      navigate({ to: "/w/$workspace/runs/$runId", params: { workspace, runId: run.id } }),
-  });
-
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    start.mutate();
-  }
-
-  return (
-    <form onSubmit={submit} className="grid gap-2 rounded-md border p-4">
-      <Label htmlFor={`${id}-input`} className="font-semibold">
-        Input
-      </Label>
-      <Textarea
-        id={`${id}-input`}
-        required
-        rows={3}
-        value={input}
-        onChange={(event) => setInput(event.target.value)}
-        aria-invalid={start.isError}
-        aria-describedby={start.isError ? `${id}-error` : undefined}
-      />
-      {start.isError && (
-        <p id={`${id}-error`} role="alert" className="text-sm text-destructive">
-          The run could not be started: {start.error.message}
-        </p>
-      )}
-      <Button type="submit" className="justify-self-start" aria-disabled={start.isPending}>
-        Start run
-      </Button>
-    </form>
   );
 }

@@ -2,9 +2,9 @@ import { screen, waitFor, within } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { beforeEach, expect, test } from "vitest";
 import { apiUrl } from "@/config";
-import { run, storedHarness } from "@/test/fixtures";
+import { storedHarness } from "@/test/fixtures";
 import { renderApp } from "@/test/render";
-import { eventStream, meHandler, server, TOKEN } from "@/test/server";
+import { meHandler, server, TOKEN } from "@/test/server";
 
 const base = `${apiUrl}/v1/workspaces/notes`;
 const notes = storedHarness(
@@ -59,43 +59,18 @@ test("shows the harness as YAML, read-only", async () => {
   expect(yaml).toHaveTextContent("max_tool_calls: 20");
 });
 
-test("starts a run and opens it", async () => {
-  let body: unknown = null;
-  server.use(
-    http.post(`${base}/runs`, async ({ request }) => {
-      body = await request.json();
-      return HttpResponse.json(run({ id: "run-9", status: "running" }), { status: 201 });
-    }),
-    http.get(`${base}/runs/run-9`, () => HttpResponse.json(run({ id: "run-9" }))),
-    http.get(`${base}/runs/run-9/events`, () => eventStream([{ event: "finished", data: run() }])),
-    http.get(`${base}/runs/run-9/transcript`, () => HttpResponse.json([])),
-  );
+test("offers a new conversation, before editing", async () => {
   const { history, user } = renderApp("/w/notes/harnesses/notes", TOKEN);
 
-  await user.type(await screen.findByLabelText("Input"), "tidy my notes");
-  await user.click(screen.getByRole("button", { name: "Start run" }));
+  const start = await screen.findByRole("link", { name: "New conversation" });
+  const edit = screen.getByRole("link", { name: "Edit" });
+  expect(start.compareDocumentPosition(edit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  await user.click(start);
 
   await waitFor(() => {
-    expect(history.location.pathname).toBe("/w/notes/runs/run-9");
+    expect(history.location.pathname).toBe("/w/notes/harnesses/notes/new");
   });
-  expect(body).toEqual({ harness: "notes", input: "tidy my notes" });
-});
-
-test("reports a run the server refuses to start", async () => {
-  server.use(
-    http.post(`${base}/runs`, () =>
-      HttpResponse.json({ error: "cannot start run: the server is stopping" }, { status: 503 }),
-    ),
-  );
-  const { user } = renderApp("/w/notes/harnesses/notes", TOKEN);
-
-  await user.type(await screen.findByLabelText("Input"), "go");
-  await user.click(screen.getByRole("button", { name: "Start run" }));
-
-  expect(await screen.findByRole("alert")).toHaveTextContent("the server is stopping");
-  const input = screen.getByLabelText("Input");
-  expect(input).toHaveAttribute("aria-invalid", "true");
-  expect(input).toHaveAccessibleDescription(/the server is stopping/);
 });
 
 test("links to the harness's runs", async () => {

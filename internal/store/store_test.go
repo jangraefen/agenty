@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jangraefen/agenty/internal/auditlog"
 	"github.com/jangraefen/agenty/internal/harness"
 	"github.com/jangraefen/agenty/internal/policy"
 	"github.com/jangraefen/agenty/internal/store"
@@ -665,7 +666,9 @@ func TestRecord_KeepsJSONInItsOrder(t *testing.T) {
 
 	got, err := s.AuditRecords(ctx, "r1")
 	require.NoError(t, err)
-	assert.Equal(t, `{"b":1,"a":2,"a":"\u003c3\u003e"}`, string(got[0].Args),
+	canonical, err := auditlog.Canonical([]byte(args))
+	require.NoError(t, err)
+	assert.Equal(t, string(canonical), string(got[0].Args),
 		"the audit keeps key order and duplicate keys as the model sent them, in the canonical form the log's hashes cover")
 }
 

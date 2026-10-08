@@ -92,6 +92,7 @@ func (e Event) Sum() Hash {
 		h.Write(b)
 	}
 	number := func(n int64) {
+		//nolint:gosec // G115: what is hashed is the number's two's-complement bits, for any value.
 		h.Write(binary.BigEndian.AppendUint64(nil, uint64(n)))
 	}
 	field([]byte(tag))

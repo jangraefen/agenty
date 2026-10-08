@@ -288,7 +288,7 @@ func TestAuditEvents_RunsAndHarnesses(t *testing.T) {
 	n, err := s.FailRunningRuns(ctx, "the server stopped")
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), n)
-	_, err = s.AppendEvent(ctx, auditlog.Event{Actor: "dana", Action: "audit.read", Details: json.RawMessage(`{"read":"runs"}`)})
+	_, err = s.AppendEvent(ctx, auditlog.Event{Action: "server.started", Details: json.RawMessage(`{}`)})
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{
@@ -300,7 +300,7 @@ func TestAuditEvents_RunsAndHarnesses(t *testing.T) {
 		` run.finished home r2  {"status":"cancelled","steps":0,"error":"cancelled by alice"}`,
 		`bob run.started home r3  {"harness":"notes","version":1}`,
 		` run.finished home r3  {"status":"failed","steps":0,"error":"the server stopped"}`,
-		`dana audit.read    {"read":"runs"}`,
+		` server.started    {}`,
 	}, events(t, s, 0), "what was said in a run is never part of its events")
 	_, err = auditlog.Verify(bytes.NewReader(export(t, s)))
 	require.NoError(t, err)
@@ -347,7 +347,7 @@ func TestListAuditEvents(t *testing.T) {
 	require.NoError(t, err)
 	createRun(t, s, store.NewRun{ID: "r1", HarnessVersionID: v.ID, Input: "x", StartedBy: "alice"})
 	record(t, s, toolgateway.Record{RunID: "r1", CallID: "c1", Event: toolgateway.EventDecision, Tool: "files_read", Decision: toolgateway.Allow})
-	_, err = s.AppendEvent(ctx, auditlog.Event{Actor: "dana", Action: "audit.read", Details: json.RawMessage(`{"read":"runs"}`)})
+	_, err = s.AppendEvent(ctx, auditlog.Event{Action: "server.started", Details: json.RawMessage(`{}`)})
 	require.NoError(t, err)
 
 	list := func(f store.EventFilter) []string {
@@ -365,8 +365,8 @@ func TestListAuditEvents(t *testing.T) {
 		filter store.EventFilter
 		want   []string
 	}{
-		{"all, newest first", store.EventFilter{Limit: 10}, []string{"5 audit.read", "4 tool.decision", "3 run.started", "2 harness.changed", "1 harness.changed"}},
-		{"a page", store.EventFilter{Limit: 2}, []string{"5 audit.read", "4 tool.decision"}},
+		{"all, newest first", store.EventFilter{Limit: 10}, []string{"5 server.started", "4 tool.decision", "3 run.started", "2 harness.changed", "1 harness.changed"}},
+		{"a page", store.EventFilter{Limit: 2}, []string{"5 server.started", "4 tool.decision"}},
 		{"the next page", store.EventFilter{Limit: 2, Before: 4}, []string{"3 run.started", "2 harness.changed"}},
 		{"by an actor", store.EventFilter{Limit: 10, Actor: "alice"}, []string{"4 tool.decision", "3 run.started", "1 harness.changed"}},
 		{"in a workspace", store.EventFilter{Limit: 10, Workspace: "work"}, []string{"2 harness.changed"}},
@@ -389,7 +389,6 @@ func TestListAuditEvents(t *testing.T) {
 		}
 		return out
 	}
-	assert.Equal(t, []string{"5 audit.read"}, ids(s.ActorEvents(ctx, "dana", nil, 0, 10)), "an event of no workspace is always the actor's")
 	assert.Equal(t, []string{"4 tool.decision", "3 run.started", "1 harness.changed"}, ids(s.ActorEvents(ctx, "alice", []string{ws}, 0, 10)))
 	assert.Equal(t, []string{"3 run.started", "1 harness.changed"}, ids(s.ActorEvents(ctx, "alice", []string{ws}, 4, 10)), "before an event")
 	assert.Empty(t, ids(s.ActorEvents(ctx, "alice", []string{"work"}, 0, 10)), "nothing of a workspace the actor left")

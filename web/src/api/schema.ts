@@ -120,10 +120,9 @@ export interface paths {
         /**
          * What the user did, newest first, a page at a time
          * @description The events whose actor is the user, in the workspaces they are a
-         *     member of now, or in none: their runs and their calls, their
-         *     approvals, cancels and harness changes, and, for an auditor, their
-         *     reads. Not what others did, auditors' reads of the user's runs
-         *     included, nor how a run ended, which the server records.
+         *     member of now: their runs and their calls, their approvals, cancels
+         *     and harness changes. Not what others did, nor how a run ended, which
+         *     the server records.
          */
         get: operations["listMyActivity"];
         put?: never;
@@ -143,8 +142,7 @@ export interface paths {
         };
         /**
          * Every event of the audit log, newest first, a page at a time, for auditors
-         * @description Only auditors may list them; anyone else is forbidden. The listing
-         *     is itself recorded as an auditor's read.
+         * @description Only auditors may list them; anyone else is forbidden.
          */
         get: operations["listAuditEvents"];
         put?: never;

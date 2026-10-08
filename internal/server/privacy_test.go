@@ -159,7 +159,7 @@ func TestExportAuditLog(t *testing.T) {
 	assert.Equal(t, int64(1), sum.First)
 	assert.Contains(t, whole, `"action":"tool.decision"`, "the run's calls are in it")
 	assert.Contains(t, whole, `"action":"tool.result"`)
-	assert.Contains(t, whole, `"read":"export"`, "and the export itself, an auditor's read")
+	assert.NotContains(t, whole, `"actor":"dana"`, "an export is no event of its own")
 
 	rest, trailer := f.export(t, "?after=1")
 	assert.Equal(t, "true", trailer)

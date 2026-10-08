@@ -13,9 +13,9 @@ import {
 // A run's event stream, as its audit records so far, oldest first. The other
 // events update the queries they change: an approval request the waiting
 // approvals, an audit record the transcript, and the run's end the run and
-// its conversation. A
-// stream that stops before the run ends fails the query, keeping the records
-// read; a refetch reads the stream again from the run's start.
+// its conversation. A stream that stops before the run ends fails the query,
+// keeping the records read; a refetch reads the stream again from the run's
+// start.
 export function runEventsQuery(api: Api, workspace: string, id: string) {
   return queryOptions({
     // Not under the run's key, whose cancelling and invalidating would stop

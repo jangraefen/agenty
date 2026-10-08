@@ -33,7 +33,6 @@ function harnessServer(existing: Schemas["HarnessVersion"][] = []) {
 beforeEach(() => {
   server.use(
     meHandler({ user: "demo", workspaces: ["notes"] }),
-    http.get(`${base}/approvals`, () => HttpResponse.json([])),
     http.get(`${base}/harnesses`, () => HttpResponse.json([])),
   );
 });
@@ -174,7 +173,9 @@ describe("the new harness form", () => {
     await user.type(screen.getByLabelText("Model"), "a-model");
     await user.click(screen.getByRole("button", { name: "Create harness" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("rego_parse_error");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The harness could not be saved: invalid harness: rego_parse_error",
+    );
   });
 
   test("adds and removes policy modules", async () => {

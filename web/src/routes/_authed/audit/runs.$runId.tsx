@@ -2,6 +2,7 @@ import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { auditRunQuery } from "@/api/queries";
 import { AuditRecords } from "@/components/audit-records";
+import { NotFoundPage } from "@/components/route-states";
 import { RunStatusBadge } from "@/components/run-status";
 import { formatDuration, formatTime, formatUsage } from "@/lib/format";
 import { orNotFound } from "@/lib/not-found";
@@ -12,7 +13,13 @@ export const Route = createFileRoute("/_authed/audit/runs/$runId")({
   loader: ({ context: { queryClient, api }, params }) =>
     orNotFound(queryClient.ensureQueryData(auditRunQuery(api, params.runId))),
   component: AuditRunPage,
-  notFoundComponent: RunNotFound,
+  notFoundComponent: () => (
+    <NotFoundPage title="Run not found">
+      <Link to="/audit" className="underline">
+        All runs
+      </Link>
+    </NotFoundPage>
+  ),
 });
 
 function AuditRunPage() {
@@ -73,16 +80,5 @@ function AuditRunPage() {
         <AuditRecords records={records} />
       </section>
     </article>
-  );
-}
-
-function RunNotFound() {
-  return (
-    <section>
-      <h1 className="text-xl font-semibold">Run not found</h1>
-      <Link to="/audit" className="mt-2 inline-block underline">
-        All runs
-      </Link>
-    </section>
   );
 }

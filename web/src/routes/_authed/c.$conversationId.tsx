@@ -2,6 +2,7 @@ import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useLocation } from "@tanstack/react-router";
 import { conversationQuery, conversationSummaryQuery, runQuery } from "@/api/queries";
 import { ConversationChat } from "@/components/chat";
+import { NotFoundPage } from "@/components/route-states";
 import { orNotFound } from "@/lib/not-found";
 
 // A conversation's chat, in whichever of the user's workspaces it is. A
@@ -38,12 +39,14 @@ function ChatPage() {
 
 function ConversationNotFound() {
   return (
-    <section className="mx-auto max-w-3xl">
-      <h1 className="text-xl font-semibold">Conversation not found</h1>
-      <p className="mt-2 text-muted-foreground">It does not exist, or someone else started it.</p>
-      <Link to="/" className="mt-2 inline-block underline">
+    <NotFoundPage
+      title="Conversation not found"
+      detail="It does not exist, or someone else started it."
+      className="mx-auto max-w-3xl"
+    >
+      <Link to="/" className="underline">
         Start a new chat
       </Link>
-    </section>
+    </NotFoundPage>
   );
 }

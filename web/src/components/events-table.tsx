@@ -3,7 +3,7 @@ import { type ReactNode, useId, useState } from "react";
 import { LuChevronRight } from "react-icons/lu";
 import type { Schemas } from "@/api/client";
 import { Json } from "@/components/json";
-import { Button } from "@/components/ui/button";
+import { LoadMore } from "@/components/load-more";
 import { formatTime } from "@/lib/format";
 
 type Event = Schemas["AuditLogEvent"];
@@ -104,19 +104,8 @@ export function EventsTable({
           </table>
         </div>
       )}
-      {limit === undefined && events.hasNextPage && (
-        <Button
-          variant="outline"
-          className="justify-self-start"
-          aria-disabled={events.isFetchingNextPage}
-          onClick={() => {
-            if (!events.isFetchingNextPage) {
-              void events.fetchNextPage();
-            }
-          }}
-        >
-          Load more
-        </Button>
+      {limit === undefined && (
+        <LoadMore query={events} variant="outline" className="justify-self-start" />
       )}
     </>
   );
@@ -140,6 +129,9 @@ function EventRow({
   const [open, setOpen] = useState(false);
   const id = useId();
   const columns = 4 + Number(showActor) + Number(showWorkspace);
+  const labelledBy = ["toggle", "what", ...(showWorkspace ? ["workspace"] : []), "of", "summary"]
+    .map((cell) => `${id}-${cell}`)
+    .join(" ");
   return (
     <>
       <tr className={open ? "align-top" : "border-b align-top last:border-0"}>
@@ -148,7 +140,7 @@ function EventRow({
             type="button"
             aria-expanded={open}
             aria-controls={id}
-            aria-labelledby={`${id}-toggle ${id}-what ${id}-workspace ${id}-of ${id}-summary`}
+            aria-labelledby={labelledBy}
             onClick={() => setOpen(!open)}
             className="rounded-sm p-1 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           >

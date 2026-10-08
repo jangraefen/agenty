@@ -28,6 +28,15 @@ export function meQuery(api: Api) {
   });
 }
 
+// A workspace of the user's, with its members.
+export function workspaceQuery(api: Api, workspace: string) {
+  return queryOptions({
+    queryKey: ["workspaces", workspace],
+    queryFn: () =>
+      unwrap(api.GET("/v1/workspaces/{workspace}", { params: { path: { workspace } } })),
+  });
+}
+
 export function harnessesQuery(api: Api, workspace: string) {
   return queryOptions({
     queryKey: ["workspaces", workspace, "harnesses"],

@@ -5,6 +5,7 @@ import {
   LuChevronsUpDown,
   LuCircleAlert,
   LuFileClock,
+  LuLayoutDashboard,
   LuLock,
   LuLogOut,
   LuScrollText,
@@ -30,7 +31,7 @@ export function AppSidebar() {
   const { me, session } = useRouteContext({ from: "/_authed" });
   const navigate = useNavigate();
   // The workspace of a management page, if the user is a member of it, else
-  // the first.
+  // the first: pages outside a workspace, such as a chat, manage the first.
   const { workspace: param } = useParams({ strict: false });
   const workspace = param !== undefined && me.workspaces.includes(param) ? param : me.workspaces[0];
 
@@ -147,7 +148,16 @@ function Manage({ workspace, workspaces }: { workspace: string; workspaces: stri
   return (
     <nav aria-label="Manage" className="grid gap-1">
       <h2 className="px-2 text-xs font-medium text-muted-foreground">Manage</h2>
-      {workspaces.length > 1 && <WorkspaceMenu workspace={workspace} workspaces={workspaces} />}
+      <WorkspaceMenu workspace={workspace} workspaces={workspaces} />
+      <Link
+        to="/w/$workspace"
+        params={{ workspace }}
+        activeOptions={{ exact: true }}
+        className={itemClass}
+      >
+        <LuLayoutDashboard aria-hidden="true" className="size-4 shrink-0" />
+        Overview
+      </Link>
       <Link to="/w/$workspace/harnesses" params={{ workspace }} className={itemClass}>
         <LuBot aria-hidden="true" className="size-4 shrink-0" />
         Harnesses
@@ -160,8 +170,9 @@ function Manage({ workspace, workspaces }: { workspace: string; workspaces: stri
   );
 }
 
-// WorkspaceMenu switches to managing another of the user's workspaces. Not
-// modal, so the page stays usable while it is open.
+// WorkspaceMenu names the workspace managed and switches to the overview of
+// another of the user's. Not modal, so the page stays usable while it is
+// open.
 function WorkspaceMenu({ workspace, workspaces }: { workspace: string; workspaces: string[] }) {
   return (
     <DropdownMenu modal={false}>
@@ -175,7 +186,7 @@ function WorkspaceMenu({ workspace, workspaces }: { workspace: string; workspace
         {workspaces.map((name) => (
           <DropdownMenuItem key={name} asChild>
             <Link
-              to="/w/$workspace/harnesses"
+              to="/w/$workspace"
               params={{ workspace: name }}
               aria-current={name === workspace ? "true" : undefined}
               className="aria-[current]:font-semibold"

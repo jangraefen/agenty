@@ -681,6 +681,13 @@ func TestMe(t *testing.T) {
 	}
 }
 
+func TestGetWorkspace(t *testing.T) {
+	f := newFixture(t, options{workspaces: map[string]config.Workspace{"home": {Members: []string{"dana", "alice", "bob"}}}})
+	var ws api.WorkspaceDetail
+	require.Equal(t, http.StatusOK, f.doAs(t, bobToken, http.MethodGet, home, nil, &ws))
+	assert.Equal(t, api.WorkspaceDetail{Name: "home", Members: []string{"alice", "bob", "dana"}}, ws, "its members, sorted")
+}
+
 // TestInvariant_WorkspacesAreSeparate guards workspace membership: a user
 // sees and changes nothing in a workspace they are not a member of, and a
 // run is found only in its own workspace, so its ID alone gives no access.
@@ -720,6 +727,7 @@ func TestInvariant_WorkspacesAreSeparate(t *testing.T) {
 			token, method, path string
 			body                any
 		}{
+			{carolToken, http.MethodGet, home, nil},
 			{carolToken, http.MethodGet, home + "/harnesses", nil},
 			{carolToken, http.MethodGet, home + "/harnesses/notes", nil},
 			{carolToken, http.MethodPut, home + "/harnesses/notes", notes()},
@@ -732,7 +740,9 @@ func TestInvariant_WorkspacesAreSeparate(t *testing.T) {
 			{carolToken, http.MethodPost, home + "/runs/" + run.ID + "/follow-up", api.FollowUp{Input: "x"}},
 			{carolToken, http.MethodGet, home + "/runs/" + run.ID + "/conversation", nil},
 			{carolToken, http.MethodGet, home + "/approvals", nil},
+			{aliceToken, http.MethodGet, work, nil},
 			{aliceToken, http.MethodGet, work + "/harnesses", nil},
+			{aliceToken, http.MethodGet, "/v1/workspaces/ghost", nil},
 			{aliceToken, http.MethodPut, work + "/harnesses/notes", notes()},
 			{aliceToken, http.MethodGet, "/v1/workspaces/ghost/harnesses", nil},
 		} {

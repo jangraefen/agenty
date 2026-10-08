@@ -223,6 +223,20 @@ paths:
               schema: {type: string}
         default: {$ref: "#/components/responses/Error"}
 
+  /v1/workspaces/{workspace}:
+    parameters:
+      - $ref: "#/components/parameters/Workspace"
+    get:
+      operationId: getWorkspace
+      summary: The workspace and its members
+      responses:
+        "200":
+          description: The workspace.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/WorkspaceDetail"}
+        default: {$ref: "#/components/responses/Error"}
+
   /v1/workspaces/{workspace}/audit:
     parameters:
       - $ref: "#/components/parameters/Workspace"
@@ -532,6 +546,18 @@ components:
         auditor:
           description: Whether the user may read the audit log of every workspace.
           type: boolean
+
+    WorkspaceDetail:
+      description: A workspace, as its members see it.
+      type: object
+      additionalProperties: false
+      required: [name, members]
+      properties:
+        name: {type: string}
+        members:
+          description: The users who are members of it, sorted.
+          type: array
+          items: {type: string}
 
     Harness:
       description: A declarative definition of an agent.

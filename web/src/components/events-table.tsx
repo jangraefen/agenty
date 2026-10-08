@@ -46,21 +46,24 @@ function summary({ action, details: d }: Event): string {
 // EventsTable lists audit log events, newest first, and loads more on
 // request. Their details come from users, models and tools, so they are
 // shown as text only. showActor adds who acted, showWorkspace where;
-// subject links an event's run or names its target.
+// subject links an event's run or names its target. limit shows only the
+// newest events, without loading more.
 export function EventsTable({
   events,
   empty,
   showActor,
   showWorkspace = true,
   subject = (event) => event.run_id || event.target,
+  limit,
 }: {
   events: UseInfiniteQueryResult<InfiniteData<Schemas["AuditLogEventList"]>>;
   empty: string;
   showActor: boolean;
   showWorkspace?: boolean;
   subject?: (event: Event) => ReactNode;
+  limit?: number;
 }) {
-  const listed = events.data?.pages.flatMap((page) => page.events) ?? [];
+  const listed = (events.data?.pages.flatMap((page) => page.events) ?? []).slice(0, limit);
   return (
     <>
       {events.isPending && <p className="text-muted-foreground">Loading events…</p>}
@@ -101,7 +104,7 @@ export function EventsTable({
           </table>
         </div>
       )}
-      {events.hasNextPage && (
+      {limit === undefined && events.hasNextPage && (
         <Button
           variant="outline"
           className="justify-self-start"

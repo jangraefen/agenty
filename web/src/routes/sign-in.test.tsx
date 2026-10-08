@@ -169,15 +169,12 @@ describe("workspaces", () => {
     const menu = await screen.findByRole("menu");
     expect(within(menu).getByRole("menuitem", { name: "notes" })).toHaveAttribute("aria-current");
     expect(within(menu).getByRole("menuitem", { name: "ops" })).not.toHaveAttribute("aria-current");
-    expect(within(menu).getByRole("menuitem", { name: "ops" })).toHaveAttribute(
-      "href",
-      "/w/ops/harnesses",
-    );
+    expect(within(menu).getByRole("menuitem", { name: "ops" })).toHaveAttribute("href", "/w/ops");
 
     await user.click(within(menu).getByRole("menuitem", { name: "ops" }));
 
     await waitFor(() => {
-      expect(history.location.pathname).toBe("/w/ops/harnesses");
+      expect(history.location.pathname).toBe("/w/ops");
     });
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
@@ -206,7 +203,7 @@ describe("workspaces", () => {
     await user.keyboard("{ArrowDown}{Enter}");
 
     await waitFor(() => {
-      expect(history.location.pathname).toBe("/w/ops/harnesses");
+      expect(history.location.pathname).toBe("/w/ops");
     });
   });
 

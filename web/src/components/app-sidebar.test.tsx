@@ -106,6 +106,9 @@ test("manages the workspace of the page", async () => {
     "aria-current",
     "page",
   );
+  const overview = within(manage).getByRole("link", { name: "Overview" });
+  expect(overview).toHaveAttribute("href", "/w/work");
+  expect(overview).not.toHaveAttribute("aria-current", "page");
 });
 
 test("manages none of a workspace the user is not a member of", async () => {
@@ -119,12 +122,19 @@ test("manages none of a workspace the user is not a member of", async () => {
   );
 });
 
-test("offers no workspace switcher with one workspace", async () => {
+test("names the workspace it manages, even the user's only one", async () => {
   server.use(meHandler({ user: "demo", workspaces: ["notes"] }));
-  renderApp("/w/notes/harnesses", TOKEN);
+  const { user } = renderApp("/", TOKEN);
 
   const manage = await screen.findByRole("navigation", { name: "Manage" });
-  expect(within(manage).queryByRole("button", { name: /Workspace/ })).not.toBeInTheDocument();
+  await user.click(within(manage).getByRole("button", { name: "Workspace: notes" }));
+  const menu = await screen.findByRole("menu");
+  expect(
+    within(menu)
+      .getAllByRole("menuitem")
+      .map((item) => item.textContent),
+  ).toEqual(["notes"]);
+  expect(within(menu).getByRole("menuitem", { name: "notes" })).toHaveAttribute("href", "/w/notes");
 });
 
 test("the menu button shows and hides the sidebar, and a page left hides it", async () => {

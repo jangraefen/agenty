@@ -64,7 +64,7 @@ function Overview() {
           <p className="text-muted-foreground">No harnesses yet.</p>
         )}
         {harnesses.isSuccess && harnesses.data.length > 0 && (
-          <ul className="grid gap-1 text-sm">
+          <ul aria-labelledby="harnesses" className="grid gap-1 text-sm">
             {harnesses.data.map(({ harness, version }) => (
               <li key={harness.name} className="flex gap-2">
                 <Link

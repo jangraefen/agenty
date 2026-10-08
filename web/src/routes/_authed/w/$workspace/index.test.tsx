@@ -43,6 +43,7 @@ test("shows the workspace's members, harnesses and latest changes", async () => 
   ).toEqual(["ana", "demo"]);
 
   const harnesses = screen.getByRole("region", { name: "Harnesses" });
+  expect(within(harnesses).getByRole("list", { name: "Harnesses" })).toBeInTheDocument();
   expect(within(harnesses).getByRole("link", { name: "tidy" })).toHaveAttribute(
     "href",
     "/w/notes/harnesses/tidy",

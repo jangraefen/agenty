@@ -122,7 +122,6 @@ func (f *fixture) serve(t *testing.T, opts options) {
 			MCPServers: map[string]config.MCPServer{"files": {
 				Command:     "unused",
 				Args:        []string{"--db", "postgres://files:" + token + "@localhost/files"},
-				Env:         map[string]config.Value{"FILES_TOKEN": {Env: "FILES_TOKEN"}},
 				IdleTimeout: opts.serverIdleTimeout,
 			}},
 			Policy: opts.policy,

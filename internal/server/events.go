@@ -33,7 +33,9 @@ func serverStarted(cfg Config) auditlog.Event {
 	type mcpServer struct {
 		Name    string `json:"name"`
 		Command string `json:"command"`
-		// ArgsSHA256 is the SHA-256 of the arguments as JSON.
+		// ArgsSHA256 is the SHA-256 of the arguments as JSON. It shows a
+		// change, but does not hide a guessable credential: put credentials
+		// in env, from the environment, not in arguments.
 		ArgsSHA256 string `json:"args_sha256"`
 	}
 	var d struct {

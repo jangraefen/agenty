@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouteContext } from "@tanstack/react-router";
 import { useId, useState } from "react";
 import { ApiError, type Schemas, unwrap } from "@/api/client";
-import { approvalsQuery } from "@/api/queries";
+import { approvalsQuery, recentChatsKey } from "@/api/queries";
 import type { AnswerOutcome } from "@/components/answer-notice";
 import { Json } from "@/components/json";
 import { Button } from "@/components/ui/button";
@@ -54,8 +54,11 @@ export function ApprovalCard({
             ? `${tool} was already answered, or it expired: your answer did not count.`
             : `The answer to ${tool} could not be sent: ${error.message}`,
       }),
-    onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: approvalsQuery(api, workspace).queryKey }),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: approvalsQuery(api, workspace).queryKey });
+      // An answered run waits no longer.
+      void queryClient.invalidateQueries({ queryKey: recentChatsKey() });
+    },
   });
   const blocked = expired || answer.isPending;
 

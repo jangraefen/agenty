@@ -57,6 +57,23 @@ test("signs in, makes a harness, chats with it, and signs out", async ({ page })
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("failed", { exact: true })).toHaveCount(2, { timeout: 45_000 });
 
+  // The smoke user is an auditor: the audit log shows both runs, and what
+  // the gateway recorded for one, which made no tool calls.
+  await page
+    .getByRole("navigation", { name: "Compliance" })
+    .getByRole("link", { name: "Audit log" })
+    .click();
+  await page.getByLabel("Harness").fill(name);
+  await page.getByRole("button", { name: "Filter" }).click();
+  const runs = page.getByRole("table", { name: "Runs" });
+  await expect(runs.getByRole("row")).toHaveCount(3);
+  await runs
+    .getByRole("link", { name: `${name} v1` })
+    .first()
+    .click();
+  await expect(page.getByRole("heading", { name: `${name} v1` })).toBeVisible();
+  await expect(page.getByText("No tool calls.")).toBeVisible();
+
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/sign-in$/);
   expect(await page.evaluate(() => localStorage.getItem("agenty.token"))).toBeNull();

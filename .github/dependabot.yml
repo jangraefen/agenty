@@ -20,3 +20,13 @@ updates:
     groups:
       go:
         patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+    groups:
+      web:
+        patterns: ["*"]

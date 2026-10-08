@@ -56,18 +56,10 @@ jobs:
           test -z "$(git status --porcelain internal/store/db internal/api internal/server)"
 
       - name: go test
-        run: go test -race -coverprofile=coverage.out ./...
+        run: go test -race ./...
 
-      # IDEA.md: the gateway, policy and secret redaction are where security
-      # lives and get full coverage.
       - name: toolgateway, policy and secret coverage is 100%
-        run: |
-          for pkg in toolgateway policy secret; do
-            go test -coverprofile="$pkg.out" "./internal/$pkg/"
-            total=$(go tool cover -func="$pkg.out" | awk '/^total:/ {print $3}')
-            echo "$pkg coverage: $total"
-            [ "$total" = "100.0%" ] || exit 1
-          done
+        run: scripts/coverage.sh
 
   web:
     runs-on: ubuntu-latest

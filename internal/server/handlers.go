@@ -32,6 +32,13 @@ func (s handlers) GetMe(c *gin.Context) {
 	c.JSON(http.StatusOK, api.Me{User: user, Workspaces: s.memberships(user), Auditor: s.cfg.Operator.Users[user].Auditor})
 }
 
+// GetWorkspace returns the workspace with its members, sorted; only its
+// members reach it.
+func (s handlers) GetWorkspace(c *gin.Context, workspace string) {
+	members := slices.Sorted(slices.Values(s.cfg.Operator.Workspaces[workspace].Members))
+	c.JSON(http.StatusOK, api.WorkspaceDetail{Name: workspace, Members: members})
+}
+
 // memberships are the workspaces user is a member of, sorted by name.
 func (s handlers) memberships(user string) []string {
 	workspaces := []string{}

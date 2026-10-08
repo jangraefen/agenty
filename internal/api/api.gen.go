@@ -411,6 +411,13 @@ type Usage struct {
 	OutputTokens int64 `json:"output_tokens"`
 }
 
+// WorkspaceDetail A workspace, as its members see it.
+type WorkspaceDetail struct {
+	// Members The users who are members of it, sorted.
+	Members []string `json:"members"`
+	Name    string   `json:"name"`
+}
+
 // BeforeEvent defines model for BeforeEvent.
 type BeforeEvent = int64
 

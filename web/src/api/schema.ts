@@ -177,6 +177,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{workspace}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace: components["parameters"]["Workspace"];
+            };
+            cookie?: never;
+        };
+        /** The workspace and its members */
+        get: operations["getWorkspace"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{workspace}/audit": {
         parameters: {
             query?: never;
@@ -497,6 +516,12 @@ export interface components {
             workspaces: string[];
             /** @description Whether the user may read the audit log of every workspace. */
             auditor: boolean;
+        };
+        /** @description A workspace, as its members see it. */
+        WorkspaceDetail: {
+            name: string;
+            /** @description The users who are members of it, sorted. */
+            members: string[];
         };
         /** @description A declarative definition of an agent. */
         Harness: {
@@ -1008,6 +1033,29 @@ export interface operations {
                 };
                 content: {
                     "application/jsonl": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getWorkspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace: components["parameters"]["Workspace"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The workspace. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceDetail"];
                 };
             };
             default: components["responses"]["Error"];

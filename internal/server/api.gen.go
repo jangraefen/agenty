@@ -38,6 +38,9 @@ type ServerInterface interface {
 	// ListMyActivity What the user did, newest first, a page at a time
 	// (GET /v1/me/activity)
 	ListMyActivity(c *gin.Context, params ListMyActivityParams)
+	// GetWorkspace The workspace and its members
+	// (GET /v1/workspaces/{workspace})
+	GetWorkspace(c *gin.Context, workspace Workspace)
 	// ListApprovals The approval requests the user's own runs wait for, oldest first
 	// (GET /v1/workspaces/{workspace}/approvals)
 	ListApprovals(c *gin.Context, workspace Workspace)
@@ -380,6 +383,31 @@ func (siw *ServerInterfaceWrapper) ListMyActivity(c *gin.Context) {
 	}
 
 	siw.Handler.ListMyActivity(c, params)
+}
+
+// GetWorkspace operation middleware
+func (siw *ServerInterfaceWrapper) GetWorkspace(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "workspace" -------------
+	var workspace Workspace
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspace", c.Param("workspace"), &workspace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter workspace: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetWorkspace(c, workspace)
 }
 
 // ListApprovals operation middleware
@@ -851,6 +879,7 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.GET(options.BaseURL+"/v1/me/activity", wrapper.ListMyActivity)
 	router.GET(options.BaseURL+"/v1/audit/events", wrapper.ListAuditEvents)
 	router.GET(options.BaseURL+"/v1/audit/export", wrapper.ExportAuditLog)
+	router.GET(options.BaseURL+"/v1/workspaces/:workspace", wrapper.GetWorkspace)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace/audit", wrapper.ListWorkspaceAuditEvents)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace/harnesses", wrapper.ListHarnesses)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace/harnesses/:name", wrapper.GetHarness)

@@ -5,7 +5,7 @@ import {
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, type Schemas, unwrap } from "@/api/client";
 import {
@@ -207,6 +207,14 @@ function Composer({ runs, latest, ready }: { runs: Run[]; latest: Run; ready: bo
   const navigate = useNavigate();
   const [text, setText] = useState("");
   const box = useRef<HTMLTextAreaElement>(null);
+  const focusOnArrival = useLocation({
+    select: (location) => location.state.focusMessage === true,
+  });
+  useEffect(() => {
+    if (focusOnArrival) {
+      box.current?.focus();
+    }
+  }, [focusOnArrival]);
   const reply = useMutation({
     mutationFn: (input: string) =>
       unwrap(

@@ -1,4 +1,4 @@
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { beforeEach, expect, test } from "vitest";
 import { apiUrl } from "@/config";
@@ -79,8 +79,9 @@ test("starts the conversation with the first message and opens it", async () => 
     expect(history.location.pathname).toBe("/w/notes/runs/run-9");
   });
   expect(body).toEqual({ harness: "notes", input: "tidy my notes" });
-  expect(await screen.findByText("tidy my notes")).toBeInTheDocument();
-  expect(screen.getByRole("textbox", { name: "Message" })).toHaveFocus();
+  const conversation = await screen.findByRole("list", { name: "Conversation" });
+  expect(within(conversation).getByText("tidy my notes")).toBeInTheDocument();
+  expect(screen.getByPlaceholderText("Write a reply…")).toHaveFocus();
 });
 
 test("leaves no empty chat to go back to", async () => {

@@ -35,6 +35,8 @@ function NewConversationPage() {
         to: "/w/$workspace/runs/$runId",
         params: { workspace, runId: run.id },
         replace: true,
+        // The conversation goes on in the chat's own box.
+        state: { focusMessage: true },
       });
     },
   });

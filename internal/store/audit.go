@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/jangraefen/agenty/internal/auditlog"
+	"github.com/jangraefen/agenty/internal/must"
 	"github.com/jangraefen/agenty/internal/store/db"
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
@@ -327,4 +328,104 @@ func readAuditRecords(ctx context.Context, tx *sql.Tx, after int64) (_ []auditlo
 		events = append(events, e)
 	}
 	return events, last, rows.Err()
+}
+
+// withEvents runs change in a transaction and appends the audit events it
+// returns at its end, as the last thing the transaction does.
+func (s *Store) withEvents(ctx context.Context, change func(*db.Queries) ([]auditlog.Event, error)) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("store: %w", err)
+	}
+	q := s.queries.WithTx(tx)
+	events, err := change(q)
+	for i := 0; err == nil && i < len(events); i++ {
+		_, err = appendEvent(ctx, q, events[i])
+	}
+	if err != nil {
+		return errors.Join(err, tx.Rollback(ctx))
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("store: %w", err)
+	}
+	return nil
+}
+
+// AppendEvent appends an event of the server's own, such as its start or
+// an auditor's read, to the audit log, and returns it as appended.
+func (s *Store) AppendEvent(ctx context.Context, e auditlog.Event) (auditlog.Event, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return auditlog.Event{}, fmt.Errorf("store: %w", err)
+	}
+	appended, err := appendEvent(ctx, s.queries.WithTx(tx), e)
+	if err != nil {
+		return auditlog.Event{}, errors.Join(err, tx.Rollback(ctx))
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return auditlog.Event{}, fmt.Errorf("store: %w", err)
+	}
+	return appended, nil
+}
+
+// details is the JSON of an event's details.
+func details(v any) json.RawMessage {
+	return must.Value(json.Marshal(v))
+}
+
+// runStarted is the event of a run started in workspace. It names the
+// harness version and the run it follows, not the run's input.
+func runStarted(r Run, workspace string) auditlog.Event {
+	return auditlog.Event{
+		Actor:     r.StartedBy,
+		Action:    "run.started",
+		Workspace: workspace,
+		RunID:     r.ID,
+		Details: details(struct {
+			Harness string `json:"harness"`
+			Version int    `json:"version"`
+			Follows string `json:"follows,omitempty"`
+		}{r.Harness, r.HarnessVersion, r.Follows}),
+	}
+}
+
+// runFinished is the event of the run that just ended with status in q's
+// transaction. It names how the run ended, not its output; the server ends
+// a run, so it has no actor.
+func runFinished(ctx context.Context, q *db.Queries, id string, status RunStatus, steps int32, runErr string) (auditlog.Event, error) {
+	owner, err := q.RunOwner(ctx, id)
+	if err != nil {
+		return auditlog.Event{}, fmt.Errorf("store: run %s: %w", id, err)
+	}
+	return auditlog.Event{
+		Action:    "run.finished",
+		Workspace: owner.Workspace,
+		RunID:     id,
+		Details: details(struct {
+			Status RunStatus `json:"status"`
+			Steps  int32     `json:"steps"`
+			Error  string    `json:"error,omitempty"`
+		}{status, steps, runErr}),
+	}, nil
+}
+
+// harnessChanged is the event of a harness's new version, stored by user.
+func harnessChanged(workspace, user, name string, version int32) auditlog.Event {
+	return auditlog.Event{
+		Actor:     user,
+		Action:    "harness.changed",
+		Workspace: workspace,
+		Target:    name,
+		Details: details(struct {
+			Version int32 `json:"version"`
+		}{version}),
+	}
+}
+
+// wrapRun is err, if any, as an error of the run with the given ID.
+func wrapRun(id string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("store: run %s: %w", id, err)
 }

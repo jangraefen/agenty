@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -52,14 +53,17 @@ func TestAuditEvents_ToolRecords(t *testing.T) {
 	record(t, s, toolgateway.Record{RunID: "r2", CallID: "c2", Event: toolgateway.EventApproval, Tool: "files_write", Decision: toolgateway.Deny, Reason: "approval expired"})
 	record(t, s, toolgateway.Record{RunID: "r1", CallID: "c1", Event: toolgateway.EventResult, Tool: "files_write", Decision: toolgateway.Allow, Result: json.RawMessage(`{"ok":true}`)})
 
-	events, err := s.AuditEvents(ctx, 0, math.MaxInt64, 10)
+	all, err := s.AuditEvents(ctx, 0, math.MaxInt64, 100)
 	require.NoError(t, err)
-	require.Len(t, events, 4)
 	type summary struct{ actor, action, workspace, run string }
-	got := make([]summary, len(events))
-	for i, e := range events {
-		got[i] = summary{e.Actor, e.Action, e.Workspace, e.RunID}
+	var got []summary
+	var events []auditlog.Event
+	for i, e := range all {
 		assert.Equal(t, int64(i+1), e.ID, "ids run from 1 without gaps")
+		if strings.HasPrefix(e.Action, "tool.") {
+			got = append(got, summary{e.Actor, e.Action, e.Workspace, e.RunID})
+			events = append(events, e)
+		}
 	}
 	assert.Equal(t, []summary{
 		{"alice", "tool.decision", ws, "r1"},
@@ -76,9 +80,8 @@ func TestAuditEvents_ToolRecords(t *testing.T) {
 	assert.JSONEq(t, `{"ok":true}`, string(records[2].Result))
 	assert.Nil(t, records[1].Args, "a field the record did not have stays absent")
 
-	sum, err := auditlog.Verify(bytes.NewReader(export(t, s)))
+	_, err = auditlog.Verify(bytes.NewReader(export(t, s)))
 	require.NoError(t, err)
-	assert.Equal(t, 4, sum.Events)
 
 	_, err = s.AuditEvents(ctx, 0, math.MaxInt64, 0)
 	require.Error(t, err)
@@ -148,7 +151,7 @@ func TestInvariant_AuditLogIsTamperEvident(t *testing.T) {
 	_, err = auditlog.Verify(bytes.NewReader(forged))
 	require.NoError(t, err, "a consistent rewrite verifies on its own")
 	_, err = auditlog.Verify(bytes.NewReader(forged), anchor)
-	require.ErrorContains(t, err, "anchor 3", "but not against an anchor kept elsewhere")
+	require.ErrorContains(t, err, "anchor", "but not against an anchor kept elsewhere")
 }
 
 func TestCopyAuditRecords(t *testing.T) {
@@ -159,6 +162,12 @@ func TestCopyAuditRecords(t *testing.T) {
 	sqlDB, err := sql.Open("pgx", url)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, sqlDB.Close()) })
+	// The log as migration 12 left it, empty: the runs above are events now.
+	_, err = sqlDB.ExecContext(ctx, `
+		ALTER TABLE audit_events DISABLE TRIGGER USER;
+		DELETE FROM audit_events;
+		ALTER TABLE audit_events ENABLE TRIGGER USER`)
+	require.NoError(t, err)
 	// The table as migration 1 made it, and records as the store kept them.
 	_, err = sqlDB.ExecContext(ctx, `
 		CREATE TABLE audit_records (
@@ -239,4 +248,58 @@ func TestRecord_ConcurrentAppendsStayLinear(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), sum.First)
 	assert.Equal(t, n, sum.Events)
+}
+
+// events returns "actor action workspace run target details" for every
+// event of the audit log after the given one.
+func events(t *testing.T, s *store.Store, after int64) []string {
+	t.Helper()
+	page, err := s.AuditEvents(context.Background(), after, math.MaxInt64, 100)
+	require.NoError(t, err)
+	out := make([]string, len(page))
+	for i, e := range page {
+		out[i] = strings.Join([]string{e.Actor, e.Action, e.Workspace, e.RunID, e.Target, string(e.Details)}, " ")
+	}
+	return out
+}
+
+func TestAuditEvents_RunsAndHarnesses(t *testing.T) {
+	ctx := context.Background()
+	s := storetest.New(t)
+	v, err := s.PutHarness(ctx, ws, "alice", notes())
+	require.NoError(t, err)
+	_, err = s.PutHarness(ctx, ws, "bob", notes())
+	require.NoError(t, err, "an unchanged harness is no change")
+	changed := notes()
+	changed.Instructions = "Tidy them well."
+	_, err = s.PutHarness(ctx, ws, "bob", changed)
+	require.NoError(t, err)
+	createRun(t, s, store.NewRun{ID: "r1", HarnessVersionID: v.ID, Input: "a private prompt", StartedBy: "alice"})
+	claim(t, s, "r1")
+	require.NoError(t, s.FinishRun(ctx, "r1", store.RunSucceeded, "a private answer", 2, ""))
+	createRun(t, s, store.NewRun{ID: "r2", HarnessVersionID: v.ID, Input: "x", StartedBy: "alice", Follows: "r1"})
+	cancelled, err := s.CancelIdleRun(ctx, "r2", "cancelled by alice")
+	require.NoError(t, err)
+	require.True(t, cancelled)
+	createRun(t, s, store.NewRun{ID: "r3", HarnessVersionID: v.ID, Input: "x", StartedBy: "bob"})
+	claim(t, s, "r3")
+	n, err := s.FailRunningRuns(ctx, "the server stopped")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+	_, err = s.AppendEvent(ctx, auditlog.Event{Actor: "dana", Action: "audit.read", Details: json.RawMessage(`{"read":"runs"}`)})
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{
+		`alice harness.changed home  notes {"version":1}`,
+		`bob harness.changed home  notes {"version":2}`,
+		`alice run.started home r1  {"harness":"notes","version":1}`,
+		` run.finished home r1  {"status":"succeeded","steps":2}`,
+		`alice run.started home r2  {"harness":"notes","version":1,"follows":"r1"}`,
+		` run.finished home r2  {"status":"cancelled","steps":0,"error":"cancelled by alice"}`,
+		`bob run.started home r3  {"harness":"notes","version":1}`,
+		` run.finished home r3  {"status":"failed","steps":0,"error":"the server stopped"}`,
+		`dana audit.read    {"read":"runs"}`,
+	}, events(t, s, 0), "what was said in a run is never part of its events")
+	_, err = auditlog.Verify(bytes.NewReader(export(t, s)))
+	require.NoError(t, err)
 }

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -13,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/jangraefen/agenty/internal/api"
+	"github.com/jangraefen/agenty/internal/auditlog"
 	"github.com/jangraefen/agenty/internal/policy"
 	"github.com/jangraefen/agenty/internal/store"
 )
@@ -138,7 +140,7 @@ func (s handlers) PutHarness(c *gin.Context, workspace, name string) {
 		s.fail(c, http.StatusBadRequest, fmt.Errorf("invalid harness: %w", err))
 		return
 	}
-	v, err := s.cfg.Store.PutHarness(c.Request.Context(), workspace, h)
+	v, err := s.cfg.Store.PutHarness(c.Request.Context(), workspace, c.GetString(userKey), h)
 	if err != nil {
 		s.failStore(c, err)
 		return
@@ -310,7 +312,7 @@ func apiRun(r store.Run) api.Run {
 // before that, so the run's events tell when it ended.
 func (s handlers) CancelRun(c *gin.Context, workspace, id string) {
 	run, ok := s.ownRun(c, workspace, id)
-	if !ok {
+	if !ok || !s.record(c, auditlog.Event{Action: "run.cancel_requested", Workspace: workspace, RunID: id, Details: json.RawMessage("{}")}) {
 		return
 	}
 	if h := s.hub(workspace, id); h != nil {

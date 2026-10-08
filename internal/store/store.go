@@ -26,6 +26,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
+	"github.com/jangraefen/agenty/internal/auditlog"
 	"github.com/jangraefen/agenty/internal/harness"
 	"github.com/jangraefen/agenty/internal/model"
 	"github.com/jangraefen/agenty/internal/must"
@@ -93,7 +94,7 @@ type HarnessVersion struct {
 // validating it. If h equals the latest version, nothing is stored and that version is
 // returned, so applying an unchanged harness is a no-op. Concurrent puts of
 // one harness are serialized, so each gets its own version.
-func (s *Store) PutHarness(ctx context.Context, workspace string, h harness.Harness) (HarnessVersion, error) {
+func (s *Store) PutHarness(ctx context.Context, workspace, user string, h harness.Harness) (HarnessVersion, error) {
 	if err := h.Validate(); err != nil {
 		return HarnessVersion{}, fmt.Errorf("store: invalid harness: %w", err)
 	}
@@ -125,6 +126,9 @@ func (s *Store) PutHarness(ctx context.Context, workspace string, h harness.Harn
 		next = latest.Version + 1
 	}
 	row, err := q.InsertHarnessVersion(ctx, db.InsertHarnessVersionParams{Workspace: workspace, Name: h.Name, Version: next, Definition: definition})
+	if err == nil {
+		_, err = appendEvent(ctx, q, harnessChanged(workspace, user, h.Name, next))
+	}
 	if err != nil {
 		return HarnessVersion{}, errors.Join(fmt.Errorf("store: %w", err), tx.Rollback(ctx))
 	}
@@ -263,15 +267,27 @@ const uniqueViolation = "23505"
 // run that follows another joins its conversation; a run that another run
 // already follows returns ErrConflict, so a conversation never branches.
 func (s *Store) CreateRun(ctx context.Context, r NewRun) (Run, error) {
-	row, err := s.queries.InsertRun(ctx, db.InsertRunParams{ID: r.ID, HarnessVersionID: r.HarnessVersionID, Input: r.Input, StartedBy: r.StartedBy, Follows: optional(r.Follows)})
-	var pgErr *pgconn.PgError
-	switch {
-	case errors.As(err, &pgErr) && pgErr.Code == uniqueViolation && pgErr.ConstraintName == "runs_follows_key":
-		return Run{}, fmt.Errorf("store: run %s: run %s is already followed: %w", r.ID, r.Follows, ErrConflict)
-	case err != nil:
-		return Run{}, fmt.Errorf("store: run %s: %w", r.ID, err)
+	var created Run
+	err := s.withEvents(ctx, func(q *db.Queries) ([]auditlog.Event, error) {
+		row, err := q.InsertRun(ctx, db.InsertRunParams{ID: r.ID, HarnessVersionID: r.HarnessVersionID, Input: r.Input, StartedBy: r.StartedBy, Follows: optional(r.Follows)})
+		var pgErr *pgconn.PgError
+		switch {
+		case errors.As(err, &pgErr) && pgErr.Code == uniqueViolation && pgErr.ConstraintName == "runs_follows_key":
+			return nil, fmt.Errorf("store: run %s: run %s is already followed: %w", r.ID, r.Follows, ErrConflict)
+		case err != nil:
+			return nil, fmt.Errorf("store: run %s: %w", r.ID, err)
+		}
+		created = run(row.Run, row.Harness, row.HarnessVersion)
+		owner, err := q.RunOwner(ctx, r.ID)
+		if err != nil {
+			return nil, fmt.Errorf("store: run %s: %w", r.ID, err)
+		}
+		return []auditlog.Event{runStarted(created, owner.Workspace)}, nil
+	})
+	if err != nil {
+		return Run{}, err
 	}
-	return run(row.Run, row.Harness, row.HarnessVersion), nil
+	return created, nil
 }
 
 // ClaimedRun is a run a worker claimed, and its workspace.
@@ -319,25 +335,22 @@ func (s *Store) IdleRuns(ctx context.Context) ([]IdleRun, error) {
 // withdraws the approval request it waits for. It reports false if the run
 // is neither, such as one a worker has claimed.
 func (s *Store) CancelIdleRun(ctx context.Context, id, why string) (bool, error) {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return false, fmt.Errorf("store: run %s: %w", id, err)
-	}
-	q := s.queries.WithTx(tx)
-	// The request first, then the run, as AnswerApproval and
-	// ExpireApprovals lock them.
-	err = q.WithdrawApprovals(ctx, db.WithdrawApprovalsParams{RunID: id, Reason: why})
-	var n int64
-	if err == nil {
-		n, err = q.CancelIdleRun(ctx, db.CancelIdleRunParams{ID: id, Error: why})
-	}
-	if err != nil {
-		return false, errors.Join(fmt.Errorf("store: run %s: %w", id, err), tx.Rollback(ctx))
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return false, fmt.Errorf("store: run %s: %w", id, err)
-	}
-	return n > 0, nil
+	cancelled := false
+	err := s.withEvents(ctx, func(q *db.Queries) ([]auditlog.Event, error) {
+		// The request first, then the run, as AnswerApproval and
+		// ExpireApprovals lock them.
+		if err := q.WithdrawApprovals(ctx, db.WithdrawApprovalsParams{RunID: id, Reason: why}); err != nil {
+			return nil, fmt.Errorf("store: run %s: %w", id, err)
+		}
+		steps, err := q.CancelIdleRun(ctx, db.CancelIdleRunParams{ID: id, Error: why})
+		if err != nil || len(steps) == 0 {
+			return nil, wrapRun(id, err)
+		}
+		cancelled = true
+		e, err := runFinished(ctx, q, id, RunCancelled, steps[0], why)
+		return []auditlog.Event{e}, err
+	})
+	return cancelled, err
 }
 
 // SetRunDigests records what a running run sends the model; see Run.
@@ -358,14 +371,17 @@ func (s *Store) FinishRun(ctx context.Context, id string, status RunStatus, outp
 	if status == RunRunning || status == RunQueued {
 		return fmt.Errorf("store: run %s: cannot finish as %s", id, status)
 	}
-	n, err := s.queries.FinishRun(ctx, db.FinishRunParams{ID: id, Status: string(status), Output: output, Steps: int32(steps), Error: runErr}) //nolint:gosec // G115: steps is bounded by the harness's max_steps.
-	switch {
-	case err != nil:
-		return fmt.Errorf("store: run %s: %w", id, err)
-	case n == 0:
-		return fmt.Errorf("store: running run %s: %w", id, ErrNotFound)
-	}
-	return nil
+	return s.withEvents(ctx, func(q *db.Queries) ([]auditlog.Event, error) {
+		n, err := q.FinishRun(ctx, db.FinishRunParams{ID: id, Status: string(status), Output: output, Steps: int32(steps), Error: runErr}) //nolint:gosec // G115: steps is bounded by the harness's max_steps.
+		switch {
+		case err != nil:
+			return nil, fmt.Errorf("store: run %s: %w", id, err)
+		case n == 0:
+			return nil, fmt.Errorf("store: running run %s: %w", id, ErrNotFound)
+		}
+		e, err := runFinished(ctx, q, id, status, int32(steps), runErr) //nolint:gosec // G115: as above.
+		return []auditlog.Event{e}, err
+	})
 }
 
 // Run returns the run with the given ID in workspace. A run of another
@@ -570,11 +586,22 @@ func run(row db.Run, harness string, version int32) Run {
 // reason, and returns how many it marked. A server calls it on startup: a
 // run cannot outlive the process that ran it.
 func (s *Store) FailRunningRuns(ctx context.Context, reason string) (int64, error) {
-	n, err := s.queries.FailRunningRuns(ctx, reason)
-	if err != nil {
-		return 0, fmt.Errorf("store: %w", err)
-	}
-	return n, nil
+	var n int64
+	err := s.withEvents(ctx, func(q *db.Queries) ([]auditlog.Event, error) {
+		failed, err := q.FailRunningRuns(ctx, reason)
+		if err != nil {
+			return nil, fmt.Errorf("store: %w", err)
+		}
+		n = int64(len(failed))
+		events := make([]auditlog.Event, len(failed))
+		for i, r := range failed {
+			if events[i], err = runFinished(ctx, q, r.ID, RunFailed, r.Steps, reason); err != nil {
+				return nil, err
+			}
+		}
+		return events, nil
+	})
+	return n, err
 }
 
 // text makes s storable in a text column, which accepts neither NUL bytes

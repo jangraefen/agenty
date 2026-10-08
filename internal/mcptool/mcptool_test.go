@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"maps"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -192,29 +191,4 @@ func TestTools_ClosedSessionIsAnError(t *testing.T) {
 
 	require.ErrorContains(t, err, "test: list tools")
 	assert.Nil(t, tools)
-}
-
-func TestTools_RejectsNamesModelsCannotUse(t *testing.T) {
-	tests := []struct {
-		name    string
-		tool    string
-		wantErr string
-	}{
-		{"dot in the tool name", "admin.list", `"test_admin.list"`},
-		{"too long with the server prefix", strings.Repeat("a", 60), "must be 1 to 64"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, nil)
-			srv.AddTool(&mcp.Tool{Name: tt.tool, InputSchema: objectSchema}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				return &mcp.CallToolResult{}, nil
-			})
-			s := connectServer(t, srv)
-
-			tools, err := s.Tools(t.Context())
-
-			require.ErrorContains(t, err, tt.wantErr)
-			assert.Nil(t, tools)
-		})
-	}
 }

@@ -43,6 +43,17 @@ func TestAudit_ExportAndVerify(t *testing.T) {
 	assert.Contains(t, f.stderr.String(), "anchor 1")
 }
 
+// TestAudit_ExportIsAClientCommand: export takes the flags of every client
+// command, and without a token it is a usage error, as theirs is.
+func TestAudit_ExportIsAClientCommand(t *testing.T) {
+	f := newFixture(t)
+	delete(f.vars, "AGENTY_TOKEN")
+
+	assert.Equal(t, 2, f.main("audit", "export", "--server", f.serverURL(), "--log-level", "debug"))
+	assert.Contains(t, f.stderr.String(), "AGENTY_TOKEN is not set: sign in with an auditor's token")
+	assert.Contains(t, f.stderr.String(), "-log-level")
+}
+
 func TestAudit_Failures(t *testing.T) {
 	f := newFixture(t)
 	for _, tt := range []struct {

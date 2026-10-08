@@ -21,8 +21,6 @@ import (
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
-const databaseYAML = "database:\n  url: {env: DATABASE_URL}\n"
-
 // lockedBuffer is a bytes.Buffer safe for a server logging while a test
 // reads it.
 type lockedBuffer struct {
@@ -59,7 +57,7 @@ var servingAddr = regexp.MustCompile(`addr=(http://\S+)`)
 func TestServe_ServesTheAPIUntilStopped(t *testing.T) {
 	_, url := storetest.NewWithURL(t)
 	f := newFixture(t)
-	f.writeFile(t, "agenty.yaml", strings.Replace(configYAML, "%s", f.api.URL, 1)+databaseYAML)
+	f.writeFile(t, "agenty.yaml", strings.Replace(configYAML, "%s", f.api.URL, 1))
 	f.vars["DATABASE_URL"] = url
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -110,23 +108,26 @@ func TestServe_Failures(t *testing.T) {
 		{"all interfaces", []string{"--addr", ":8080"}, nil, 1, "listens on a loopback address only"},
 		{"host name", []string{"--addr", "example.com:80"}, nil, 1, "listens on a loopback address only"},
 		{"malformed address", []string{"--addr", "127.0.0.1"}, nil, 1, "--addr"},
-		{"no database", nil, nil, 1, "database.url is required to serve"},
+		{"no database", nil, func(f *fixture) {
+			f.writeFile(t, "agenty.yaml", strings.Replace(strings.Replace(configYAML, "%s", f.api.URL, 1), "database:\n  url: {env: DATABASE_URL}\n", "", 1))
+		}, 1, "database.url\\\": is required"},
 		{"no users", nil, func(f *fixture) {
 			cfg := strings.Replace(configYAML, "%s", f.api.URL, 1)
-			f.writeFile(t, "agenty.yaml", cfg[:strings.Index(cfg, "users:")]+cfg[strings.Index(cfg, "policy:"):]+databaseYAML)
+			f.writeFile(t, "agenty.yaml", cfg[:strings.Index(cfg, "users:")]+cfg[strings.Index(cfg, "policy:"):])
 			f.vars["DATABASE_URL"] = "postgres://nobody:secret-password-1@127.0.0.1:1/none?connect_timeout=1"
 		}, 1, "no one could sign in"},
 		{"malformed config", nil, func(f *fixture) { f.writeFile(t, "agenty.yaml", "{") }, 1, "agenty.yaml"},
 		{"unset database variable", nil, func(f *fixture) {
-			f.writeFile(t, "agenty.yaml", strings.Replace(configYAML, "%s", f.api.URL, 1)+databaseYAML)
+			f.writeFile(t, "agenty.yaml", strings.Replace(configYAML, "%s", f.api.URL, 1))
+			delete(f.vars, "DATABASE_URL")
 		}, 1, "DATABASE_URL is not set"},
 		{"unreachable database", nil, func(f *fixture) {
-			f.writeFile(t, "agenty.yaml", strings.Replace(configYAML, "%s", f.api.URL, 1)+databaseYAML)
+			f.writeFile(t, "agenty.yaml", strings.Replace(configYAML, "%s", f.api.URL, 1))
 			f.vars["DATABASE_URL"] = "postgres://nobody:secret-password-1@127.0.0.1:1/none?connect_timeout=1"
 		}, 1, "store"},
 		{"invalid central policy", nil, func(f *fixture) {
 			_, url := storetest.NewWithURL(t)
-			f.writeFile(t, "agenty.yaml", strings.Replace(configYAML, "%s", f.api.URL, 1)+databaseYAML)
+			f.writeFile(t, "agenty.yaml", strings.Replace(configYAML, "%s", f.api.URL, 1))
 			f.writeFile(t, "central.rego", "package agenty.tool\n\ndeny contains if {")
 			f.vars["DATABASE_URL"] = url
 		}, 1, "central"},

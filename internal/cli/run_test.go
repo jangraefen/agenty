@@ -42,6 +42,8 @@ const configYAML = `provider:
     api_key: {env: ANTHROPIC_API_KEY}
     max_tokens: 1024
     base_url: %s
+database:
+  url: {env: DATABASE_URL}
 mcp_servers:
   # Servers that stop with each run, as these tests check.
   files:
@@ -126,6 +128,8 @@ func newFixture(t *testing.T, responses ...anthropictest.Response) *fixture {
 			"ANTHROPIC_API_KEY": apiKey, "FILES_TOKEN": filesToken, "ALICE_TOKEN": aliceToken, "BOB_TOKEN": bobToken,
 			// The CLI signs in as alice, in her workspace.
 			"AGENTY_TOKEN": aliceToken, "AGENTY_WORKSPACE": "home",
+			// Only agenty serve opens it; other tests use a store of their own.
+			"DATABASE_URL": "postgres://agenty:unused-password@127.0.0.1:1/agenty",
 		},
 		stdin:      "y\n",
 		tty:        true,
@@ -648,7 +652,7 @@ func TestMain_Usage(t *testing.T) {
 		{"unknown flag", []string{"run", "--nope"}, 2, "flag provided but not defined"},
 		{"no input", []string{"run", "notes"}, 2, "expected 2 arguments, got 1"},
 		{"three arguments", []string{"run", "notes", "a", "b"}, 2, "expected 2 arguments, got 3"},
-		{"no file", []string{"apply"}, 2, "expected 1 arguments, got 0"},
+		{"no file", []string{"apply"}, 2, "expected 1 argument, got 0"},
 		{"bad log level", []string{"run", "--log-level", "loud", "notes", "tidy"}, 2, `invalid value "loud" for flag -log-level`},
 		{"run usage after a problem", []string{"run", "tidy"}, 2, "-server URL"},
 	}

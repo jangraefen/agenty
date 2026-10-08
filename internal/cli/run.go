@@ -24,7 +24,7 @@ the run.
 `
 
 func run(ctx context.Context, args []string, env Env) int {
-	flags, rest, code, ok := parseClientFlags("run", runUsage, 2, args, env)
+	flags, rest, code, ok := parseFlags(command{name: "run", usage: runUsage, nargs: 2, client: true, workspace: true}, args, env)
 	if !ok {
 		return code
 	}

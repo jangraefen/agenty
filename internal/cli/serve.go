@@ -71,12 +71,6 @@ func serve(ctx context.Context, args []string, env Env) int {
 		return fail(logger, "serve failed", err)
 	}
 	logger = newLogger(env.Stderr, flags.logLevel, resolved.Redactor)
-	if resolved.DatabaseURL == "" {
-		return fail(logger, "serve failed", errors.New("config: database.url is required to serve"))
-	}
-	if len(cfg.Users) == 0 {
-		return fail(logger, "serve failed", errors.New("config: users: none are configured, so no one could sign in"))
-	}
 
 	st, err := store.Open(ctx, resolved.DatabaseURL)
 	if err != nil {

@@ -28,9 +28,8 @@ import (
 // Config is the operator configuration.
 type Config struct {
 	Provider Provider `yaml:"provider"`
-	// Database is where the server keeps its state. Only agenty serve needs
-	// it.
-	Database   *Database            `yaml:"database"`
+	// Database is where the server keeps its state.
+	Database   Database             `yaml:"database"`
 	MCPServers map[string]MCPServer `yaml:"mcp_servers"`
 	// Users may use the API, by name. Each signs in with a bearer token.
 	Users map[string]User `yaml:"users"`
@@ -237,7 +236,10 @@ func (f *file) validate() error {
 		errs = append(errs, &FieldError{Field: field, Msg: msg})
 	}
 	checkValue := func(field string, v Value) {
-		if (v.Env == "") == (v.Value == "") {
+		switch {
+		case v.Env == "" && v.Value == "":
+			add(field, "is required: give its env or its value")
+		case v.Env != "" && v.Value != "":
 			add(field, "needs exactly one of env or value")
 		}
 	}
@@ -253,9 +255,7 @@ func (f *file) validate() error {
 			add("provider.anthropic.history_cache_ttl", `must be "5m" or "1h"`)
 		}
 	}
-	if d := f.Database; d != nil {
-		checkValue("database.url", d.URL)
-	}
+	checkValue("database.url", f.Database.URL)
 	for _, name := range slices.Sorted(maps.Keys(f.MCPServers)) {
 		srv := f.MCPServers[name]
 		if srv.IdleTimeout != nil && *srv.IdleTimeout < 0 {
@@ -278,6 +278,9 @@ func (f *file) validate() error {
 			// cannot be compiled together.
 			add(field, fmt.Sprintf("%q is listed twice", name))
 		}
+	}
+	if len(f.Users) == 0 {
+		add("users", "none are configured, so no one could sign in")
 	}
 	for _, user := range slices.Sorted(maps.Keys(f.Users)) {
 		if !namePattern.MatchString(user) {
@@ -324,8 +327,7 @@ func hasKey[V any](m map[string]V, key string) bool {
 // configured, and the redactor for the secrets among them.
 type Resolved struct {
 	AnthropicAPIKey string
-	// DatabaseURL is empty when no database is configured.
-	DatabaseURL string
+	DatabaseURL     string
 	// MCPServerEnv holds each server's environment, by server name.
 	MCPServerEnv map[string]map[string]string
 	// UserTokens holds each user's bearer token, by user name. Tokens are
@@ -358,9 +360,7 @@ func (c *Config) Resolve(lookup func(string) (string, bool)) (*Resolved, error) 
 	}
 
 	r.AnthropicAPIKey = resolve("provider.anthropic.api_key", c.Provider.Anthropic.APIKey)
-	if c.Database != nil {
-		r.DatabaseURL = resolve("database.url", c.Database.URL)
-	}
+	r.DatabaseURL = resolve("database.url", c.Database.URL)
 	for _, name := range slices.Sorted(maps.Keys(c.MCPServers)) {
 		env := map[string]string{}
 		for _, key := range slices.Sorted(maps.Keys(c.MCPServers[name].Env)) {

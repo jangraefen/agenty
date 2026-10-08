@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,7 +24,7 @@ func TestLoad_Valid(t *testing.T) {
 		BaseURL:         "http://localhost:8080",
 		HistoryCacheTTL: "1h",
 	}, got.Provider.Anthropic)
-	assert.Equal(t, &config.Database{URL: config.Value{Env: "DATABASE_URL"}}, got.Database)
+	assert.Equal(t, config.Database{URL: config.Value{Env: "DATABASE_URL"}}, got.Database)
 	assert.Equal(t, map[string]config.MCPServer{
 		"tickets": {
 			Command: "tickets-mcp",
@@ -57,10 +58,8 @@ func TestLoad_Valid(t *testing.T) {
 
 	minimal, err := config.Load(filepath.Join("testdata", "minimal.yaml"))
 	require.NoError(t, err)
-	assert.Nil(t, minimal.Database, "only the server needs a database")
 	assert.Empty(t, minimal.MCPServers)
 	assert.Empty(t, minimal.Policy)
-	assert.Empty(t, minimal.Users)
 	assert.Empty(t, minimal.Workspaces)
 }
 
@@ -94,7 +93,7 @@ func TestLoad_InvalidFields(t *testing.T) {
 		yaml       string
 		wantFields []string
 	}{
-		{"no provider", "{}", []string{"provider.anthropic"}},
+		{"no provider", "", []string{"provider.anthropic"}},
 		{"no max tokens", "provider: {anthropic: {api_key: {env: K}}}", []string{"provider.anthropic.max_tokens"}},
 		{"history cache TTL", "provider: {anthropic: {api_key: {env: K}, max_tokens: 1, history_cache_ttl: 10m}}", []string{"provider.anthropic.history_cache_ttl"}},
 		{"api key with both env and value", "provider: {anthropic: {api_key: {env: K, value: v}, max_tokens: 1}}", []string{"provider.anthropic.api_key"}},
@@ -121,8 +120,16 @@ func TestLoad_InvalidFields(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// The sections every config needs, unless the case has its own.
+			yaml := tt.yaml
+			if !strings.Contains(yaml, "database:") {
+				yaml += "\ndatabase: {url: {env: DATABASE_URL}}"
+			}
+			if !strings.Contains(yaml, "users:") {
+				yaml += "\nusers: {alice: {token: {env: ALICE_TOKEN}}}"
+			}
 			path := filepath.Join(t.TempDir(), "agenty.yaml")
-			require.NoError(t, os.WriteFile(path, []byte(tt.yaml), 0o600))
+			require.NoError(t, os.WriteFile(path, []byte(yaml), 0o600))
 
 			got, err := config.Load(path)
 
@@ -131,6 +138,17 @@ func TestLoad_InvalidFields(t *testing.T) {
 			assert.Equal(t, tt.wantFields, fieldsOf(err))
 		})
 	}
+}
+
+// TestLoad_RequiresADatabaseAndUsers: the server keeps its state in its
+// database, and only its users sign in, so a config has both.
+func TestLoad_RequiresADatabaseAndUsers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agenty.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("provider: {anthropic: {api_key: {env: K}, max_tokens: 1}}"), 0o600))
+
+	_, err := config.Load(path)
+
+	assert.Equal(t, []string{"database.url", "users"}, fieldsOf(err))
 }
 
 func TestLoad_InvalidDocuments(t *testing.T) {
@@ -204,6 +222,7 @@ func TestResolve_Errors(t *testing.T) {
 		{"missing variable", nil, "ANTHROPIC_API_KEY", []string{"provider.anthropic.api_key"}, "ANTHROPIC_API_KEY is not set"},
 		{"empty variable", map[string]string{"ANTHROPIC_API_KEY": ""}, "", []string{"provider.anthropic.api_key"}, "ANTHROPIC_API_KEY is not set"},
 		{"secret too short to redact", map[string]string{"TICKETS_TOKEN": "short"}, "", []string{"mcp_servers.tickets.env.TICKETS_TOKEN"}, "shorter than 8 characters"},
+		{"missing database url", nil, "DATABASE_URL", []string{"database.url"}, "DATABASE_URL is not set"},
 		{"missing token", nil, "BOB_TOKEN", []string{"users.bob.token"}, "BOB_TOKEN is not set"},
 		{"token too short to be unguessable", map[string]string{"ALICE_TOKEN": "alice-token-0123"}, "", []string{"users.alice.token"}, "shorter than 32 characters"},
 		{"two users with one token", map[string]string{"BOB_TOKEN": "alice-token-0123456789abcdefghijklmn"}, "", []string{"users.bob.token"}, "the same token as user alice"},

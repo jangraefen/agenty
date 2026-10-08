@@ -54,7 +54,7 @@ test("lists every event, filtered, with links to runs", async () => {
   expect(started).toHaveTextContent("the server");
   await user.click(
     within(finished as HTMLElement).getByRole("button", {
-      name: "Details of Run finished run-1 failed: boom",
+      name: "Details of Run finished notes run-1 failed: boom",
     }),
   );
   expect(

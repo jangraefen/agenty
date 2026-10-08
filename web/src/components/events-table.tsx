@@ -121,7 +121,8 @@ export function EventsTable({
 
 // EventRow is an event in a row of its own; a toggle at its start shows
 // the whole of its details in a row below, as wide as the table. The
-// toggle is named after the row's cells, so each one's name tells it apart.
+// toggle is named after the row's cells, so its name says which event it
+// opens.
 function EventRow({
   event,
   showActor,
@@ -144,7 +145,7 @@ function EventRow({
             type="button"
             aria-expanded={open}
             aria-controls={id}
-            aria-labelledby={`${id}-toggle ${id}-what ${id}-of ${id}-summary`}
+            aria-labelledby={`${id}-toggle ${id}-what ${id}-workspace ${id}-of ${id}-summary`}
             onClick={() => setOpen(!open)}
             className="rounded-sm p-1 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           >
@@ -172,7 +173,11 @@ function EventRow({
         <td id={`${id}-what`} className="py-2 pr-4 whitespace-nowrap">
           {labels[event.action] ?? event.action}
         </td>
-        {showWorkspace && <td className="py-2 pr-4">{event.workspace}</td>}
+        {showWorkspace && (
+          <td id={`${id}-workspace`} className="py-2 pr-4">
+            {event.workspace}
+          </td>
+        )}
         <td id={`${id}-of`} className="py-2 pr-4">
           {subject(event)}
         </td>

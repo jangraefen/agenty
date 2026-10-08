@@ -1,12 +1,16 @@
--- name: InsertRun :exec
--- A run that follows another joins its conversation; any other run starts
--- one of its own.
-INSERT INTO runs (id, harness_version_id, input, started_by, prompt_digest, history_digest, conversation_id, follows)
+-- name: InsertRun :one
+-- A run is stored as queued. A run that follows another joins its
+-- conversation; any other run starts one of its own. It is returned as
+-- stored, before a worker may claim it, with its harness.
+INSERT INTO runs (id, harness_version_id, input, started_by, conversation_id, follows)
 VALUES (
-    sqlc.arg(id), sqlc.arg(harness_version_id), sqlc.arg(input), sqlc.arg(started_by), sqlc.arg(prompt_digest), sqlc.arg(history_digest),
+    sqlc.arg(id), sqlc.arg(harness_version_id), sqlc.arg(input), sqlc.arg(started_by),
     COALESCE((SELECT f.conversation_id FROM runs f WHERE f.id = sqlc.narg(follows)), sqlc.arg(id)),
     sqlc.narg(follows)
-);
+)
+RETURNING sqlc.embed(runs),
+    (SELECT hv.name FROM harness_versions hv WHERE hv.id = runs.harness_version_id)::text AS harness,
+    (SELECT hv.version FROM harness_versions hv WHERE hv.id = runs.harness_version_id)::integer AS harness_version;
 
 -- name: FinishRun :execrows
 UPDATE runs
@@ -52,3 +56,39 @@ JOIN harness_versions ON harness_versions.id = runs.harness_version_id
 WHERE harness_versions.workspace = sqlc.arg(workspace)
   AND runs.conversation_id = (SELECT c.conversation_id FROM runs c WHERE c.id = sqlc.arg(id))
 ORDER BY runs.created_at, runs.id;
+
+-- name: ClaimRun :one
+-- Marks the oldest queued run as running and returns it with its workspace.
+-- Concurrent claims skip each other's rows, so each run is claimed once.
+WITH claimed AS (
+    UPDATE runs
+    SET status = 'running'
+    WHERE status = 'queued' AND id = (
+        SELECT q.id FROM runs q
+        WHERE q.status = 'queued'
+        ORDER BY q.created_at, q.id
+        LIMIT 1
+        FOR NO KEY UPDATE SKIP LOCKED)
+    RETURNING runs.id, runs.harness_version_id
+)
+SELECT claimed.id, harness_versions.workspace
+FROM claimed
+JOIN harness_versions ON harness_versions.id = claimed.harness_version_id;
+
+-- name: QueuedRuns :many
+-- The queued runs, oldest first, with their workspaces and harnesses.
+SELECT runs.id, harness_versions.workspace, harness_versions.name AS harness
+FROM runs
+JOIN harness_versions ON harness_versions.id = runs.harness_version_id
+WHERE runs.status = 'queued'
+ORDER BY runs.created_at, runs.id;
+
+-- name: CancelQueuedRun :execrows
+UPDATE runs
+SET status = 'cancelled', error = $2, finished_at = now()
+WHERE id = $1 AND status = 'queued';
+
+-- name: SetRunDigests :execrows
+UPDATE runs
+SET prompt_digest = $2, history_digest = $3
+WHERE id = $1 AND status = 'running';

@@ -16,7 +16,8 @@ import (
 
 var _ toolgateway.Tool = (*Tool)(nil)
 
-// Tool is a fake tool that returns a fixed result and counts its calls.
+// Tool is a fake tool that returns a fixed result and counts its calls. Runs
+// may call it at once; read Calls and Args once they have ended.
 type Tool struct {
 	Name string
 	// Description and InputSchema, if set, replace the generic ones.
@@ -27,6 +28,7 @@ type Tool struct {
 	// OnCall, if set, runs at the start of every call.
 	OnCall func(ctx context.Context)
 
+	mu    sync.Mutex
 	Calls int
 	// Args holds the arguments of the last call.
 	Args json.RawMessage
@@ -46,6 +48,8 @@ func (t *Tool) Call(ctx context.Context, args json.RawMessage) (json.RawMessage,
 	if t.OnCall != nil {
 		t.OnCall(ctx)
 	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.Calls++
 	t.Args = args
 	return t.Result, t.Err

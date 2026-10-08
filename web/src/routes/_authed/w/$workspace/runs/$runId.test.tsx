@@ -454,6 +454,20 @@ describe("the conversation page", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("run run-1 has finished");
   });
 
+  test("treats a queued run as one that has not finished", async () => {
+    const { finished_at: _q, ...queuedRun } = run({ status: "queued", output: "" });
+    server.use(
+      ...conversationHandlers([queuedRun]),
+      http.get(`${base}/runs/run-1/events`, () => liveEventStream().response()),
+    );
+    const { user } = renderApp(path, TOKEN);
+
+    expect(await screen.findByText("queued")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel run" })).toBeInTheDocument();
+    await user.type(await screen.findByRole("textbox", { name: "Message" }), "hurry{Enter}");
+    expect(screen.getByRole("button", { name: "Send" })).toHaveAttribute("aria-disabled", "true");
+  });
+
   test("offers no cancel for a finished run", async () => {
     server.use(...conversationHandlers([run()]), finishedEvents("run-1", run()));
     renderApp(path, TOKEN);

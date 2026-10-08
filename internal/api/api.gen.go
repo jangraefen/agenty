@@ -72,6 +72,7 @@ func (e Role) Valid() bool {
 const (
 	RunStatusCancelled RunStatus = "cancelled"
 	RunStatusFailed    RunStatus = "failed"
+	RunStatusQueued    RunStatus = "queued"
 	RunStatusRunning   RunStatus = "running"
 	RunStatusSucceeded RunStatus = "succeeded"
 )
@@ -82,6 +83,8 @@ func (e RunStatus) Valid() bool {
 	case RunStatusCancelled:
 		return true
 	case RunStatusFailed:
+		return true
+	case RunStatusQueued:
 		return true
 	case RunStatusRunning:
 		return true
@@ -239,7 +242,7 @@ type Run struct {
 	// Error Why the run failed, or who cancelled it.
 	Error string `json:"error,omitempty"`
 
-	// FinishedAt Unset while the run is running.
+	// FinishedAt Unset until the run has finished.
 	FinishedAt time.Time `json:"finished_at,omitempty,omitzero"`
 
 	// Follows The run whose conversation this run continues, if any.

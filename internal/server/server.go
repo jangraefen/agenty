@@ -7,8 +7,8 @@
 package server
 
 import (
-	"cmp"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -67,17 +67,22 @@ type Server struct {
 	// pool keeps the MCP servers of each conversation between its runs.
 	pool *toolgateway.Pool
 
+	// wake wakes a worker waiting for a queued run.
+	wake chan struct{}
+
 	mu sync.Mutex
-	// closed is set by Close; no run starts after it.
+	// closed is set by Close; no run is queued after it.
 	closed bool
-	runs   map[string]*hub
+	// runs holds the hubs of the queued and running runs of this server.
+	runs map[string]*hub
 }
 
 // errClosed is returned when a run is started on a closed server.
 var errClosed = errors.New("the server is stopping")
 
-// New returns a Server for cfg. Runs left running by an earlier server cannot
-// continue, so New marks them as failed.
+// New returns a Server for cfg and starts its workers. Runs left running by an
+// earlier server cannot continue, so New marks them as failed; the runs it
+// left queued are taken up.
 func New(ctx context.Context, cfg Config) (*Server, error) {
 	switch {
 	case cfg.Store == nil:
@@ -109,7 +114,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	if _, err := policy.New(ctx, policy.Layer{Name: "central", Modules: cfg.Operator.Policy}); err != nil {
 		return nil, fmt.Errorf("server: %w", err)
 	}
-	n, err := cfg.Store.FailRunningRuns(ctx, "the server stopped before the run finished")
+	n, err := cfg.Store.FailRunningRuns(ctx, errStopped)
 	if err != nil {
 		return nil, fmt.Errorf("server: %w", err)
 	}
@@ -121,10 +126,29 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	for name, srv := range cfg.Operator.MCPServers {
 		idleTimeout[name] = srv.IdleTimeoutOrDefault()
 	}
+	queued, err := cfg.Store.QueuedRuns(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("server: %w", err)
+	}
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	workers := cfg.Operator.Runs.WorkersOrDefault()
 	s := &Server{
 		cfg: cfg, ctx: runCtx, cancel: cancel, runs: map[string]*hub{}, tokens: hashTokens(cfg.Resolved.UserTokens),
 		pool: toolgateway.NewPool(idleTimeout, cfg.Logger),
+		wake: make(chan struct{}, workers),
+	}
+	// The runs an earlier server left queued get their event streams before
+	// any worker may claim them.
+	for _, q := range queued {
+		if _, err := s.register(q.ID, q.Workspace, q.Harness); err != nil {
+			panic(err) // The server is not closed yet.
+		}
+	}
+	for range workers {
+		s.wg.Go(s.work)
+	}
+	for range min(len(queued), workers) {
+		s.signal()
 	}
 	s.engine = s.routes()
 	return s, nil
@@ -135,15 +159,23 @@ func (s *Server) Handler() http.Handler {
 	return s.engine
 }
 
-// Close cancels every run and waits until each has been recorded as finished,
-// then stops the MCP servers kept for conversations. Event streams end with
-// it, and no run starts after it.
+// Close cancels every running run and waits until each has been recorded as
+// finished, then stops the MCP servers kept for conversations. No run is
+// queued after it. Event streams end with it; those of queued runs, which
+// the next server takes up, end without the run's end.
 func (s *Server) Close() {
 	s.mu.Lock()
 	s.closed = true
 	s.mu.Unlock()
 	s.cancel()
 	s.wg.Wait()
+	// What is left are queued runs, which the next server takes up: their
+	// event streams end without an end.
+	s.mu.Lock()
+	for _, h := range s.runs {
+		h.stop()
+	}
+	s.mu.Unlock()
 	if err := s.pool.Close(); err != nil {
 		s.cfg.Logger.Error("cannot stop the MCP servers of conversations", "error", s.cfg.Resolved.Redactor.String(err.Error()))
 	}
@@ -272,95 +304,240 @@ func decode(c *gin.Context, v any) error {
 	return nil
 }
 
-// newRun is a run to start.
+// newRun is a run to queue.
 type newRun struct {
 	version store.HarnessVersion
 	input   string
 	// user is who starts the run.
 	user string
 	// follows, if set, is the ID of the run whose conversation the run
-	// continues, conversation names that conversation, and prior are its
-	// runs so far.
-	follows, conversation string
-	prior                 []priorRun
+	// continues.
+	follows string
 }
 
-// start builds an agent for the run's harness version, which starts the MCP
-// servers it needs or takes those its conversation keeps, stores the run,
-// and executes it in the background. A run that does not go ahead gives
-// the conversation back the servers it took. On error it also returns the
-// status to respond with: 422 for a harness that cannot run, 409 for a run
-// that another run already follows, 503 when the server is stopping, 500
-// otherwise.
-func (s *Server) start(r newRun) (string, int, error) {
+// enqueue stores r as a queued run and wakes a worker for it. The run gets
+// its hub first, so a stored queued run of this server always has an event
+// stream. On error it also returns the status to respond with: 409 for a
+// run that another run already follows, 503 when the server is stopping,
+// 500 otherwise.
+func (s *Server) enqueue(r newRun) (store.Run, int, error) {
 	v := r.version
-	h := v.Harness
-	m, err := s.cfg.NewModel(h.Model)
+	id := rand.Text()
+	h, err := s.register(id, v.Workspace, v.Harness.Name)
 	if err != nil {
-		return "", http.StatusUnprocessableEntity, err
+		return store.Run{}, http.StatusServiceUnavailable, err
 	}
-	servers := make(map[string]toolgateway.ToolServer, len(s.cfg.Operator.MCPServers))
-	for name, srv := range s.cfg.Operator.MCPServers {
-		servers[name] = s.cfg.Server(name, mcptool.Server{Command: srv.Command, Args: srv.Args, Env: s.cfg.Resolved.MCPServerEnv[name]})
-	}
-	timeout := s.cfg.Operator.Approvals.Timeout
-	if timeout == 0 {
-		timeout = config.DefaultApprovalTimeout
-	}
-	hub := newHub(v.Workspace, h.Name, timeout)
-	lease := s.pool.Lease(r.conversation, servers)
-	a, err := agent.New(s.ctx, agent.Config{
-		Harness:    &h,
-		Model:      m,
-		Servers:    lease.Servers(),
-		Policy:     s.cfg.Operator.Policy,
-		Approver:   hub,
-		Audit:      runAudit{store: s.cfg.Store, hub: hub},
-		Redactor:   s.cfg.Resolved.Redactor,
-		Transcript: runTranscript{store: s.cfg.Store, redact: s.cfg.Resolved.Redactor},
-	})
+	run, err := s.cfg.Store.CreateRun(s.ctx, store.NewRun{ID: id, HarnessVersionID: v.ID, Input: r.input, StartedBy: r.user, Follows: r.follows})
 	if err != nil {
-		return "", http.StatusUnprocessableEntity, errors.Join(err, lease.Return())
-	}
-	digest := a.PromptDigest()
-	history := conversationHistory(s.cfg.Resolved.Redactor, r.prior, digest)
-	run := a.Start()
-	hub.runID = run.ID()
-	runCtx, cancel := context.WithCancelCause(s.ctx)
-	hub.cancel = cancel
-	// Register the run's hub before storing it, so a stored running run of
-	// this server always has an event stream. Registering under the lock
-	// Close takes means no run starts once Close has begun waiting.
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		cancel(nil)
-		return "", http.StatusServiceUnavailable, errors.Join(errClosed, a.Close(), lease.Return())
-	}
-	s.runs[run.ID()] = hub
-	s.wg.Add(1)
-	s.mu.Unlock()
-	if err := s.cfg.Store.CreateRun(s.ctx, store.NewRun{ID: run.ID(), HarnessVersionID: v.ID, Input: r.input, StartedBy: r.user, Follows: r.follows, PromptDigest: digest, HistoryDigest: historyDigest(history)}); err != nil {
-		s.mu.Lock()
-		delete(s.runs, run.ID())
-		s.mu.Unlock()
-		s.wg.Done()
-		cancel(nil)
+		s.unregister(id)
+		h.cancel(nil)
 		status := http.StatusInternalServerError
 		if errors.Is(err, store.ErrConflict) {
 			// Another follow-up of the same run was stored first.
 			status = http.StatusConflict
 			err = fmt.Errorf("run %s is already followed up; follow up the conversation's latest run", r.follows)
 		}
-		return "", status, errors.Join(err, a.Close(), lease.Return())
+		return store.Run{}, status, err
 	}
-	conversation := cmp.Or(r.conversation, run.ID())
-	go func() {
-		defer s.wg.Done()
-		defer cancel(nil)
-		s.execute(runCtx, a, lease, conversation, run, hub, history, withLostState(r.input, lease.Fresh(), history))
-	}()
-	return run.ID(), 0, nil
+	s.signal()
+	return run, 0, nil
+}
+
+// register gives the run id a hub, unless the server is stopping. Registering
+// under the lock Close takes means no run is queued once Close has begun.
+func (s *Server) register(id, workspace, harness string) (*hub, error) {
+	timeout := s.cfg.Operator.Approvals.Timeout
+	if timeout == 0 {
+		timeout = config.DefaultApprovalTimeout
+	}
+	h := newHub(workspace, harness, timeout)
+	h.runID = id
+	h.ctx, h.cancel = context.WithCancelCause(s.ctx)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		h.cancel(nil)
+		return nil, errClosed
+	}
+	s.runs[id] = h
+	return h, nil
+}
+
+// unregister removes the hub of the run id.
+func (s *Server) unregister(id string) {
+	s.mu.Lock()
+	delete(s.runs, id)
+	s.mu.Unlock()
+}
+
+// signal wakes a worker to claim queued runs. A worker claims only when
+// woken, so a signal is sent for every run queued; signals beyond one for
+// each worker are dropped, as each woken worker claims until none is left.
+func (s *Server) signal() {
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
+}
+
+// work waits for a signal, then claims queued runs and executes them, one
+// at a time, until none is left, and waits again, until the server stops.
+func (s *Server) work() {
+	for {
+		select {
+		case <-s.wake:
+		case <-s.ctx.Done():
+			return
+		}
+		for s.ctx.Err() == nil {
+			claimed, ok, err := s.cfg.Store.ClaimRun(s.ctx)
+			if err != nil {
+				if s.ctx.Err() == nil {
+					s.cfg.Logger.Error("cannot claim a run", "error", s.cfg.Resolved.Redactor.String(err.Error()))
+				}
+				select {
+				case <-time.After(claimRetry):
+					continue
+				case <-s.ctx.Done():
+					return
+				}
+			}
+			if !ok {
+				break
+			}
+			s.take(claimed)
+		}
+	}
+}
+
+// claimRetry is how long a worker waits before it claims again after a
+// claim failed.
+const claimRetry = 5 * time.Second
+
+// take executes a run a worker claimed, unless it was cancelled while it was
+// queued.
+func (s *Server) take(claimed store.ClaimedRun) {
+	h := s.hub(claimed.Workspace, claimed.ID)
+	if h == nil {
+		// Every queued run of this server has a hub, and New gives one to
+		// those an earlier server left queued.
+		s.cfg.Logger.Error("a claimed run has no event stream", "run_id", claimed.ID)
+		s.finish(context.Background(), nil, claimed.ID, store.RunFailed, agent.Result{}, "the server lost the run")
+		return
+	}
+	p, err := s.prepare(h, claimed)
+	if err != nil {
+		// A run cancelled while it was queued, or while it was being
+		// prepared, fails to prepare, as its context is cancelled.
+		var by cancelledBy
+		switch {
+		case errors.As(context.Cause(h.ctx), &by):
+			s.finish(h.ctx, h, claimed.ID, store.RunCancelled, agent.Result{}, by.Error())
+		case s.ctx.Err() != nil:
+			s.finish(h.ctx, h, claimed.ID, store.RunFailed, agent.Result{}, errStopped)
+		default:
+			s.finish(h.ctx, h, claimed.ID, store.RunFailed, agent.Result{}, s.cfg.Resolved.Redactor.String(err.Error()))
+		}
+		return
+	}
+	s.execute(h.ctx, h, p)
+}
+
+// errStopped is how a run ends that the server stopped before it finished.
+const errStopped = "the server stopped before the run finished"
+
+// prepared is a run ready to execute.
+type prepared struct {
+	agent *agent.Agent
+	lease *toolgateway.Lease
+	run   *agent.Run
+	// conversation names the conversation the run belongs to, and history
+	// is the conversation so far.
+	conversation string
+	history      []model.Message
+	input        string
+}
+
+// prepare builds an agent for a claimed run's harness version, which starts
+// the MCP servers it needs or takes those its conversation keeps, and the
+// conversation so far. A run that does not go ahead gives the conversation
+// back the servers it took.
+func (s *Server) prepare(h *hub, claimed store.ClaimedRun) (prepared, error) {
+	ctx := h.ctx
+	if err := context.Cause(ctx); err != nil {
+		return prepared{}, err
+	}
+	stored, err := s.cfg.Store.Run(ctx, claimed.Workspace, claimed.ID)
+	if err != nil {
+		return prepared{}, err
+	}
+	v, err := s.cfg.Store.HarnessVersionByID(ctx, stored.HarnessVersionID)
+	if err != nil {
+		return prepared{}, err
+	}
+	prior, err := s.prior(ctx, claimed.Workspace, stored)
+	if err != nil {
+		return prepared{}, err
+	}
+	hv := v.Harness
+	m, err := s.cfg.NewModel(hv.Model)
+	if err != nil {
+		return prepared{}, fmt.Errorf("cannot start run: %w", err)
+	}
+	servers := make(map[string]toolgateway.ToolServer, len(s.cfg.Operator.MCPServers))
+	for name, srv := range s.cfg.Operator.MCPServers {
+		servers[name] = s.cfg.Server(name, mcptool.Server{Command: srv.Command, Args: srv.Args, Env: s.cfg.Resolved.MCPServerEnv[name]})
+	}
+	lease := s.pool.Lease(stored.ConversationID, servers)
+	a, err := agent.New(s.ctx, agent.Config{
+		Harness:    &hv,
+		Model:      m,
+		Servers:    lease.Servers(),
+		Policy:     s.cfg.Operator.Policy,
+		Approver:   h,
+		Audit:      runAudit{store: s.cfg.Store, hub: h},
+		Redactor:   s.cfg.Resolved.Redactor,
+		Transcript: runTranscript{store: s.cfg.Store, redact: s.cfg.Resolved.Redactor},
+	})
+	if err != nil {
+		return prepared{}, errors.Join(fmt.Errorf("cannot start run: %w", err), lease.Return())
+	}
+	digest := a.PromptDigest()
+	history := conversationHistory(s.cfg.Resolved.Redactor, prior, digest)
+	if err := s.cfg.Store.SetRunDigests(ctx, stored.ID, digest, historyDigest(history)); err != nil {
+		return prepared{}, errors.Join(err, a.Close(), lease.Return())
+	}
+	return prepared{
+		agent:        a,
+		lease:        lease,
+		run:          a.StartAs(stored.ID),
+		conversation: stored.ConversationID,
+		history:      history,
+		input:        withLostState(stored.Input, lease.Fresh(), history),
+	}, nil
+}
+
+// prior returns the earlier runs of the conversation run continues, as it
+// sends them to the model; a run that failed or was cancelled is continued
+// from where it stopped, see ended.
+func (s *Server) prior(ctx context.Context, workspace string, run store.Run) ([]priorRun, error) {
+	if run.Follows == "" {
+		return nil, nil
+	}
+	runs, err := s.cfg.Store.Conversation(ctx, workspace, run.ID)
+	if err != nil {
+		return nil, err
+	}
+	runs = runs[:len(runs)-1]
+	prior := make([]priorRun, len(runs))
+	for i, r := range runs {
+		messages, err := s.cfg.Store.Transcript(ctx, r.ID)
+		if err != nil {
+			return nil, err
+		}
+		prior[i] = priorRun{digest: r.PromptDigest, historyDigest: r.HistoryDigest, messages: ended(r, messages)}
+	}
+	return prior, nil
 }
 
 // keep keeps the run's servers for its conversation, unless the run was
@@ -379,19 +556,13 @@ type cancelledBy string
 func (u cancelledBy) Error() string { return "cancelled by " + string(u) }
 
 // execute runs the agent on ctx, after history, keeps its MCP servers for
-// the conversation, records how the run ended, and publishes that as the
-// run's last event. The servers are kept before, so a follow-up the end
-// allows finds them. A run that fails after a user cancelled it ended as
-// cancelled.
-func (s *Server) execute(ctx context.Context, a *agent.Agent, lease *toolgateway.Lease, conversation string, run *agent.Run, hub *hub, history []model.Message, input string) {
-	defer func() {
-		s.mu.Lock()
-		delete(s.runs, run.ID())
-		s.mu.Unlock()
-	}()
-	redact := s.cfg.Resolved.Redactor
-	res, runErr := run.Continue(ctx, history, input)
-	err := errors.Join(runErr, a.Close(), keep(ctx, lease, conversation))
+// the conversation, and records how the run ended. The servers are kept
+// before, so a follow-up the end allows finds them. A run that fails after a
+// user cancelled it ended as cancelled.
+func (s *Server) execute(ctx context.Context, h *hub, p prepared) {
+	run := p.run
+	res, runErr := run.Continue(ctx, p.history, p.input)
+	err := errors.Join(runErr, p.agent.Close(), keep(ctx, p.lease, p.conversation))
 	status, errMsg := store.RunSucceeded, ""
 	var by cancelledBy
 	switch {
@@ -401,21 +572,38 @@ func (s *Server) execute(ctx context.Context, a *agent.Agent, lease *toolgateway
 		status, errMsg = store.RunCancelled, by.Error()
 		s.cfg.Logger.Info("run cancelled", "run_id", run.ID(), "error", err)
 	case err != nil:
-		status, errMsg = store.RunFailed, redact.String(err.Error())
+		status, errMsg = store.RunFailed, s.cfg.Resolved.Redactor.String(err.Error())
 	}
+	s.finish(ctx, h, run.ID(), status, res, errMsg)
+}
+
+// finish records how the run id ended and publishes that as the last event
+// of its hub, if it has one, which it then unregisters.
+func (s *Server) finish(ctx context.Context, h *hub, id string, status store.RunStatus, res agent.Result, errMsg string) {
+	redact := s.cfg.Resolved.Redactor
 	// The run's context may be cancelled; how the run ended is recorded
 	// regardless.
 	ctx = context.WithoutCancel(ctx)
-	if err := s.cfg.Store.FinishRun(ctx, run.ID(), status, redact.String(res.Output), res.Steps, errMsg); err != nil {
-		s.cfg.Logger.Error("cannot record the end of a run", "run_id", run.ID(), "error", err)
+	if err := s.cfg.Store.FinishRun(ctx, id, status, redact.String(res.Output), res.Steps, errMsg); err != nil {
+		s.cfg.Logger.Error("cannot record the end of a run", "run_id", id, "error", err)
 	}
-	s.cfg.Logger.Info("run finished", "harness", hub.harness, "run_id", run.ID(), "status", status, "steps", res.Steps)
-	finished, err := s.cfg.Store.Run(ctx, hub.workspace, run.ID())
+	if h == nil {
+		return
+	}
+	defer s.unregister(id)
+	s.cfg.Logger.Info("run finished", "harness", h.harness, "run_id", id, "status", status, "steps", res.Steps)
+	s.publishEnd(ctx, h, store.Run{ID: id, Status: status, Output: redact.String(res.Output), Steps: res.Steps, Error: errMsg})
+}
+
+// publishEnd publishes the run as stored as the last event of its hub, or
+// fallback if it cannot be read.
+func (s *Server) publishEnd(ctx context.Context, h *hub, fallback store.Run) {
+	finished, err := s.cfg.Store.Run(ctx, h.workspace, fallback.ID)
 	if err != nil {
-		s.cfg.Logger.Error("cannot read a finished run", "run_id", run.ID(), "error", err)
-		finished = store.Run{ID: run.ID(), Status: status, Output: redact.String(res.Output), Steps: res.Steps, Error: errMsg}
+		s.cfg.Logger.Error("cannot read a finished run", "run_id", fallback.ID, "error", err)
+		finished = fallback
 	}
-	hub.publish(event{api.EventFinished, apiRun(finished)})
+	h.publish(event{api.EventFinished, apiRun(finished)})
 }
 
 // hub returns the hub of the running run id in workspace, or nil if there is

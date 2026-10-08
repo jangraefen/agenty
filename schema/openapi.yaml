@@ -13,10 +13,12 @@ info:
     Errors are returned as an Error: 400 for an invalid request, 401 without
     a valid token, 403 for a request for a host that is not local or from a
     web page of an origin that is not configured, 404 for anything not
-    found, workspaces included, 409 for cancelling a run that has finished
-    or for a run that runs on another server, 415 for a body that is not
-    JSON, 422 for a harness that cannot run, 500 when the server fails, and
-    503 while the server is stopping.
+    found, workspaces included, 409 for cancelling a run that has finished,
+    for following up a run that has not or that is followed up already, or
+    for a run that runs on another server, 415 for a body that is not
+    JSON, 500 when the server fails, and 503 while the server is stopping.
+    A run that cannot start, such as one whose grants no MCP server serves,
+    is queued all the same and fails.
 
     This file is the API's source of truth: the Go types in internal/api and
     the server interface in internal/server are generated from it.
@@ -126,6 +128,9 @@ paths:
     post:
       operationId: createRun
       summary: Start a run of a harness's latest version
+      description: |
+        Queues the run, which starts once a worker is free; its events tell
+        when. A run whose MCP servers cannot serve its grants fails.
       requestBody:
         required: true
         content:
@@ -133,7 +138,7 @@ paths:
             schema: {$ref: "#/components/schemas/CreateRun"}
       responses:
         "201":
-          description: The started run.
+          description: The run, queued.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Run"}
@@ -176,7 +181,7 @@ paths:
             schema: {$ref: "#/components/schemas/FollowUp"}
       responses:
         "201":
-          description: The started run.
+          description: The run, queued.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Run"}
@@ -205,10 +210,10 @@ paths:
       - $ref: "#/components/parameters/RunID"
     post:
       operationId: cancelRun
-      summary: Cancel a running run
+      summary: Cancel a queued or running run
       description: |
-        The run ends as soon as what it is doing stops, as cancelled by the
-        user; its events tell when.
+        A queued run ends at once; a running one as soon as what it is doing
+        stops. Either ends as cancelled by the user; its events tell when.
       responses:
         "202":
           description: The run is being cancelled.
@@ -431,7 +436,7 @@ components:
 
     RunStatus:
       type: string
-      enum: [running, succeeded, failed, cancelled]
+      enum: [queued, running, succeeded, failed, cancelled]
 
     Run:
       type: object
@@ -467,7 +472,7 @@ components:
           type: string
         created_at: {type: string, format: date-time}
         finished_at:
-          description: Unset while the run is running.
+          description: Unset until the run has finished.
           type: string
           format: date-time
           x-omitzero: true

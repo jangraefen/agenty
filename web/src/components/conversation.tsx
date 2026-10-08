@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useRouteContext } from "@tanstack/react-router";
 import { Fragment, useId, useState } from "react";
 import type { Schemas } from "@/api/client";
-import { auditQuery, transcriptQuery } from "@/api/queries";
+import { auditQuery, transcriptQuery, unfinished } from "@/api/queries";
 import type { AnswerOutcome } from "@/components/answer-notice";
 import { ApprovalCard } from "@/components/approval-card";
 import { CodeBlock } from "@/components/code-block";
@@ -47,7 +47,7 @@ export function Turn({
     }
   }
   const answered = replies.some((m) => m.role === "assistant" && (m.tool_calls ?? []).length === 0);
-  const running = run.status === "running";
+  const running = unfinished(run.status);
 
   return (
     <>
@@ -298,7 +298,7 @@ function AuditLog({
         </p>
       )}
       {records.length === 0 && !stored.isFetching && (
-        <p className="mt-1">No tool calls{run.status === "running" ? " yet" : ""}.</p>
+        <p className="mt-1">No tool calls{unfinished(run.status) ? " yet" : ""}.</p>
       )}
       <ol aria-label="Audit log" className="mt-2 grid gap-3 text-foreground">
         {records.map((record, index) => (

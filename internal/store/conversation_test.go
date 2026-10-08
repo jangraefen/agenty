@@ -16,9 +16,12 @@ func TestRuns_Conversation(t *testing.T) {
 	s := storetest.New(t)
 	v := newRun(t, s, "r1")
 	require.NoError(t, s.FinishRun(ctx, "r1", store.RunSucceeded, "ok", 1, ""))
-	require.NoError(t, s.CreateRun(ctx, store.NewRun{ID: "r2", HarnessVersionID: v.ID, Input: "and then?", StartedBy: "bob", Follows: "r1"}))
+	createRun(t, s, store.NewRun{ID: "r2", HarnessVersionID: v.ID, Input: "and then?", StartedBy: "bob", Follows: "r1"})
+	claim(t, s, "r2")
 	require.NoError(t, s.FinishRun(ctx, "r2", store.RunSucceeded, "ok", 1, ""))
-	require.NoError(t, s.CreateRun(ctx, store.NewRun{ID: "r3", HarnessVersionID: v.ID, Input: "thanks", StartedBy: "alice", Follows: "r2", PromptDigest: "d3", HistoryDigest: "h3"}))
+	createRun(t, s, store.NewRun{ID: "r3", HarnessVersionID: v.ID, Input: "thanks", StartedBy: "alice", Follows: "r2"})
+	claim(t, s, "r3")
+	require.NoError(t, s.SetRunDigests(ctx, "r3", "d3", "h3"))
 	newRun(t, s, "other")
 
 	for _, id := range []string{"r1", "r2", "r3"} {
@@ -55,14 +58,14 @@ func TestRuns_ConversationErrors(t *testing.T) {
 	s := storetest.New(t)
 	v := newRun(t, s, "r1")
 	require.NoError(t, s.FinishRun(ctx, "r1", store.RunSucceeded, "ok", 1, ""))
-	require.NoError(t, s.CreateRun(ctx, store.NewRun{ID: "r2", HarnessVersionID: v.ID, Input: "x", StartedBy: "bob", Follows: "r1"}))
+	createRun(t, s, store.NewRun{ID: "r2", HarnessVersionID: v.ID, Input: "x", StartedBy: "bob", Follows: "r1"})
 
-	err := s.CreateRun(ctx, store.NewRun{ID: "r3", HarnessVersionID: v.ID, Input: "y", StartedBy: "alice", Follows: "r1"})
+	_, err := s.CreateRun(ctx, store.NewRun{ID: "r3", HarnessVersionID: v.ID, Input: "y", StartedBy: "alice", Follows: "r1"})
 	require.ErrorIs(t, err, store.ErrConflict, "a run is followed by one run at most, so a conversation never branches")
 	_, err = s.Run(ctx, ws, "r3")
 	require.ErrorIs(t, err, store.ErrNotFound)
 
-	err = s.CreateRun(ctx, store.NewRun{ID: "r4", HarnessVersionID: v.ID, Input: "y", StartedBy: "alice", Follows: "ghost"})
+	_, err = s.CreateRun(ctx, store.NewRun{ID: "r4", HarnessVersionID: v.ID, Input: "y", StartedBy: "alice", Follows: "ghost"})
 	require.Error(t, err, "a run follows a stored run")
 
 	_, err = s.Conversation(ctx, ws, "ghost")

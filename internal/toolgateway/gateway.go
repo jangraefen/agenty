@@ -194,9 +194,16 @@ func (g *Gateway) Definitions() []Definition {
 // run carries, and starts the run's call counts at zero. Runs never share
 // counts, so one run's calls cannot affect another's limit or policy input.
 func (g *Gateway) Start() *Run {
+	return g.StartAs(rand.Text())
+}
+
+// StartAs is Start for a run whose ID was minted before, such as a run
+// stored before it executes. The run's call counts start at zero all the
+// same.
+func (g *Gateway) StartAs(id string) *Run {
 	return &Run{
 		gateway:  g,
-		id:       rand.Text(),
+		id:       id,
 		executed: CallCounts{ByTool: map[string]int{}},
 	}
 }

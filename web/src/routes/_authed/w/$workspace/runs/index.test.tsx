@@ -320,7 +320,7 @@ describe("the runs page", () => {
     server.use(runsHandler({ "": { runs: [running] } }));
     renderApp("/w/notes/runs", TOKEN);
 
-    expect(await screen.findByText("still running")).toBeInTheDocument();
+    expect(await screen.findByText("not finished")).toBeInTheDocument();
   });
 
   test("says when the harnesses for the filter cannot be loaded", async () => {

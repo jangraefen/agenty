@@ -26,6 +26,8 @@ workspaces:
     members: [alice, bob]
   ops:
     members: [bob]
+runs:
+  workers: 4
 approvals:
   timeout: 15m
 cors:

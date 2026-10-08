@@ -105,19 +105,14 @@ func (s handlers) CreateRun(c *gin.Context, workspace string) {
 		s.failStore(c, err)
 		return
 	}
-	s.startRun(c, workspace, newRun{version: v, input: req.Input, user: c.GetString(userKey)})
+	s.startRun(c, newRun{version: v, input: req.Input, user: c.GetString(userKey)})
 }
 
-// startRun starts r and responds with the started run.
-func (s handlers) startRun(c *gin.Context, workspace string, r newRun) {
-	id, status, err := s.start(r)
+// startRun queues r and responds with the queued run.
+func (s handlers) startRun(c *gin.Context, r newRun) {
+	run, status, err := s.enqueue(r)
 	if err != nil {
 		s.fail(c, status, fmt.Errorf("cannot start run: %w", err))
-		return
-	}
-	run, err := s.cfg.Store.Run(c.Request.Context(), workspace, id)
-	if err != nil {
-		s.failStore(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, apiRun(run))
@@ -151,25 +146,16 @@ func (s handlers) FollowUpRun(c *gin.Context, workspace, id string) {
 	case last.ID != id:
 		s.fail(c, http.StatusConflict, fmt.Errorf("run %s is already followed up; follow up run %s, the conversation's latest", id, last.ID))
 		return
-	case last.Status == store.RunRunning:
-		s.fail(c, http.StatusConflict, fmt.Errorf("run %s is still running: follow it up once it has finished", id))
+	case !last.Finished():
+		s.fail(c, http.StatusConflict, fmt.Errorf("run %s has not finished: follow it up once it has", id))
 		return
-	}
-	prior := make([]priorRun, len(runs))
-	for i, r := range runs {
-		messages, err := s.cfg.Store.Transcript(ctx, r.ID)
-		if err != nil {
-			s.failStore(c, err)
-			return
-		}
-		prior[i] = priorRun{digest: r.PromptDigest, historyDigest: r.HistoryDigest, messages: ended(r, messages)}
 	}
 	v, err := s.cfg.Store.HarnessVersionByID(ctx, last.HarnessVersionID)
 	if err != nil {
 		s.failStore(c, err)
 		return
 	}
-	s.startRun(c, workspace, newRun{version: v, input: req.Input, user: c.GetString(userKey), follows: last.ID, conversation: last.ConversationID, prior: prior})
+	s.startRun(c, newRun{version: v, input: req.Input, user: c.GetString(userKey), follows: last.ID})
 }
 
 // GetRunConversation lists the runs of the conversation a run belongs to,
@@ -253,12 +239,23 @@ func apiRun(r store.Run) api.Run {
 	return out
 }
 
-// CancelRun cancels a running run of this server. The run ends as soon as
-// what it is doing stops, and is recorded as cancelled by the user; the
-// response comes before that, so the run's events tell when it ended.
+// CancelRun cancels a queued or running run of this server. A queued run
+// ends at once, a running one as soon as what it is doing stops; either is
+// recorded as cancelled by the user. The response may come before that, so
+// the run's events tell when it ended.
 func (s handlers) CancelRun(c *gin.Context, workspace, id string) {
 	if h := s.hub(workspace, id); h != nil {
-		h.cancel(cancelledBy(c.GetString(userKey)))
+		by := cancelledBy(c.GetString(userKey))
+		// A worker that claims the run from now on finds it cancelled.
+		h.cancel(by)
+		ctx := c.Request.Context()
+		switch cancelled, err := s.cfg.Store.CancelQueuedRun(ctx, id, by.Error()); {
+		case err != nil:
+			s.cfg.Logger.Error("cannot cancel a queued run in the store", "run_id", id, "error", err)
+		case cancelled:
+			s.publishEnd(ctx, h, store.Run{ID: id, Status: store.RunCancelled, Error: by.Error()})
+			s.unregister(id)
+		}
 		c.Status(http.StatusAccepted)
 		return
 	}
@@ -266,7 +263,7 @@ func (s handlers) CancelRun(c *gin.Context, workspace, id string) {
 	switch {
 	case err != nil:
 		s.failStore(c, err)
-	case run.Status == store.RunRunning:
+	case !run.Finished():
 		s.fail(c, http.StatusConflict, fmt.Errorf("run %s is running on another server", id))
 	default:
 		s.fail(c, http.StatusConflict, fmt.Errorf("run %s has already finished", id))
@@ -369,10 +366,10 @@ func (s handlers) replayEvents(c *gin.Context, workspace, id string) {
 		s.failStore(c, err)
 		return
 	}
-	if run.Status == store.RunRunning {
-		// Every running run of this server has a hub, and New fails those of
-		// earlier servers, so this is a run of another server sharing the
-		// database.
+	if !run.Finished() {
+		// Every queued or running run of this server has a hub, New fails
+		// the running runs of earlier servers and takes up their queued
+		// ones, so this is a run of another server sharing the database.
 		s.fail(c, http.StatusConflict, fmt.Errorf("run %s is running on another server", id))
 		return
 	}

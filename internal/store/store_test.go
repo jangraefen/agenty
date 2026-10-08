@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -194,22 +197,64 @@ func TestWorkspaces_AreSeparate(t *testing.T) {
 }
 
 // newRun stores the notes harness and a run of it.
+// newRun stores a run of the notes harness and claims it, so it is running.
 func newRun(t *testing.T, s *store.Store, id string) store.HarnessVersion {
 	t.Helper()
 	v, err := s.PutHarness(context.Background(), ws, notes())
 	require.NoError(t, err)
-	require.NoError(t, s.CreateRun(context.Background(), store.NewRun{ID: id, HarnessVersionID: v.ID, Input: "tidy", StartedBy: "alice"}))
+	createRun(t, s, store.NewRun{ID: id, HarnessVersionID: v.ID, Input: "tidy", StartedBy: "alice"})
+	claim(t, s, id)
 	return v
+}
+
+// createRun stores r, which must succeed.
+func createRun(t *testing.T, s *store.Store, r store.NewRun) store.Run {
+	t.Helper()
+	run, err := s.CreateRun(context.Background(), r)
+	require.NoError(t, err)
+	return run
+}
+
+// createErr returns the error of storing r.
+func createErr(s *store.Store, r store.NewRun) error {
+	_, err := s.CreateRun(context.Background(), r)
+	return err
+}
+
+// claim claims the oldest queued run, which must be the run id.
+func claim(t *testing.T, s *store.Store, id string) {
+	t.Helper()
+	claimed, ok, err := s.ClaimRun(context.Background())
+	require.NoError(t, err)
+	require.True(t, ok, "no run is queued")
+	require.Equal(t, id, claimed.ID)
 }
 
 func TestRuns_Lifecycle(t *testing.T) {
 	ctx := context.Background()
 	s := storetest.New(t)
-	v := newRun(t, s, "r1")
+	v, err := s.PutHarness(ctx, ws, notes())
+	require.NoError(t, err)
+	created := createRun(t, s, store.NewRun{ID: "r1", HarnessVersionID: v.ID, Input: "tidy", StartedBy: "alice"})
+	queued, err := s.Run(ctx, ws, "r1")
+	require.NoError(t, err)
+	assert.Equal(t, queued, created, "a run is returned as stored")
+	assert.Equal(t, store.RunQueued, queued.Status, "a run is stored as queued")
+	assert.Nil(t, queued.FinishedAt)
+	require.ErrorIs(t, s.SetRunDigests(ctx, "r1", "d", "h"), store.ErrNotFound, "a queued run has sent the model nothing")
+	require.ErrorIs(t, s.FinishRun(ctx, "r1", store.RunSucceeded, "", 0, ""), store.ErrNotFound, "a queued run has not run")
+
+	claimed, ok, err := s.ClaimRun(ctx)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, store.ClaimedRun{ID: "r1", Workspace: ws}, claimed)
+	require.NoError(t, s.SetRunDigests(ctx, "r1", "d1", "h1"))
 
 	running, err := s.Run(ctx, ws, "r1")
 	require.NoError(t, err)
 	assert.Equal(t, store.RunRunning, running.Status)
+	assert.Equal(t, "d1", running.PromptDigest)
+	assert.Equal(t, "h1", running.HistoryDigest)
 	assert.Equal(t, v.ID, running.HarnessVersionID)
 	assert.Equal(t, "tidy", running.Input)
 	assert.Equal(t, "alice", running.StartedBy)
@@ -234,9 +279,10 @@ func TestRuns_Errors(t *testing.T) {
 	s := storetest.New(t)
 	newRun(t, s, "r1")
 
-	require.Error(t, s.CreateRun(ctx, store.NewRun{ID: "r1", HarnessVersionID: 1, Input: "again", StartedBy: "alice"}), "run IDs are unique")
-	require.Error(t, s.CreateRun(ctx, store.NewRun{ID: "r2", HarnessVersionID: 999, Input: "x", StartedBy: "alice"}), "a run needs a stored harness version")
+	require.Error(t, createErr(s, store.NewRun{ID: "r1", HarnessVersionID: 1, Input: "again", StartedBy: "alice"}), "run IDs are unique")
+	require.Error(t, createErr(s, store.NewRun{ID: "r2", HarnessVersionID: 999, Input: "x", StartedBy: "alice"}), "a run needs a stored harness version")
 	require.ErrorContains(t, s.FinishRun(ctx, "r1", store.RunRunning, "", 0, ""), "cannot finish as running")
+	require.ErrorContains(t, s.FinishRun(ctx, "r1", store.RunQueued, "", 0, ""), "cannot finish as queued")
 	require.ErrorIs(t, s.FinishRun(ctx, "ghost", store.RunFailed, "", 0, ""), store.ErrNotFound)
 	_, err := s.Run(ctx, ws, "ghost")
 	require.ErrorIs(t, err, store.ErrNotFound)
@@ -268,12 +314,14 @@ func TestRuns_List(t *testing.T) {
 		{ID: "r3", HarnessVersionID: v.ID, Input: "x", StartedBy: "alice"},
 		{ID: "r4", HarnessVersionID: ov.ID, Input: "x", StartedBy: "alice"},
 	} {
-		require.NoError(t, s.CreateRun(ctx, r))
+		createRun(t, s, r)
 	}
+	claim(t, s, "r2")
+	claim(t, s, "r3")
 	require.NoError(t, s.FinishRun(ctx, "r3", store.RunSucceeded, "ok", 1, ""))
 	theirs, err := s.PutHarness(ctx, "work", notes())
 	require.NoError(t, err)
-	require.NoError(t, s.CreateRun(ctx, store.NewRun{ID: "w1", HarnessVersionID: theirs.ID, Input: "x", StartedBy: "bob"}))
+	createRun(t, s, store.NewRun{ID: "w1", HarnessVersionID: theirs.ID, Input: "x", StartedBy: "bob"})
 
 	ids := func(f store.RunFilter) []string {
 		t.Helper()
@@ -317,8 +365,10 @@ func TestFailRunningRuns(t *testing.T) {
 	ctx := context.Background()
 	s := storetest.New(t)
 	newRun(t, s, "r1")
-	require.NoError(t, s.CreateRun(ctx, store.NewRun{ID: "r2", HarnessVersionID: 1, Input: "tidy", StartedBy: "alice"}))
+	createRun(t, s, store.NewRun{ID: "r2", HarnessVersionID: 1, Input: "tidy", StartedBy: "alice"})
+	claim(t, s, "r2")
 	require.NoError(t, s.FinishRun(ctx, "r2", store.RunSucceeded, "ok", 1, ""))
+	createRun(t, s, store.NewRun{ID: "r3", HarnessVersionID: 1, Input: "tidy", StartedBy: "alice"})
 
 	n, err := s.FailRunningRuns(ctx, "server restarted")
 
@@ -331,6 +381,143 @@ func TestFailRunningRuns(t *testing.T) {
 	r2, err := s.Run(ctx, ws, "r2")
 	require.NoError(t, err)
 	assert.Equal(t, store.RunSucceeded, r2.Status, "finished runs are left alone")
+	r3, err := s.Run(ctx, ws, "r3")
+	require.NoError(t, err)
+	assert.Equal(t, store.RunQueued, r3.Status, "queued runs wait for the next server")
+}
+
+func TestClaimRun_ClaimsOldestFirst(t *testing.T) {
+	ctx := context.Background()
+	s := storetest.New(t)
+	v, err := s.PutHarness(ctx, ws, notes())
+	require.NoError(t, err)
+	theirs, err := s.PutHarness(ctx, "work", notes())
+	require.NoError(t, err)
+	for _, r := range []store.NewRun{
+		{ID: "r1", HarnessVersionID: v.ID, Input: "x", StartedBy: "alice"},
+		{ID: "w1", HarnessVersionID: theirs.ID, Input: "x", StartedBy: "bob"},
+		{ID: "r2", HarnessVersionID: v.ID, Input: "x", StartedBy: "alice"},
+	} {
+		createRun(t, s, r)
+	}
+	queued, err := s.QueuedRuns(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, []store.QueuedRun{{ID: "r1", Workspace: ws, Harness: "notes"}, {ID: "w1", Workspace: "work", Harness: "notes"}, {ID: "r2", Workspace: ws, Harness: "notes"}}, queued)
+
+	var got []store.ClaimedRun
+	for {
+		claimed, ok, err := s.ClaimRun(ctx)
+		require.NoError(t, err)
+		if !ok {
+			break
+		}
+		got = append(got, claimed)
+	}
+
+	assert.Equal(t, []store.ClaimedRun{{ID: "r1", Workspace: ws}, {ID: "w1", Workspace: "work"}, {ID: "r2", Workspace: ws}}, got)
+	queued, err = s.QueuedRuns(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, queued)
+}
+
+func TestClaimRun_ConcurrentClaimsClaimEachRunOnce(t *testing.T) {
+	ctx := context.Background()
+	s := storetest.New(t)
+	v, err := s.PutHarness(ctx, ws, notes())
+	require.NoError(t, err)
+	const runs = 20
+	for i := range runs {
+		createRun(t, s, store.NewRun{ID: fmt.Sprintf("r%02d", i), HarnessVersionID: v.ID, Input: "x", StartedBy: "alice"})
+	}
+
+	var (
+		mu      sync.Mutex
+		claimed []string
+		errs    []error
+		wg      sync.WaitGroup
+	)
+	for range 8 {
+		wg.Go(func() {
+			for {
+				c, ok, err := s.ClaimRun(ctx)
+				mu.Lock()
+				switch {
+				case err != nil:
+					errs = append(errs, err)
+				case ok:
+					claimed = append(claimed, c.ID)
+				}
+				mu.Unlock()
+				if err != nil || !ok {
+					return
+				}
+			}
+		})
+	}
+	wg.Wait()
+	require.Empty(t, errs)
+
+	slices.Sort(claimed)
+	want := make([]string, runs)
+	for i := range want {
+		want[i] = fmt.Sprintf("r%02d", i)
+	}
+	assert.Equal(t, want, claimed, "every run is claimed, and once")
+}
+
+// TestClaimRun_SkipsARunAnotherClaimHolds: a claim never waits for another:
+// it takes the next queued run while the oldest is locked.
+func TestClaimRun_SkipsARunAnotherClaimHolds(t *testing.T) {
+	ctx := context.Background()
+	s, url := storetest.NewWithURL(t)
+	v, err := s.PutHarness(ctx, ws, notes())
+	require.NoError(t, err)
+	createRun(t, s, store.NewRun{ID: "r1", HarnessVersionID: v.ID, Input: "x", StartedBy: "alice"})
+	createRun(t, s, store.NewRun{ID: "r2", HarnessVersionID: v.ID, Input: "x", StartedBy: "alice"})
+	conn, err := pgx.Connect(ctx, url)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, conn.Close(ctx)) })
+	tx, err := conn.Begin(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, tx.Rollback(ctx)) })
+	_, err = tx.Exec(ctx, "SELECT id FROM runs WHERE id = 'r1' FOR NO KEY UPDATE")
+	require.NoError(t, err)
+	timeout, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	claimed, ok, err := s.ClaimRun(timeout)
+
+	require.NoError(t, err, "the claim does not wait for the lock")
+	require.True(t, ok)
+	assert.Equal(t, "r2", claimed.ID)
+}
+
+func TestCancelQueuedRun(t *testing.T) {
+	ctx := context.Background()
+	s := storetest.New(t)
+	newRun(t, s, "running")
+	createRun(t, s, store.NewRun{ID: "queued", HarnessVersionID: 1, Input: "x", StartedBy: "alice"})
+
+	cancelled, err := s.CancelQueuedRun(ctx, "queued", "cancelled by bob")
+	require.NoError(t, err)
+	assert.True(t, cancelled)
+	r, err := s.Run(ctx, ws, "queued")
+	require.NoError(t, err)
+	assert.Equal(t, store.RunCancelled, r.Status)
+	assert.Equal(t, "cancelled by bob", r.Error)
+	assert.NotNil(t, r.FinishedAt)
+	_, ok, err := s.ClaimRun(ctx)
+	require.NoError(t, err)
+	assert.False(t, ok, "a cancelled run is not claimed")
+
+	for _, id := range []string{"queued", "running", "ghost"} {
+		cancelled, err := s.CancelQueuedRun(ctx, id, "again")
+		require.NoError(t, err)
+		assert.False(t, cancelled, "only a queued run is cancelled in the store: %s", id)
+	}
+	r, err = s.Run(ctx, ws, "running")
+	require.NoError(t, err)
+	assert.Equal(t, store.RunRunning, r.Status)
 }
 
 func TestRecord_StoresTheAuditLog(t *testing.T) {
@@ -465,7 +652,14 @@ func TestRecord_FailsClosed(t *testing.T) {
 	_, err = s.PutHarness(ctx, ws, notes())
 	require.Error(t, err)
 	require.Error(t, s.FinishRun(ctx, "r1", store.RunFailed, "", 0, ""))
-	require.Error(t, s.CreateRun(ctx, store.NewRun{ID: "r9", HarnessVersionID: 1, Input: "", StartedBy: "alice"}))
+	require.Error(t, createErr(s, store.NewRun{ID: "r9", HarnessVersionID: 1, Input: "", StartedBy: "alice"}))
+	_, _, err = s.ClaimRun(ctx)
+	require.Error(t, err)
+	_, err = s.QueuedRuns(ctx)
+	require.Error(t, err)
+	_, err = s.CancelQueuedRun(ctx, "r1", "x")
+	require.Error(t, err)
+	require.Error(t, s.SetRunDigests(ctx, "r1", "d", "h"))
 	_, err = s.Run(ctx, ws, "r1")
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, store.ErrNotFound)

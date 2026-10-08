@@ -127,7 +127,8 @@ func ended(r store.Run, messages []store.TranscriptMessage) []store.TranscriptMe
 		return messages
 	}
 	if len(messages) == 0 {
-		// Storing the input failed.
+		// The run ended before it stored its input: it was cancelled while
+		// queued, could not start, or storing the input failed.
 		messages = []store.TranscriptMessage{{Message: model.Message{Role: model.RoleUser, Text: r.Input}}}
 	}
 	last := messages[len(messages)-1].Message

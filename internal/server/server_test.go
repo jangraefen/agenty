@@ -135,7 +135,7 @@ func TestRun_SucceedsAndStreamsItsEvents(t *testing.T) {
 	run := f.startRun(t, "tidy my notes")
 	events := f.events(t, run.ID).rest()
 
-	assert.Equal(t, api.RunStatusRunning, run.Status)
+	assert.Equal(t, api.RunStatusQueued, run.Status, "a run is queued for a worker")
 	assert.Equal(t, "alice", run.StartedBy, "the run records who started it")
 	require.Len(t, events, 3)
 	decision := decodeAs[api.AuditRecord](t, events[0])
@@ -253,41 +253,63 @@ func TestAnswerApproval_Rejects(t *testing.T) {
 }
 
 func TestCreateRun_Rejects(t *testing.T) {
-	unserved := notes()
-	unserved.Name = "unserved"
-	unserved.Tools = []string{"files_delete"}
-	otherProvider := notes()
-	otherProvider.Name = "other"
-	otherProvider.Tools = nil
-	otherProvider.Model.Provider = "openai"
 	tests := []struct {
 		name       string
-		newModel   func(harness.Model) (model.Model, error)
-		configured bool
 		body       any
 		wantStatus int
 		wantErr    string
 	}{
-		{"unknown harness", nil, false, api.CreateRun{Harness: "ghost", Input: "x"}, http.StatusNotFound, "harness ghost: not found"},
-		{"no input", nil, false, api.CreateRun{Harness: "notes"}, http.StatusBadRequest, "input is required"},
-		{"unknown field", nil, false, `{"harness":"notes","input":"x","bogus":1}`, http.StatusBadRequest, "bogus"},
-		{"grant no server serves", nil, false, api.CreateRun{Harness: "unserved", Input: "x"}, http.StatusUnprocessableEntity, "grant files_delete: server files has no such tool"},
-		{"model that cannot be built", func(harness.Model) (model.Model, error) { return nil, errors.New("no model for " + token) }, false, api.CreateRun{Harness: "notes", Input: "x"}, http.StatusUnprocessableEntity, "cannot start run: no model for [redacted]"},
-		{"unsupported provider", nil, true, api.CreateRun{Harness: "other", Input: "x"}, http.StatusUnprocessableEntity, `model provider "openai" is not supported`},
+		{"unknown harness", api.CreateRun{Harness: "ghost", Input: "x"}, http.StatusNotFound, "harness ghost: not found"},
+		{"no input", api.CreateRun{Harness: "notes"}, http.StatusBadRequest, "input is required"},
+		{"unknown field", `{"harness":"notes","input":"x","bogus":1}`, http.StatusBadRequest, "bogus"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := newFixture(t, options{newModel: tt.newModel, configuredModel: tt.configured})
-			for _, h := range []harness.Harness{notes(), unserved, otherProvider} {
-				require.Equal(t, http.StatusOK, f.do(t, http.MethodPut, home+"/harnesses/"+h.Name, h, nil))
-			}
+			f := newFixture(t, options{})
+			f.putNotes(t)
 			var resp api.Error
 
 			status := f.do(t, http.MethodPost, home+"/runs", tt.body, &resp)
 
 			assert.Equal(t, tt.wantStatus, status)
 			assert.Contains(t, resp.Error, tt.wantErr)
-			assert.NotContains(t, resp.Error, token)
+		})
+	}
+}
+
+// TestRun_FailsWhenItCannotStart: a worker builds a run's model and starts
+// its MCP servers once it takes the run up, so a run that cannot have them
+// fails, without asking a model.
+func TestRun_FailsWhenItCannotStart(t *testing.T) {
+	unserved := notes()
+	unserved.Tools = []string{"files_delete"}
+	otherProvider := notes()
+	otherProvider.Tools = nil
+	otherProvider.Model.Provider = "openai"
+	tests := []struct {
+		name       string
+		harness    harness.Harness
+		newModel   func(harness.Model) (model.Model, error)
+		configured bool
+		wantErr    string
+	}{
+		{"grant no server serves", unserved, nil, false, "grant files_delete: server files has no such tool"},
+		{"model that cannot be built", notes(), func(harness.Model) (model.Model, error) { return nil, errors.New("no model for " + token) }, false, "cannot start run: no model for [redacted]"},
+		{"unsupported provider", otherProvider, nil, true, `model provider "openai" is not supported`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t, options{newModel: tt.newModel, configuredModel: tt.configured})
+			require.Equal(t, http.StatusOK, f.do(t, http.MethodPut, home+"/harnesses/notes", tt.harness, nil))
+			m := f.script(modeltest.Reply("ok"))
+
+			run := f.startRun(t, "tidy my notes")
+			finished := f.finish(t, run.ID)
+
+			assert.Equal(t, api.RunStatusFailed, finished.Status)
+			assert.Contains(t, finished.Error, tt.wantErr)
+			assert.NotContains(t, finished.Error, token)
+			assert.Empty(t, m.Requests(), "no model is asked")
 		})
 	}
 }
@@ -387,14 +409,15 @@ func TestNew_FailsRunsOfAnEarlierServer(t *testing.T) {
 	ctx := context.Background()
 	v, err := f.store.PutHarness(ctx, "home", notes())
 	require.NoError(t, err)
-	require.NoError(t, f.store.CreateRun(ctx, store.NewRun{ID: "orphan", HarnessVersionID: v.ID, Input: "tidy", StartedBy: "alice"}))
+	f.storeRunning(t, store.NewRun{ID: "orphan", HarnessVersionID: v.ID, Input: "tidy", StartedBy: "alice"})
 	r, err := secret.NewRedactor(nil)
 	require.NoError(t, err)
 	logs := &syncBuffer{}
 
-	_, err = server.New(ctx, server.Config{Store: f.store, Operator: &config.Config{}, Resolved: &config.Resolved{Redactor: r}, Logger: slog.New(slog.NewTextHandler(logs, nil))})
+	srv, err := server.New(ctx, server.Config{Store: f.store, Operator: &config.Config{}, Resolved: &config.Resolved{Redactor: r}, Logger: slog.New(slog.NewTextHandler(logs, nil))})
 
 	require.NoError(t, err)
+	srv.Close()
 	orphan, err := f.store.Run(ctx, "home", "orphan")
 	require.NoError(t, err)
 	assert.Equal(t, store.RunFailed, orphan.Status)
@@ -832,7 +855,7 @@ func TestCancelRun_RunningOnAnotherServer(t *testing.T) {
 	f := newFixture(t, options{})
 	v, err := f.store.PutHarness(context.Background(), "home", notes())
 	require.NoError(t, err)
-	require.NoError(t, f.store.CreateRun(context.Background(), store.NewRun{ID: "elsewhere", HarnessVersionID: v.ID, Input: "x", StartedBy: "alice"}))
+	f.storeRunning(t, store.NewRun{ID: "elsewhere", HarnessVersionID: v.ID, Input: "x", StartedBy: "alice"})
 	var resp api.Error
 
 	assert.Equal(t, http.StatusConflict, f.do(t, http.MethodPost, home+"/runs/elsewhere/cancel", nil, &resp))

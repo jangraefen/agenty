@@ -143,29 +143,21 @@ func (s *Store) Record(ctx context.Context, rec toolgateway.Record) error {
 
 // RecordAt is Record, and returns when the record was recorded.
 func (s *Store) RecordAt(ctx context.Context, rec toolgateway.Record) (time.Time, error) {
-	tx, err := s.beginAppend(ctx)
+	appended, err := s.withEvents(ctx, func(q *db.Queries) ([]auditlog.Event, error) {
+		owner, err := q.RunOwner(ctx, rec.RunID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			err = fmt.Errorf("run %s: %w", rec.RunID, ErrNotFound)
+		}
+		if err != nil {
+			return nil, err
+		}
+		e, err := toolEvent(rec, owner.StartedBy, owner.Workspace)
+		return []auditlog.Event{e}, err
+	})
 	if err != nil {
-		return time.Time{}, fmt.Errorf("store: audit: %w", err)
+		return time.Time{}, fmt.Errorf("audit: %s %s of run %s: %w", rec.Event, rec.Tool, rec.RunID, err)
 	}
-	q := s.queries.WithTx(tx)
-	owner, err := q.RunOwner(ctx, rec.RunID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		err = fmt.Errorf("run %s: %w", rec.RunID, ErrNotFound)
-	}
-	if err != nil {
-		return time.Time{}, errors.Join(fmt.Errorf("store: audit: %w", err), tx.Rollback(ctx))
-	}
-	e, err := toolEvent(rec, owner.StartedBy, owner.Workspace)
-	if err == nil {
-		e, err = appendEvent(ctx, q, e)
-	}
-	if err != nil {
-		return time.Time{}, errors.Join(err, tx.Rollback(ctx))
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return time.Time{}, fmt.Errorf("store: audit: %w", err)
-	}
-	return e.RecordedAt, nil
+	return appended[0].RecordedAt, nil
 }
 
 // AuditRecord is a stored audit record.
@@ -208,11 +200,14 @@ func (s *Store) AuditRecords(ctx context.Context, runID string) ([]AuditRecord, 
 // LastAuditEventID returns the id of the audit log's latest event, 0 before
 // the first: an export reads up to it.
 func (s *Store) LastAuditEventID(ctx context.Context) (int64, error) {
-	id, err := s.queries.LastAuditEventID(ctx)
-	if err != nil {
+	last, err := s.queries.LastAuditEvent(ctx)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return 0, nil
+	case err != nil:
 		return 0, fmt.Errorf("store: audit: %w", err)
 	}
-	return id, nil
+	return last.ID, nil
 }
 
 // AuditEvents returns up to limit events of the audit log after the one with
@@ -276,13 +271,13 @@ func (s *Store) ActorEvents(ctx context.Context, actor string, before int64, lim
 	return events(rows), nil
 }
 
-// WorkspaceEvents lists up to limit events of workspace with one of the
-// actions, newest first, before the one with id before (0 for the newest).
-func (s *Store) WorkspaceEvents(ctx context.Context, workspace string, actions []string, before int64, limit int) ([]auditlog.Event, error) {
+// WorkspaceEvents lists up to limit events of workspace with action, newest
+// first, before the one with id before (0 for the newest).
+func (s *Store) WorkspaceEvents(ctx context.Context, workspace, action string, before int64, limit int) ([]auditlog.Event, error) {
 	if limit <= 0 || limit > math.MaxInt32 {
 		return nil, fmt.Errorf("store: audit: limit %d is out of range", limit)
 	}
-	rows, err := s.queries.ListWorkspaceEvents(ctx, db.ListWorkspaceEventsParams{Workspace: workspace, Actions: actions, Before: before, MaxRows: int32(limit)})
+	rows, err := s.queries.ListWorkspaceEvents(ctx, db.ListWorkspaceEventsParams{Workspace: workspace, Action: action, Before: before, MaxRows: int32(limit)})
 	if err != nil {
 		return nil, fmt.Errorf("store: audit: %w", err)
 	}
@@ -308,26 +303,15 @@ func events(rows []db.AuditEvent) []auditlog.Event {
 	return out
 }
 
-// beginAppend begins a transaction that appends to the audit log. It reads
-// committed data, whatever the database's default, so its append sees the
-// event appended just before it.
-func (s *Store) beginAppend(ctx context.Context) (pgx.Tx, error) {
-	return s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
-}
-
-// withEvents runs change in a transaction and appends the audit events it
-// returns at its end, as the last thing the transaction does.
-func (s *Store) withEvents(ctx context.Context, change func(*db.Queries) ([]auditlog.Event, error)) error {
-	tx, err := s.beginAppend(ctx)
+// inTx runs f in a transaction, which it commits unless f fails. The
+// transaction reads committed data, whatever the database's default, so an
+// append to the audit log in it sees the event appended just before it.
+func (s *Store) inTx(ctx context.Context, f func(*db.Queries) error) error {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return fmt.Errorf("store: %w", err)
 	}
-	q := s.queries.WithTx(tx)
-	events, err := change(q)
-	for i := 0; err == nil && i < len(events); i++ {
-		_, err = appendEvent(ctx, q, events[i])
-	}
-	if err != nil {
+	if err := f(s.queries.WithTx(tx)); err != nil {
 		return errors.Join(err, tx.Rollback(ctx))
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -336,21 +320,37 @@ func (s *Store) withEvents(ctx context.Context, change func(*db.Queries) ([]audi
 	return nil
 }
 
+// withEvents runs change in a transaction and appends the audit events it
+// returns at its end, as the last thing the transaction does. It returns
+// them as appended.
+func (s *Store) withEvents(ctx context.Context, change func(*db.Queries) ([]auditlog.Event, error)) ([]auditlog.Event, error) {
+	var appended []auditlog.Event
+	err := s.inTx(ctx, func(q *db.Queries) error {
+		events, err := change(q)
+		if err != nil {
+			return err
+		}
+		for _, e := range events {
+			if e, err = appendEvent(ctx, q, e); err != nil {
+				return err
+			}
+			appended = append(appended, e)
+		}
+		return nil
+	})
+	return appended, err
+}
+
 // AppendEvent appends an event of the server's own, such as its start, or a
 // request recorded before it takes effect, and returns it as appended.
 func (s *Store) AppendEvent(ctx context.Context, e auditlog.Event) (auditlog.Event, error) {
-	tx, err := s.beginAppend(ctx)
+	appended, err := s.withEvents(ctx, func(*db.Queries) ([]auditlog.Event, error) {
+		return []auditlog.Event{e}, nil
+	})
 	if err != nil {
-		return auditlog.Event{}, fmt.Errorf("store: %w", err)
+		return auditlog.Event{}, err
 	}
-	appended, err := appendEvent(ctx, s.queries.WithTx(tx), e)
-	if err != nil {
-		return auditlog.Event{}, errors.Join(err, tx.Rollback(ctx))
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return auditlog.Event{}, fmt.Errorf("store: %w", err)
-	}
-	return appended, nil
+	return appended[0], nil
 }
 
 // details is the JSON of an event's details.
@@ -374,24 +374,20 @@ func runStarted(r Run, workspace string) auditlog.Event {
 	}
 }
 
-// runFinished is the event of the run that just ended with status in q's
-// transaction. It names how the run ended, not its output; the server ends
-// a run, so it has no actor.
-func runFinished(ctx context.Context, q *db.Queries, id string, status RunStatus, steps int32, runErr string) (auditlog.Event, error) {
-	owner, err := q.RunOwner(ctx, id)
-	if err != nil {
-		return auditlog.Event{}, fmt.Errorf("store: run %s: %w", id, err)
-	}
+// runFinished is the event of the run of workspace that just ended with
+// status. It names how the run ended, not its output; the server ends a run,
+// so it has no actor.
+func runFinished(workspace, id string, status RunStatus, steps int32, runErr string) auditlog.Event {
 	return auditlog.Event{
 		Action:    "run.finished",
-		Workspace: owner.Workspace,
+		Workspace: workspace,
 		RunID:     id,
 		Details: details(struct {
 			Status RunStatus `json:"status"`
 			Steps  int32     `json:"steps"`
 			Error  string    `json:"error,omitempty"`
 		}{status, steps, runErr}),
-	}, nil
+	}
 }
 
 // harnessChanged is the event of a harness's new version, stored by user.

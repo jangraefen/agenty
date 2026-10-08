@@ -12,12 +12,16 @@ LEFT JOIN runs f ON f.id = wanted.id AND f.started_by = sqlc.arg(started_by)::te
 WHERE wanted.id IS NULL OR f.id IS NOT NULL
 RETURNING sqlc.embed(runs),
     (SELECT hv.name FROM harness_versions hv WHERE hv.id = runs.harness_version_id)::text AS harness,
-    (SELECT hv.version FROM harness_versions hv WHERE hv.id = runs.harness_version_id)::integer AS harness_version;
+    (SELECT hv.version FROM harness_versions hv WHERE hv.id = runs.harness_version_id)::integer AS harness_version,
+    (SELECT hv.workspace FROM harness_versions hv WHERE hv.id = runs.harness_version_id)::text AS workspace;
 
--- name: FinishRun :execrows
+-- name: FinishRun :one
+-- The run's end, if it was running; it returns the run's workspace.
 UPDATE runs
 SET status = $2, output = $3, steps = $4, error = $5, finished_at = now()
-WHERE id = $1 AND status = 'running';
+FROM harness_versions
+WHERE runs.id = $1 AND runs.status = 'running' AND harness_versions.id = runs.harness_version_id
+RETURNING harness_versions.workspace;
 
 -- name: GetRun :one
 -- A run is found only in the workspace of the harness version it runs.
@@ -64,8 +68,9 @@ WHERE runs.id = sqlc.arg(id);
 -- name: FailRunningRuns :many
 UPDATE runs
 SET status = 'failed', error = $1, finished_at = now()
-WHERE status = 'running'
-RETURNING id, steps;
+FROM harness_versions
+WHERE runs.status = 'running' AND harness_versions.id = runs.harness_version_id
+RETURNING runs.id, runs.steps, harness_versions.workspace;
 
 -- name: ConversationRuns :many
 -- The runs of the conversation the run named by id belongs to, oldest first,
@@ -107,8 +112,9 @@ ORDER BY runs.created_at, runs.id;
 -- name: CancelIdleRun :many
 UPDATE runs
 SET status = 'cancelled', error = $2, finished_at = now()
-WHERE id = $1 AND status IN ('queued', 'waiting')
-RETURNING steps;
+FROM harness_versions
+WHERE runs.id = $1 AND runs.status IN ('queued', 'waiting') AND harness_versions.id = runs.harness_version_id
+RETURNING runs.steps, harness_versions.workspace;
 
 -- name: SetRunDigests :execrows
 UPDATE runs

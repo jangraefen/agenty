@@ -99,42 +99,40 @@ func (s *Store) PutHarness(ctx context.Context, workspace, user string, h harnes
 	}
 	definition := canonical(h)
 
-	tx, err := s.beginAppend(ctx)
-	if err != nil {
-		return HarnessVersion{}, fmt.Errorf("store: %w", err)
-	}
-	q := s.queries.WithTx(tx)
-	// A workspace name never holds a slash.
-	if err := q.LockHarnessName(ctx, workspace+"/"+h.Name); err != nil {
-		return HarnessVersion{}, errors.Join(fmt.Errorf("store: %w", err), tx.Rollback(ctx))
-	}
-	next := int32(1)
-	latest, err := q.LatestHarnessVersion(ctx, db.LatestHarnessVersionParams{Workspace: workspace, Name: h.Name})
-	switch {
-	case errors.Is(err, pgx.ErrNoRows):
-	case err != nil:
-		return HarnessVersion{}, errors.Join(fmt.Errorf("store: %w", err), tx.Rollback(ctx))
-	default:
-		v, err := harnessVersion(latest)
+	var stored HarnessVersion
+	_, err := s.withEvents(ctx, func(q *db.Queries) ([]auditlog.Event, error) {
+		// A workspace name never holds a slash.
+		if err := q.LockHarnessName(ctx, workspace+"/"+h.Name); err != nil {
+			return nil, fmt.Errorf("store: %w", err)
+		}
+		next := int32(1)
+		latest, err := q.LatestHarnessVersion(ctx, db.LatestHarnessVersionParams{Workspace: workspace, Name: h.Name})
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+		case err != nil:
+			return nil, fmt.Errorf("store: %w", err)
+		default:
+			if stored, err = harnessVersion(latest); err != nil {
+				return nil, err
+			}
+			if bytes.Equal(canonical(stored.Harness), definition) {
+				return nil, nil
+			}
+			next = latest.Version + 1
+		}
+		row, err := q.InsertHarnessVersion(ctx, db.InsertHarnessVersionParams{Workspace: workspace, Name: h.Name, Version: next, Definition: definition})
 		if err != nil {
-			return HarnessVersion{}, errors.Join(err, tx.Rollback(ctx))
+			return nil, fmt.Errorf("store: %w", err)
 		}
-		if bytes.Equal(canonical(v.Harness), definition) {
-			return v, tx.Rollback(ctx)
+		if stored, err = harnessVersion(row); err != nil {
+			return nil, err
 		}
-		next = latest.Version + 1
-	}
-	row, err := q.InsertHarnessVersion(ctx, db.InsertHarnessVersionParams{Workspace: workspace, Name: h.Name, Version: next, Definition: definition})
+		return []auditlog.Event{harnessChanged(workspace, user, h.Name, next)}, nil
+	})
 	if err != nil {
-		return HarnessVersion{}, errors.Join(fmt.Errorf("store: %w", err), tx.Rollback(ctx))
+		return HarnessVersion{}, err
 	}
-	if _, err := appendEvent(ctx, q, harnessChanged(workspace, user, h.Name, next)); err != nil {
-		return HarnessVersion{}, errors.Join(err, tx.Rollback(ctx))
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return HarnessVersion{}, fmt.Errorf("store: %w", err)
-	}
-	return harnessVersion(row)
+	return stored, nil
 }
 
 // canonical is the stored form of h: its JSON, with empty lists written as
@@ -270,7 +268,7 @@ const uniqueViolation = "23505"
 // branches.
 func (s *Store) CreateRun(ctx context.Context, r NewRun) (Run, error) {
 	var created Run
-	err := s.withEvents(ctx, func(q *db.Queries) ([]auditlog.Event, error) {
+	_, err := s.withEvents(ctx, func(q *db.Queries) ([]auditlog.Event, error) {
 		row, err := q.InsertRun(ctx, db.InsertRunParams{ID: r.ID, HarnessVersionID: r.HarnessVersionID, Input: r.Input, StartedBy: r.StartedBy, Follows: optional(r.Follows)})
 		var pgErr *pgconn.PgError
 		switch {
@@ -282,11 +280,7 @@ func (s *Store) CreateRun(ctx context.Context, r NewRun) (Run, error) {
 			return nil, fmt.Errorf("store: run %s: %w", r.ID, err)
 		}
 		created = run(row.Run, row.Harness, row.HarnessVersion)
-		owner, err := q.RunOwner(ctx, r.ID)
-		if err != nil {
-			return nil, fmt.Errorf("store: run %s: %w", r.ID, err)
-		}
-		return []auditlog.Event{runStarted(created, owner.Workspace)}, nil
+		return []auditlog.Event{runStarted(created, row.Workspace)}, nil
 	})
 	if err != nil {
 		return Run{}, err
@@ -342,19 +336,18 @@ func (s *Store) IdleRuns(ctx context.Context) ([]IdleRun, error) {
 // is neither, such as one a worker has claimed.
 func (s *Store) CancelIdleRun(ctx context.Context, id, why string) (bool, error) {
 	cancelled := false
-	err := s.withEvents(ctx, func(q *db.Queries) ([]auditlog.Event, error) {
+	_, err := s.withEvents(ctx, func(q *db.Queries) ([]auditlog.Event, error) {
 		// The request first, then the run, as AnswerApproval and
 		// ExpireApprovals lock them.
 		if err := q.WithdrawApprovals(ctx, db.WithdrawApprovalsParams{RunID: id, Reason: why}); err != nil {
 			return nil, fmt.Errorf("store: run %s: %w", id, err)
 		}
-		steps, err := q.CancelIdleRun(ctx, db.CancelIdleRunParams{ID: id, Error: why})
-		if err != nil || len(steps) == 0 {
+		rows, err := q.CancelIdleRun(ctx, db.CancelIdleRunParams{ID: id, Error: why})
+		if err != nil || len(rows) == 0 {
 			return nil, wrapRun(id, err)
 		}
 		cancelled = true
-		e, err := runFinished(ctx, q, id, RunCancelled, steps[0], why)
-		return []auditlog.Event{e}, err
+		return []auditlog.Event{runFinished(rows[0].Workspace, id, RunCancelled, rows[0].Steps, why)}, nil
 	})
 	return cancelled, err
 }
@@ -377,17 +370,17 @@ func (s *Store) FinishRun(ctx context.Context, id string, status RunStatus, outp
 	if status == RunRunning || status == RunQueued {
 		return fmt.Errorf("store: run %s: cannot finish as %s", id, status)
 	}
-	return s.withEvents(ctx, func(q *db.Queries) ([]auditlog.Event, error) {
-		n, err := q.FinishRun(ctx, db.FinishRunParams{ID: id, Status: string(status), Output: output, Steps: int32(steps), Error: runErr}) //nolint:gosec // G115: steps is bounded by the harness's max_steps.
+	_, err := s.withEvents(ctx, func(q *db.Queries) ([]auditlog.Event, error) {
+		workspace, err := q.FinishRun(ctx, db.FinishRunParams{ID: id, Status: string(status), Output: output, Steps: int32(steps), Error: runErr}) //nolint:gosec // G115: steps is bounded by the harness's max_steps.
 		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			return nil, fmt.Errorf("store: running run %s: %w", id, ErrNotFound)
 		case err != nil:
 			return nil, fmt.Errorf("store: run %s: %w", id, err)
-		case n == 0:
-			return nil, fmt.Errorf("store: running run %s: %w", id, ErrNotFound)
 		}
-		e, err := runFinished(ctx, q, id, status, int32(steps), runErr) //nolint:gosec // G115: as above.
-		return []auditlog.Event{e}, err
+		return []auditlog.Event{runFinished(workspace, id, status, int32(steps), runErr)}, nil //nolint:gosec // G115: as above.
 	})
+	return err
 }
 
 // Run returns the run with the given ID in workspace. A run of another
@@ -591,7 +584,7 @@ func run(row db.Run, harness string, version int32) Run {
 // run cannot outlive the process that ran it.
 func (s *Store) FailRunningRuns(ctx context.Context, reason string) (int64, error) {
 	var n int64
-	err := s.withEvents(ctx, func(q *db.Queries) ([]auditlog.Event, error) {
+	_, err := s.withEvents(ctx, func(q *db.Queries) ([]auditlog.Event, error) {
 		failed, err := q.FailRunningRuns(ctx, reason)
 		if err != nil {
 			return nil, fmt.Errorf("store: %w", err)
@@ -599,9 +592,7 @@ func (s *Store) FailRunningRuns(ctx context.Context, reason string) (int64, erro
 		n = int64(len(failed))
 		events := make([]auditlog.Event, len(failed))
 		for i, r := range failed {
-			if events[i], err = runFinished(ctx, q, r.ID, RunFailed, r.Steps, reason); err != nil {
-				return nil, err
-			}
+			events[i] = runFinished(r.Workspace, r.ID, RunFailed, r.Steps, reason)
 		}
 		return events, nil
 	})

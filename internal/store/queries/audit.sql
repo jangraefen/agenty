@@ -5,7 +5,7 @@
 SELECT pg_advisory_xact_lock(hashtext('agenty'), hashtext('audit log'));
 
 -- name: LastAuditEvent :one
--- The latest event's id and hash; call it holding the lock.
+-- The latest event's id and hash; an append calls it holding the lock.
 SELECT id, hash FROM audit_events ORDER BY id DESC LIMIT 1;
 
 -- name: InsertAuditEvent :exec
@@ -24,10 +24,6 @@ WHERE runs.id = $1;
 SELECT action, details, recorded_at FROM audit_events
 WHERE run_id = $1 AND action IN ('tool.decision', 'tool.approval', 'tool.result')
 ORDER BY id;
-
--- name: LastAuditEventID :one
--- The latest event's id, 0 before the first.
-SELECT COALESCE(max(id), 0)::bigint FROM audit_events;
 
 -- name: AuditEventsAfter :many
 -- The events after the one with the given id up to the one with the last,
@@ -58,10 +54,10 @@ ORDER BY id DESC
 LIMIT sqlc.arg(max_rows);
 
 -- name: ListWorkspaceEvents :many
--- The events of a workspace with one of the given actions, newest first,
--- before the event named by before (0 for the newest).
+-- The events of a workspace with an action, newest first, before the event
+-- named by before (0 for the newest).
 SELECT * FROM audit_events
-WHERE workspace = sqlc.arg(workspace) AND action = ANY(sqlc.arg(actions)::text[])
+WHERE workspace = sqlc.arg(workspace) AND action = sqlc.arg(action)
   AND (sqlc.arg(before)::bigint = 0 OR id < sqlc.arg(before))
 ORDER BY id DESC
 LIMIT sqlc.arg(max_rows);

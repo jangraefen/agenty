@@ -53,8 +53,6 @@ type Approval struct {
 	Status   ApprovalStatus
 	Approver string
 	Reason   string
-	// AnsweredAt is nil while the request is pending.
-	AnsweredAt *time.Time
 }
 
 // Answer is a person's answer to an approval request.
@@ -67,37 +65,31 @@ type Answer struct {
 // SuspendRun stores a's request and marks its running run as waiting for
 // it. A run that is not running returns ErrNotFound.
 func (s *Store) SuspendRun(ctx context.Context, a NewApproval) error {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("store: run %s: %w", a.RunID, err)
-	}
-	q := s.queries.WithTx(tx)
-	n, err := q.SuspendRun(ctx, a.RunID)
-	switch {
-	case err == nil && n == 0:
-		err = fmt.Errorf("running run %s: %w", a.RunID, ErrNotFound)
-	case err == nil:
-		err = q.InsertApproval(ctx, db.InsertApprovalParams{
-			ID:        a.ID,
-			RunID:     a.RunID,
-			CallID:    a.CallID,
-			CallIndex: int32(a.Call), //nolint:gosec // G115: a reply makes few calls.
-			Tool:      a.Tool,
-			Args:      a.Args,
-			// Slices of strings and of plain structs always marshal.
-			Reasons:   must.Value(json.Marshal(nonNil(a.Reasons))),
-			Results:   must.Value(json.Marshal(nonNil(a.Results))),
-			CreatedAt: a.CreatedAt,
-			ExpiresAt: a.ExpiresAt,
-		})
-	}
-	if err != nil {
-		return errors.Join(fmt.Errorf("store: suspend: %w", err), tx.Rollback(ctx))
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("store: suspend run %s: %w", a.RunID, err)
-	}
-	return nil
+	return s.inTx(ctx, func(q *db.Queries) error {
+		n, err := q.SuspendRun(ctx, a.RunID)
+		switch {
+		case err == nil && n == 0:
+			err = fmt.Errorf("running run %s: %w", a.RunID, ErrNotFound)
+		case err == nil:
+			err = q.InsertApproval(ctx, db.InsertApprovalParams{
+				ID:        a.ID,
+				RunID:     a.RunID,
+				CallID:    a.CallID,
+				CallIndex: int32(a.Call), //nolint:gosec // G115: a reply makes few calls.
+				Tool:      a.Tool,
+				Args:      a.Args,
+				// Slices of strings and of plain structs always marshal.
+				Reasons:   must.Value(json.Marshal(nonNil(a.Reasons))),
+				Results:   must.Value(json.Marshal(nonNil(a.Results))),
+				CreatedAt: a.CreatedAt,
+				ExpiresAt: a.ExpiresAt,
+			})
+		}
+		if err != nil {
+			return fmt.Errorf("store: suspend: %w", err)
+		}
+		return nil
+	})
 }
 
 // nonNil returns s, or an empty slice for nil, which marshals as [].
@@ -147,46 +139,40 @@ func (s *Store) AnswerApproval(ctx context.Context, workspace, runID, id string,
 	if a.Approved {
 		status = ApprovalApproved
 	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return false, fmt.Errorf("store: approval %s: %w", id, err)
-	}
-	q := s.queries.WithTx(tx)
-	run, err := q.AnswerApproval(ctx, db.AnswerApprovalParams{Status: string(status), Approver: a.Approver, Reason: a.Reason, ID: id, RunID: runID, Workspace: workspace})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, tx.Rollback(ctx)
-	}
-	if err == nil {
-		_, err = q.QueueWaitingRuns(ctx, []string{run})
-	}
-	if err != nil {
-		return false, errors.Join(fmt.Errorf("store: approval %s: %w", id, err), tx.Rollback(ctx))
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return false, fmt.Errorf("store: approval %s: %w", id, err)
-	}
-	return true, nil
+	answered := false
+	err := s.inTx(ctx, func(q *db.Queries) error {
+		run, err := q.AnswerApproval(ctx, db.AnswerApprovalParams{Status: string(status), Approver: a.Approver, Reason: a.Reason, ID: id, RunID: runID, Workspace: workspace})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err == nil {
+			_, err = q.QueueWaitingRuns(ctx, []string{run})
+		}
+		if err != nil {
+			return fmt.Errorf("store: approval %s: %w", id, err)
+		}
+		answered = true
+		return nil
+	})
+	return answered, err
 }
 
 // ExpireApprovals rejects the pending requests that have expired, giving
 // reason, and queues their runs to resume. It returns how many it rejected.
 func (s *Store) ExpireApprovals(ctx context.Context, reason string) (int, error) {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("store: expire approvals: %w", err)
-	}
-	q := s.queries.WithTx(tx)
-	runs, err := q.ExpireApprovals(ctx, reason)
-	if err == nil && len(runs) > 0 {
-		_, err = q.QueueWaitingRuns(ctx, runs)
-	}
-	if err != nil {
-		return 0, errors.Join(fmt.Errorf("store: expire approvals: %w", err), tx.Rollback(ctx))
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("store: expire approvals: %w", err)
-	}
-	return len(runs), nil
+	expired := 0
+	err := s.inTx(ctx, func(q *db.Queries) error {
+		runs, err := q.ExpireApprovals(ctx, reason)
+		if err == nil && len(runs) > 0 {
+			_, err = q.QueueWaitingRuns(ctx, runs)
+		}
+		if err != nil {
+			return fmt.Errorf("store: expire approvals: %w", err)
+		}
+		expired = len(runs)
+		return nil
+	})
+	return expired, err
 }
 
 // NextApprovalExpiry returns when the next pending request expires, and false
@@ -214,11 +200,10 @@ func approval(row db.Approval, harness string) (Approval, error) {
 			CreatedAt: row.CreatedAt,
 			ExpiresAt: row.ExpiresAt,
 		},
-		Harness:    harness,
-		Status:     ApprovalStatus(row.Status),
-		Approver:   row.Approver,
-		Reason:     row.Reason,
-		AnsweredAt: row.AnsweredAt,
+		Harness:  harness,
+		Status:   ApprovalStatus(row.Status),
+		Approver: row.Approver,
+		Reason:   row.Reason,
 	}
 	if err := json.Unmarshal(row.Reasons, &a.Reasons); err != nil {
 		return Approval{}, fmt.Errorf("store: approval %s: reasons: %w", row.ID, err)

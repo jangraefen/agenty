@@ -95,7 +95,6 @@ func TestAnswerApproval_QueuesTheRunOnce(t *testing.T) {
 	assert.Equal(t, store.ApprovalApproved, latest.Status)
 	assert.Equal(t, "alice", latest.Approver)
 	assert.Equal(t, "fine", latest.Reason)
-	assert.NotNil(t, latest.AnsweredAt)
 	pending, err := s.PendingApprovals(ctx, ws, "alice")
 	require.NoError(t, err)
 	assert.Empty(t, pending)

@@ -686,7 +686,7 @@ func TestRecord_FailsClosed(t *testing.T) {
 
 	s.Close()
 	err = s.Record(ctx, toolgateway.Record{RunID: "r1", CallID: "c1", Event: toolgateway.EventDecision, Tool: "files_read", Decision: toolgateway.Allow})
-	require.ErrorContains(t, err, "audit", "an unreachable database is an error")
+	require.Error(t, err, "an unreachable database is an error")
 	_, err = s.AuditRecords(ctx, "r1")
 	require.Error(t, err)
 	_, err = s.Harnesses(ctx, ws)

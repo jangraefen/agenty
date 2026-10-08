@@ -98,24 +98,12 @@ type LastAuditEventRow struct {
 	Hash []byte
 }
 
-// The latest event's id and hash; call it holding the lock.
+// The latest event's id and hash; an append calls it holding the lock.
 func (q *Queries) LastAuditEvent(ctx context.Context) (LastAuditEventRow, error) {
 	row := q.db.QueryRow(ctx, lastAuditEvent)
 	var i LastAuditEventRow
 	err := row.Scan(&i.ID, &i.Hash)
 	return i, err
-}
-
-const lastAuditEventID = `-- name: LastAuditEventID :one
-SELECT COALESCE(max(id), 0)::bigint FROM audit_events
-`
-
-// The latest event's id, 0 before the first.
-func (q *Queries) LastAuditEventID(ctx context.Context) (int64, error) {
-	row := q.db.QueryRow(ctx, lastAuditEventID)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
 }
 
 const listActorEvents = `-- name: ListActorEvents :many
@@ -229,7 +217,7 @@ func (q *Queries) ListAuditEvents(ctx context.Context, arg ListAuditEventsParams
 
 const listWorkspaceEvents = `-- name: ListWorkspaceEvents :many
 SELECT id, recorded_at, actor, action, workspace, run_id, target, details, prev_hash, hash FROM audit_events
-WHERE workspace = $1 AND action = ANY($2::text[])
+WHERE workspace = $1 AND action = $2
   AND ($3::bigint = 0 OR id < $3)
 ORDER BY id DESC
 LIMIT $4
@@ -237,17 +225,17 @@ LIMIT $4
 
 type ListWorkspaceEventsParams struct {
 	Workspace string
-	Actions   []string
+	Action    string
 	Before    int64
 	MaxRows   int32
 }
 
-// The events of a workspace with one of the given actions, newest first,
-// before the event named by before (0 for the newest).
+// The events of a workspace with an action, newest first, before the event
+// named by before (0 for the newest).
 func (q *Queries) ListWorkspaceEvents(ctx context.Context, arg ListWorkspaceEventsParams) ([]AuditEvent, error) {
 	rows, err := q.db.Query(ctx, listWorkspaceEvents,
 		arg.Workspace,
-		arg.Actions,
+		arg.Action,
 		arg.Before,
 		arg.MaxRows,
 	)

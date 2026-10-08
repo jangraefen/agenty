@@ -5,3 +5,6 @@
 
 # Task's cache of what it built.
 /.task/
+
+# Working documents of planning sessions, not part of the repository.
+/docs/superpowers/

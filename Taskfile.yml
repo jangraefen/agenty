@@ -58,8 +58,13 @@ tasks:
     cmds:
       - go test -race {{.CLI_ARGS | default "./..."}}
 
+  coverage:
+    desc: Check that the tool gateway, policy and secret redaction are fully covered by their tests
+    cmds:
+      - scripts/coverage.sh
+
   check:
-    desc: "What CI checks: generated code, lint, go mod tidy and the tests, of the backend and the web frontend"
+    desc: "What CI checks: generated code, lint, go mod tidy, the tests and their coverage, of the backend and the web frontend"
     cmds:
       - task: generate
       - test -z "$(git status --porcelain internal/store/db internal/api internal/server)"
@@ -69,6 +74,7 @@ tasks:
       - go mod tidy
       - git diff --exit-code go.mod go.sum
       - task: test
+      - task: coverage
       - task: web:check
 
   build:

@@ -4,8 +4,17 @@ import { useEffect, useState } from "react";
 import { makeClient } from "./api/client";
 import type { Session } from "./auth/session";
 import { makeRouter } from "./router";
+import { type Theme, ThemeContext } from "./theme/theme";
 
-export function App({ session, history }: { session: Session; history?: RouterHistory }) {
+export function App({
+  session,
+  theme,
+  history,
+}: {
+  session: Session;
+  theme: Theme;
+  history?: RouterHistory;
+}) {
   const [queryClient] = useState(
     () => new QueryClient({ defaultOptions: { queries: { retry: false } } }),
   );
@@ -27,10 +36,13 @@ export function App({ session, history }: { session: Session; history?: RouterHi
     });
   }, [session, queryClient, router]);
   useEffect(() => session.followOtherTabs(window), [session]);
+  useEffect(() => theme.followSystem(), [theme]);
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>
+    <ThemeContext value={theme}>
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    </ThemeContext>
   );
 }

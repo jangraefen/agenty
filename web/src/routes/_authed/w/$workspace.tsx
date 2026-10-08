@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, notFound, Outlet, useNavigate } from "@tanstack/react-router";
 import { approvalsQuery } from "@/api/queries";
+import { ThemeMenu } from "@/components/theme-menu";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -41,6 +42,7 @@ function WorkspaceLayout() {
         <PageLinks workspace={workspace} />
         {/* The user and signing out stay together when the header wraps. */}
         <div className="ml-auto flex items-center gap-4">
+          <ThemeMenu />
           <span className="text-sm text-muted-foreground">{me.user}</span>
           <Button variant="outline" size="sm" onClick={signOut}>
             Sign out

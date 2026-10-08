@@ -1,4 +1,5 @@
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
+import { ThemeMenu } from "@/components/theme-menu";
 
 export const Route = createFileRoute("/_authed/")({
   loader: ({ context: { me } }) => {
@@ -14,25 +15,30 @@ export const Route = createFileRoute("/_authed/")({
 function Workspaces() {
   const me = Route.useLoaderData();
   return (
-    <main className="mx-auto max-w-xl p-6">
-      <h1 className="text-xl font-semibold">Workspaces</h1>
-      {me.workspaces.length === 0 ? (
-        <p className="mt-2 text-muted-foreground">You are not a member of any workspace yet.</p>
-      ) : (
-        <ul className="mt-4 grid gap-2">
-          {me.workspaces.map((workspace) => (
-            <li key={workspace}>
-              <Link
-                to="/w/$workspace/runs"
-                params={{ workspace }}
-                className="block rounded-md border px-4 py-3 hover:bg-accent"
-              >
-                {workspace}
-              </Link>
-            </li>
-          ))}
-        </ul>
-      )}
-    </main>
+    <>
+      <header className="flex justify-end px-6 py-3">
+        <ThemeMenu />
+      </header>
+      <main className="mx-auto max-w-xl p-6">
+        <h1 className="text-xl font-semibold">Workspaces</h1>
+        {me.workspaces.length === 0 ? (
+          <p className="mt-2 text-muted-foreground">You are not a member of any workspace yet.</p>
+        ) : (
+          <ul className="mt-4 grid gap-2">
+            {me.workspaces.map((workspace) => (
+              <li key={workspace}>
+                <Link
+                  to="/w/$workspace/runs"
+                  params={{ workspace }}
+                  className="block rounded-md border px-4 py-3 hover:bg-accent"
+                >
+                  {workspace}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </main>
+    </>
   );
 }

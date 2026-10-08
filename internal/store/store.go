@@ -100,7 +100,7 @@ func (s *Store) PutHarness(ctx context.Context, workspace, user string, h harnes
 	}
 	definition := canonical(h)
 
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginAppend(ctx)
 	if err != nil {
 		return HarnessVersion{}, fmt.Errorf("store: %w", err)
 	}
@@ -126,11 +126,11 @@ func (s *Store) PutHarness(ctx context.Context, workspace, user string, h harnes
 		next = latest.Version + 1
 	}
 	row, err := q.InsertHarnessVersion(ctx, db.InsertHarnessVersionParams{Workspace: workspace, Name: h.Name, Version: next, Definition: definition})
-	if err == nil {
-		_, err = appendEvent(ctx, q, harnessChanged(workspace, user, h.Name, next))
-	}
 	if err != nil {
 		return HarnessVersion{}, errors.Join(fmt.Errorf("store: %w", err), tx.Rollback(ctx))
+	}
+	if _, err := appendEvent(ctx, q, harnessChanged(workspace, user, h.Name, next)); err != nil {
+		return HarnessVersion{}, errors.Join(err, tx.Rollback(ctx))
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return HarnessVersion{}, fmt.Errorf("store: %w", err)

@@ -1,6 +1,8 @@
 package cli_test
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -21,9 +23,11 @@ func TestAudit_ExportAndVerify(t *testing.T) {
 
 	require.Equal(t, 0, f.main("audit", "verify", f.path("audit.jsonl")), f.stderr.String())
 	out := f.stdout.String()
-	assert.Regexp(t, `verified (\d+) events, 1 to (\d+)`, out)
+	last, err := f.store.LastAuditEventID(context.Background())
+	require.NoError(t, err)
+	assert.Contains(t, out, fmt.Sprintf("verified %d events, 1 to %d", last, last), "the whole log, up to the export's own read")
 	anchor := strings.TrimSpace(out[strings.Index(out, "anchor: ")+len("anchor: "):])
-	assert.Regexp(t, `^\d+:[0-9a-f]{64}$`, anchor, "the last event's id and hash, to keep")
+	assert.Regexp(t, fmt.Sprintf(`^%d:[0-9a-f]{64}$`, last), anchor, "the last event's id and hash, to keep")
 	f.stdout.Reset()
 
 	require.Equal(t, 0, f.main("audit", "verify", "--anchor", anchor, f.path("audit.jsonl")), f.stderr.String())

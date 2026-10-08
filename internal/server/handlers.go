@@ -312,10 +312,17 @@ func apiRun(r store.Run) api.Run {
 // before that, so the run's events tell when it ended.
 func (s handlers) CancelRun(c *gin.Context, workspace, id string) {
 	run, ok := s.ownRun(c, workspace, id)
-	if !ok || !s.record(c, auditlog.Event{Action: "run.cancel_requested", Workspace: workspace, RunID: id, Details: json.RawMessage("{}")}) {
+	if !ok {
 		return
 	}
 	if h := s.hub(workspace, id); h != nil {
+		// A cancel stops an agent: it goes ahead even when the log cannot
+		// record the request. How the run ended, and by whom, is recorded
+		// as it ends.
+		request := auditlog.Event{Actor: c.GetString(userKey), Action: "run.cancel_requested", Workspace: workspace, RunID: id, Details: json.RawMessage("{}")}
+		if _, err := s.cfg.Store.AppendEvent(c.Request.Context(), request); err != nil {
+			s.cfg.Logger.Error("cannot record a cancel request", "run_id", id, "error", s.cfg.Resolved.Redactor.String(err.Error()))
+		}
 		by := cancelledBy(c.GetString(userKey))
 		// A worker that claims the run from now on finds it cancelled.
 		h.cancel(by)

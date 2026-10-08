@@ -151,7 +151,7 @@ func TestInvariant_AuditLogIsTamperEvident(t *testing.T) {
 	_, err = auditlog.Verify(bytes.NewReader(forged))
 	require.NoError(t, err, "a consistent rewrite verifies on its own")
 	_, err = auditlog.Verify(bytes.NewReader(forged), anchor)
-	require.ErrorContains(t, err, "anchor", "but not against an anchor kept elsewhere")
+	require.ErrorContains(t, err, fmt.Sprint("anchor ", anchor.ID), "but not against an anchor kept elsewhere")
 }
 
 func TestCopyAuditRecords(t *testing.T) {
@@ -303,5 +303,37 @@ func TestAuditEvents_RunsAndHarnesses(t *testing.T) {
 		`dana audit.read    {"read":"runs"}`,
 	}, events(t, s, 0), "what was said in a run is never part of its events")
 	_, err = auditlog.Verify(bytes.NewReader(export(t, s)))
+	require.NoError(t, err)
+}
+
+// TestAppends_ReadCommittedWhateverTheDefault: appends read committed data
+// even where the database's default isolation is stricter, so concurrent
+// changes never collide on the log's next id.
+func TestAppends_ReadCommittedWhateverTheDefault(t *testing.T) {
+	ctx := context.Background()
+	s, url := storetest.NewWithURL(t)
+	v, err := s.PutHarness(ctx, ws, "alice", notes())
+	require.NoError(t, err)
+	conn, err := pgx.Connect(ctx, url)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, conn.Close(context.Background())) })
+	_, err = conn.Exec(ctx, `DO $$ BEGIN EXECUTE format('ALTER DATABASE %I SET default_transaction_isolation = %L', current_database(), 'repeatable read'); END $$`)
+	require.NoError(t, err)
+	strict, err := store.Open(ctx, url)
+	require.NoError(t, err)
+	t.Cleanup(strict.Close)
+
+	const n = 16
+	errs := make(chan error, n)
+	for i := range n {
+		go func() {
+			_, err := strict.CreateRun(ctx, store.NewRun{ID: fmt.Sprint("r", i), HarnessVersionID: v.ID, Input: "x", StartedBy: "alice"})
+			errs <- err
+		}()
+	}
+	for range n {
+		require.NoError(t, <-errs)
+	}
+	_, err = auditlog.Verify(bytes.NewReader(export(t, strict)))
 	require.NoError(t, err)
 }

@@ -13,7 +13,9 @@ import (
 
 	"github.com/jangraefen/agenty/internal/api"
 	"github.com/jangraefen/agenty/internal/auditlog"
+	"github.com/jangraefen/agenty/internal/model/modeltest"
 	"github.com/jangraefen/agenty/internal/policy"
+	"github.com/jangraefen/agenty/internal/store/storetest"
 )
 
 // logEvents returns the audit log's events with the given action, in order.
@@ -48,9 +50,9 @@ func TestAuditEvents_ServerStarted(t *testing.T) {
 			Members []string `json:"members"`
 		} `json:"workspaces"`
 		MCPServers []struct {
-			Name    string   `json:"name"`
-			Command string   `json:"command"`
-			Args    []string `json:"args"`
+			Name       string `json:"name"`
+			Command    string `json:"command"`
+			ArgsSHA256 string `json:"args_sha256"`
 		} `json:"mcp_servers"`
 	}
 	require.NoError(t, json.Unmarshal(started[0].Details, &details))
@@ -63,6 +65,8 @@ func TestAuditEvents_ServerStarted(t *testing.T) {
 	assert.Equal(t, []string{"alice", "bob", "dana"}, details.Workspaces[0].Members)
 	assert.Equal(t, "files", details.MCPServers[0].Name)
 	assert.Equal(t, "unused", details.MCPServers[0].Command)
+	assert.Regexp(t, `^[0-9a-f]{64}$`, details.MCPServers[0].ArgsSHA256, "arguments, which may hold a credential, only as a digest")
+	assert.NotContains(t, string(started[0].Details), "postgres://", "not the arguments themselves")
 	for _, secret := range []string{token, aliceToken, bobToken, carolToken, danaToken} {
 		assert.NotContains(t, string(started[0].Details), secret, "no credential is part of the log")
 	}
@@ -109,4 +113,44 @@ func TestAuditEvents_CancelAndReads(t *testing.T) {
 	whole, _ := f.export(t, "")
 	_, err := auditlog.Verify(strings.NewReader(whole))
 	require.NoError(t, err)
+}
+
+// TestAuditEvents_ReadsFailClosed: an auditor's read that the log cannot
+// record does not happen.
+func TestAuditEvents_ReadsFailClosed(t *testing.T) {
+	f := newFixture(t, options{})
+	f.putNotes(t)
+	f.script(modeltest.Reply("done"))
+	run := f.startRun(t, "tidy my notes")
+	f.finish(t, run.ID)
+	storetest.Exec(t, f.dbURL, `
+		CREATE FUNCTION refuse_appends() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN RAISE EXCEPTION 'the log is broken'; END $$;
+		CREATE TRIGGER refuse_appends BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION refuse_appends()`)
+
+	for _, path := range []string{"/v1/audit/runs", "/v1/audit/runs/" + run.ID, "/v1/audit/export"} {
+		var raw json.RawMessage
+		assert.Equal(t, http.StatusInternalServerError, f.doAs(t, danaToken, http.MethodGet, path, nil, &raw), path)
+		assert.NotContains(t, string(raw), run.ID, "%s: nothing read", path)
+	}
+}
+
+func TestAuditEvents_CancelARunningRun(t *testing.T) {
+	f := newFixture(t, options{})
+	f.putNotes(t)
+	run, _ := f.busy(t)
+
+	require.Equal(t, http.StatusAccepted, f.do(t, http.MethodPost, home+"/runs/"+run.ID+"/cancel", nil, nil))
+	assert.Equal(t, api.RunStatusCancelled, f.finish(t, run.ID).Status)
+
+	requested := f.logEvents(t, "run.cancel_requested")
+	require.Len(t, requested, 1)
+	assert.Equal(t, "alice", requested[0].Actor)
+	finished := f.logEvents(t, "run.finished")
+	require.Len(t, finished, 1)
+	assert.Greater(t, finished[0].ID, requested[0].ID)
+	assert.Contains(t, string(finished[0].Details), `"status":"cancelled"`)
+
+	require.Equal(t, http.StatusConflict, f.do(t, http.MethodPost, home+"/runs/"+run.ID+"/cancel", nil, nil))
+	assert.Len(t, f.logEvents(t, "run.cancel_requested"), 1, "a cancel of a finished run requests nothing")
 }

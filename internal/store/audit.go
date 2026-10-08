@@ -143,8 +143,7 @@ func (s *Store) Record(ctx context.Context, rec toolgateway.Record) error {
 
 // RecordAt is Record, and returns when the record was recorded.
 func (s *Store) RecordAt(ctx context.Context, rec toolgateway.Record) (time.Time, error) {
-	// An append must see the event appended just before it.
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	tx, err := s.beginAppend(ctx)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("store: audit: %w", err)
 	}
@@ -330,10 +329,17 @@ func readAuditRecords(ctx context.Context, tx *sql.Tx, after int64) (_ []auditlo
 	return events, last, rows.Err()
 }
 
+// beginAppend begins a transaction that appends to the audit log. It reads
+// committed data, whatever the database's default, so its append sees the
+// event appended just before it.
+func (s *Store) beginAppend(ctx context.Context) (pgx.Tx, error) {
+	return s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+}
+
 // withEvents runs change in a transaction and appends the audit events it
 // returns at its end, as the last thing the transaction does.
 func (s *Store) withEvents(ctx context.Context, change func(*db.Queries) ([]auditlog.Event, error)) error {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginAppend(ctx)
 	if err != nil {
 		return fmt.Errorf("store: %w", err)
 	}
@@ -354,7 +360,7 @@ func (s *Store) withEvents(ctx context.Context, change func(*db.Queries) ([]audi
 // AppendEvent appends an event of the server's own, such as its start or
 // an auditor's read, to the audit log, and returns it as appended.
 func (s *Store) AppendEvent(ctx context.Context, e auditlog.Event) (auditlog.Event, error) {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginAppend(ctx)
 	if err != nil {
 		return auditlog.Event{}, fmt.Errorf("store: %w", err)
 	}

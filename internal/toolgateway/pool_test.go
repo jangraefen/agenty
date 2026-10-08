@@ -66,13 +66,13 @@ func TestInvariant_PoolNeverSharesServersAcrossConversations(t *testing.T) {
 	theirs := pool.Lease("conv-2", servers)
 	use(t, theirs)
 	require.NoError(t, theirs.Keep())
-	fresh := pool.Lease("conv-3", servers)
-	use(t, fresh)
-	require.NoError(t, fresh.Keep())
+	again := pool.Lease("conv-1", servers)
+	use(t, again)
+	require.NoError(t, again.Keep())
 
-	assert.Len(t, files.StartedAs, 3, "each conversation has a server of its own")
+	assert.Len(t, files.StartedAs, 2, "each conversation has a server of its own")
 	assert.Equal(t, []string{"files"}, theirs.Fresh())
-	assert.Equal(t, []string{"files"}, fresh.Fresh())
+	assert.Empty(t, again.Fresh(), "a conversation takes its own server, not another's")
 }
 
 func TestPool_StopsServersIdleForTheirTimeout(t *testing.T) {

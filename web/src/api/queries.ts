@@ -110,6 +110,58 @@ export function auditRunQuery(api: Api, id: string) {
   });
 }
 
+// A page of audit log events, newest first, read a page at a time.
+function eventsQuery(
+  queryKey: readonly unknown[],
+  fetch: (before: number | undefined) => Promise<Schemas["AuditLogEventList"]>,
+) {
+  return infiniteQueryOptions({
+    queryKey,
+    queryFn: ({ pageParam }) => fetch(pageParam === 0 ? undefined : pageParam),
+    initialPageParam: 0,
+    getNextPageParam: (page) =>
+      page.next === undefined || page.next === 0 ? undefined : page.next,
+  });
+}
+
+// What the user did.
+export function myActivityQuery(api: Api) {
+  return eventsQuery(["activity"], (before) =>
+    unwrap(
+      api.GET("/v1/me/activity", { params: { query: before === undefined ? {} : { before } } }),
+    ),
+  );
+}
+
+// The changes made to a workspace.
+export function workspaceAuditQuery(api: Api, workspace: string) {
+  return eventsQuery(["workspaces", workspace, "audit"], (before) =>
+    unwrap(
+      api.GET("/v1/workspaces/{workspace}/audit", {
+        params: { path: { workspace }, query: before === undefined ? {} : { before } },
+      }),
+    ),
+  );
+}
+
+export type EventFilters = {
+  actor?: string;
+  workspace?: string;
+  action?: string;
+  run?: string;
+};
+
+// Every event of the audit log, for auditors.
+export function auditEventsQuery(api: Api, filters: EventFilters) {
+  return eventsQuery(["audit", "events", filters], (before) =>
+    unwrap(
+      api.GET("/v1/audit/events", {
+        params: { query: { ...filters, ...(before === undefined ? {} : { before }) } },
+      }),
+    ),
+  );
+}
+
 export function runQuery(api: Api, workspace: string, id: string) {
   return queryOptions({
     queryKey: ["workspaces", workspace, "run", id],

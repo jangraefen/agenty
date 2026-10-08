@@ -337,3 +337,47 @@ func TestAppends_ReadCommittedWhateverTheDefault(t *testing.T) {
 	_, err = auditlog.Verify(bytes.NewReader(export(t, strict)))
 	require.NoError(t, err)
 }
+
+func TestListAuditEvents(t *testing.T) {
+	ctx := context.Background()
+	s := storetest.New(t)
+	v, err := s.PutHarness(ctx, ws, "alice", notes())
+	require.NoError(t, err)
+	_, err = s.PutHarness(ctx, "work", "bob", notes())
+	require.NoError(t, err)
+	createRun(t, s, store.NewRun{ID: "r1", HarnessVersionID: v.ID, Input: "x", StartedBy: "alice"})
+	record(t, s, toolgateway.Record{RunID: "r1", CallID: "c1", Event: toolgateway.EventDecision, Tool: "files_read", Decision: toolgateway.Allow})
+	_, err = s.AppendEvent(ctx, auditlog.Event{Actor: "dana", Action: "audit.read", Details: json.RawMessage(`{"read":"runs"}`)})
+	require.NoError(t, err)
+
+	list := func(f store.EventFilter) []string {
+		t.Helper()
+		page, err := s.ListAuditEvents(ctx, f)
+		require.NoError(t, err)
+		out := make([]string, len(page))
+		for i, e := range page {
+			out[i] = fmt.Sprint(e.ID, " ", e.Action)
+		}
+		return out
+	}
+	for _, tt := range []struct {
+		name   string
+		filter store.EventFilter
+		want   []string
+	}{
+		{"all, newest first", store.EventFilter{Limit: 10}, []string{"5 audit.read", "4 tool.decision", "3 run.started", "2 harness.changed", "1 harness.changed"}},
+		{"a page", store.EventFilter{Limit: 2}, []string{"5 audit.read", "4 tool.decision"}},
+		{"the next page", store.EventFilter{Limit: 2, Before: 4}, []string{"3 run.started", "2 harness.changed"}},
+		{"by an actor", store.EventFilter{Limit: 10, Actor: "alice"}, []string{"4 tool.decision", "3 run.started", "1 harness.changed"}},
+		{"in a workspace", store.EventFilter{Limit: 10, Workspace: "work"}, []string{"2 harness.changed"}},
+		{"with given actions", store.EventFilter{Limit: 10, Workspace: ws, Actions: []string{"harness.changed"}}, []string{"1 harness.changed"}},
+		{"about a run", store.EventFilter{Limit: 10, RunID: "r1"}, []string{"4 tool.decision", "3 run.started"}},
+		{"with no actions", store.EventFilter{Limit: 10, Actions: []string{}}, []string{}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, list(tt.filter))
+		})
+	}
+	_, err = s.ListAuditEvents(ctx, store.EventFilter{})
+	require.ErrorContains(t, err, "limit")
+}

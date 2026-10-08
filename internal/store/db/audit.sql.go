@@ -118,6 +118,67 @@ func (q *Queries) LastAuditEventID(ctx context.Context) (int64, error) {
 	return column_1, err
 }
 
+const listAuditEvents = `-- name: ListAuditEvents :many
+SELECT id, recorded_at, actor, action, workspace, run_id, target, details, prev_hash, hash FROM audit_events
+WHERE ($1::text IS NULL OR actor = $1)
+  AND ($2::text IS NULL OR workspace = $2)
+  AND ($3::text[] IS NULL OR action = ANY($3::text[]))
+  AND ($4::text IS NULL OR run_id = $4)
+  AND ($5::bigint IS NULL OR id < $5)
+ORDER BY id DESC
+LIMIT $6
+`
+
+type ListAuditEventsParams struct {
+	Actor     pgtype.Text
+	Workspace pgtype.Text
+	Actions   []string
+	RunID     pgtype.Text
+	Before    pgtype.Int8
+	MaxRows   int32
+}
+
+// The events of the audit log, newest first, before the one named by before
+// when set, optionally by one actor, in one workspace, with one of the given
+// actions, or about one run.
+func (q *Queries) ListAuditEvents(ctx context.Context, arg ListAuditEventsParams) ([]AuditEvent, error) {
+	rows, err := q.db.Query(ctx, listAuditEvents,
+		arg.Actor,
+		arg.Workspace,
+		arg.Actions,
+		arg.RunID,
+		arg.Before,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AuditEvent
+	for rows.Next() {
+		var i AuditEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.RecordedAt,
+			&i.Actor,
+			&i.Action,
+			&i.Workspace,
+			&i.RunID,
+			&i.Target,
+			&i.Details,
+			&i.PrevHash,
+			&i.Hash,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockAuditLog = `-- name: LockAuditLog :exec
 SELECT pg_advisory_xact_lock(hashtext('agenty'), hashtext('audit log'))
 `

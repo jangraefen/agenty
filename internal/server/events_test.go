@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"strings"
@@ -128,7 +129,7 @@ func TestAuditEvents_ReadsFailClosed(t *testing.T) {
 		BEGIN RAISE EXCEPTION 'the log is broken'; END $$;
 		CREATE TRIGGER refuse_appends BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION refuse_appends()`)
 
-	for _, path := range []string{"/v1/audit/runs", "/v1/audit/runs/" + run.ID, "/v1/audit/export"} {
+	for _, path := range []string{"/v1/audit/runs", "/v1/audit/runs/" + run.ID, "/v1/audit/events", "/v1/audit/export"} {
 		var raw json.RawMessage
 		assert.Equal(t, http.StatusInternalServerError, f.doAs(t, danaToken, http.MethodGet, path, nil, &raw), path)
 		assert.NotContains(t, string(raw), run.ID, "%s: nothing read", path)
@@ -153,4 +154,64 @@ func TestAuditEvents_CancelARunningRun(t *testing.T) {
 
 	require.Equal(t, http.StatusConflict, f.do(t, http.MethodPost, home+"/runs/"+run.ID+"/cancel", nil, nil))
 	assert.Len(t, f.logEvents(t, "run.cancel_requested"), 1, "a cancel of a finished run requests nothing")
+}
+
+// eventPage is a page of the audit log as the API lists it.
+type eventPage struct {
+	Events []auditlog.Event `json:"events"`
+	Next   int64            `json:"next"`
+}
+
+func actions(page eventPage) []string {
+	out := make([]string, len(page.Events))
+	for i, e := range page.Events {
+		out[i] = e.Actor + " " + e.Action
+	}
+	return out
+}
+
+func TestAuditViews(t *testing.T) {
+	f := newFixture(t, options{})
+	f.putNotes(t)
+	f.script(modeltest.Reply("done"))
+	run := f.startRun(t, "tidy my notes")
+	f.finish(t, run.ID)
+	var detail api.AuditRunDetail
+	require.Equal(t, http.StatusOK, f.doAs(t, danaToken, http.MethodGet, "/v1/audit/runs/"+run.ID, nil, &detail))
+
+	t.Run("a user's own actions", func(t *testing.T) {
+		var mine eventPage
+		require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, "/v1/me/activity", nil, &mine))
+		assert.Equal(t, []string{"alice run.started", "alice harness.changed"}, actions(mine),
+			"what alice did, newest first; not the server's events, nor the auditor's read of her run")
+		var theirs eventPage
+		require.Equal(t, http.StatusOK, f.doAs(t, danaToken, http.MethodGet, "/v1/me/activity", nil, &theirs))
+		assert.Equal(t, []string{"dana audit.read"}, actions(theirs), "an auditor's reads are their own actions")
+	})
+	t.Run("a workspace's changes", func(t *testing.T) {
+		var changes eventPage
+		require.Equal(t, http.StatusOK, f.doAs(t, bobToken, http.MethodGet, home+"/audit", nil, &changes))
+		assert.Equal(t, []string{"alice harness.changed"}, actions(changes), "a member sees the workspace's changes, not its members' runs")
+		var e api.Error
+		assert.Equal(t, http.StatusNotFound, f.doAs(t, carolToken, http.MethodGet, home+"/audit", nil, &e), "only members")
+	})
+	t.Run("everything, for auditors", func(t *testing.T) {
+		var e api.Error
+		assert.Equal(t, http.StatusForbidden, f.do(t, http.MethodGet, "/v1/audit/events", nil, &e))
+		var all eventPage
+		require.Equal(t, http.StatusOK, f.doAs(t, danaToken, http.MethodGet, "/v1/audit/events?limit=3", nil, &all))
+		require.Len(t, all.Events, 3)
+		assert.Equal(t, "dana audit.read", actions(all)[0], "the listing itself, recorded first")
+		assert.Equal(t, all.Events[2].ID, all.Next)
+		var older eventPage
+		require.Equal(t, http.StatusOK, f.doAs(t, danaToken, http.MethodGet, fmt.Sprintf("/v1/audit/events?before=%d&action=server.started", all.Next), nil, &older))
+		assert.Equal(t, []string{" server.started"}, actions(older))
+		var ofRun eventPage
+		require.Equal(t, http.StatusOK, f.doAs(t, danaToken, http.MethodGet, "/v1/audit/events?run="+run.ID+"&actor=alice", nil, &ofRun))
+		assert.Equal(t, []string{"alice run.started"}, actions(ofRun))
+		assert.Equal(t, http.StatusBadRequest, f.doAs(t, danaToken, http.MethodGet, "/v1/audit/events?before=-1", nil, &e))
+		reads := f.logEvents(t, "audit.read")
+		assert.JSONEq(t, `{"read":"events","run":"`+run.ID+`","actor":"alice"}`, string(reads[len(reads)-1].Details),
+			"a refused listing read nothing, so it is no read")
+	})
 }

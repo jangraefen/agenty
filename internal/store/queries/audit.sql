@@ -33,3 +33,16 @@ SELECT COALESCE(max(id), 0)::bigint FROM audit_events;
 -- The events after the one with the given id up to the one with the last,
 -- in order, a page at a time.
 SELECT * FROM audit_events WHERE id > sqlc.arg(after) AND id <= sqlc.arg(last) ORDER BY id LIMIT sqlc.arg(max_rows);
+
+-- name: ListAuditEvents :many
+-- The events of the audit log, newest first, before the one named by before
+-- when set, optionally by one actor, in one workspace, with one of the given
+-- actions, or about one run.
+SELECT * FROM audit_events
+WHERE (sqlc.narg(actor)::text IS NULL OR actor = sqlc.narg(actor))
+  AND (sqlc.narg(workspace)::text IS NULL OR workspace = sqlc.narg(workspace))
+  AND (sqlc.narg(actions)::text[] IS NULL OR action = ANY(sqlc.narg(actions)::text[]))
+  AND (sqlc.narg(run_id)::text IS NULL OR run_id = sqlc.narg(run_id))
+  AND (sqlc.narg(before)::bigint IS NULL OR id < sqlc.narg(before))
+ORDER BY id DESC
+LIMIT sqlc.arg(max_rows);

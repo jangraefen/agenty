@@ -14,6 +14,9 @@ import (
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// ListAuditEvents Every event of the audit log, newest first, a page at a time, for auditors
+	// (GET /v1/audit/events)
+	ListAuditEvents(c *gin.Context, params ListAuditEventsParams)
 	// ExportAuditLog The audit log as JSON lines, for auditors
 	// (GET /v1/audit/export)
 	ExportAuditLog(c *gin.Context, params ExportAuditLogParams)
@@ -32,9 +35,15 @@ type ServerInterface interface {
 	// GetMe The signed-in user and their workspaces
 	// (GET /v1/me)
 	GetMe(c *gin.Context)
+	// ListMyActivity What the user did, newest first, a page at a time
+	// (GET /v1/me/activity)
+	ListMyActivity(c *gin.Context, params ListMyActivityParams)
 	// ListApprovals The approval requests the user's own runs wait for, oldest first
 	// (GET /v1/workspaces/{workspace}/approvals)
 	ListApprovals(c *gin.Context, workspace Workspace)
+	// ListWorkspaceAuditEvents The changes made to a workspace, newest first, a page at a time
+	// (GET /v1/workspaces/{workspace}/audit)
+	ListWorkspaceAuditEvents(c *gin.Context, workspace Workspace, params ListWorkspaceAuditEventsParams)
 	// ListHarnesses The latest version of every harness, sorted by name
 	// (GET /v1/workspaces/{workspace}/harnesses)
 	ListHarnesses(c *gin.Context, workspace Workspace)
@@ -78,6 +87,73 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(c *gin.Context)
+
+// ListAuditEvents operation middleware
+func (siw *ServerInterfaceWrapper) ListAuditEvents(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListAuditEventsParams
+
+	// ------------- Optional query parameter "actor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "actor", c.Request.URL.Query(), &params.Actor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter actor: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "workspace" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "workspace", c.Request.URL.Query(), &params.Workspace, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter workspace: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "action" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "action", c.Request.URL.Query(), &params.Action, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter action: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "run" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "run", c.Request.URL.Query(), &params.Run, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter run: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", c.Request.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter limit: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "before" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "before", c.Request.URL.Query(), &params.Before, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter before: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ListAuditEvents(c, params)
+}
 
 // ExportAuditLog operation middleware
 func (siw *ServerInterfaceWrapper) ExportAuditLog(c *gin.Context) {
@@ -271,6 +347,41 @@ func (siw *ServerInterfaceWrapper) GetMe(c *gin.Context) {
 	siw.Handler.GetMe(c)
 }
 
+// ListMyActivity operation middleware
+func (siw *ServerInterfaceWrapper) ListMyActivity(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListMyActivityParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", c.Request.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter limit: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "before" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "before", c.Request.URL.Query(), &params.Before, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter before: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ListMyActivity(c, params)
+}
+
 // ListApprovals operation middleware
 func (siw *ServerInterfaceWrapper) ListApprovals(c *gin.Context) {
 
@@ -294,6 +405,50 @@ func (siw *ServerInterfaceWrapper) ListApprovals(c *gin.Context) {
 	}
 
 	siw.Handler.ListApprovals(c, workspace)
+}
+
+// ListWorkspaceAuditEvents operation middleware
+func (siw *ServerInterfaceWrapper) ListWorkspaceAuditEvents(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "workspace" -------------
+	var workspace Workspace
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspace", c.Param("workspace"), &workspace, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter workspace: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListWorkspaceAuditEventsParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", c.Request.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter limit: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "before" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "before", c.Request.URL.Query(), &params.Before, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter before: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ListWorkspaceAuditEvents(c, workspace, params)
 }
 
 // ListHarnesses operation middleware
@@ -693,7 +848,10 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.GET(options.BaseURL+"/v1/conversations/:id", wrapper.GetConversation)
 	router.GET(options.BaseURL+"/v1/audit/runs", wrapper.ListAuditRuns)
 	router.GET(options.BaseURL+"/v1/audit/runs/:id", wrapper.GetAuditRun)
+	router.GET(options.BaseURL+"/v1/me/activity", wrapper.ListMyActivity)
+	router.GET(options.BaseURL+"/v1/audit/events", wrapper.ListAuditEvents)
 	router.GET(options.BaseURL+"/v1/audit/export", wrapper.ExportAuditLog)
+	router.GET(options.BaseURL+"/v1/workspaces/:workspace/audit", wrapper.ListWorkspaceAuditEvents)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace/harnesses", wrapper.ListHarnesses)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace/harnesses/:name", wrapper.GetHarness)
 	router.PUT(options.BaseURL+"/v1/workspaces/:workspace/harnesses/:name", wrapper.PutHarness)

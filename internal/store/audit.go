@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -226,6 +227,45 @@ func (s *Store) AuditEvents(ctx context.Context, after, last int64, limit int) (
 	if err != nil {
 		return nil, fmt.Errorf("store: audit: %w", err)
 	}
+	return events(rows), nil
+}
+
+// EventFilter selects events of the audit log to list.
+type EventFilter struct {
+	// Actor, Workspace and RunID, when set, select the events by that actor,
+	// in that workspace or about that run; Actions, when not nil, those with
+	// one of the actions.
+	Actor     string
+	Workspace string
+	Actions   []string
+	RunID     string
+	// Before, when set, lists the events before the one with that id.
+	Before int64
+	// Limit is the most events to return; it must be greater than 0.
+	Limit int
+}
+
+// ListAuditEvents lists the events of the audit log that f selects, newest
+// first.
+func (s *Store) ListAuditEvents(ctx context.Context, f EventFilter) ([]auditlog.Event, error) {
+	if f.Limit <= 0 || f.Limit > math.MaxInt32 {
+		return nil, fmt.Errorf("store: audit: limit %d is out of range", f.Limit)
+	}
+	rows, err := s.queries.ListAuditEvents(ctx, db.ListAuditEventsParams{
+		Actor:     optional(f.Actor),
+		Workspace: optional(f.Workspace),
+		Actions:   f.Actions,
+		RunID:     optional(f.RunID),
+		Before:    pgtype.Int8{Int64: f.Before, Valid: f.Before > 0},
+		MaxRows:   int32(f.Limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("store: audit: %w", err)
+	}
+	return events(rows), nil
+}
+
+func events(rows []db.AuditEvent) []auditlog.Event {
 	out := make([]auditlog.Event, len(rows))
 	for i, row := range rows {
 		out[i] = auditlog.Event{
@@ -241,7 +281,7 @@ func (s *Store) AuditEvents(ctx context.Context, after, last int64, limit int) (
 		copy(out[i].PrevHash[:], row.PrevHash)
 		copy(out[i].Hash[:], row.Hash)
 	}
-	return out, nil
+	return out
 }
 
 // copyPage is how many records migration 13 copies at a time; a test lowers

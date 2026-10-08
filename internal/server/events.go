@@ -4,14 +4,18 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"maps"
+	"net/http"
 	"slices"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/jangraefen/agenty/internal/api"
 	"github.com/jangraefen/agenty/internal/auditlog"
 	"github.com/jangraefen/agenty/internal/must"
 	"github.com/jangraefen/agenty/internal/policy"
+	"github.com/jangraefen/agenty/internal/store"
 )
 
 // serverStarted is the event of a server's start: the central policy in
@@ -70,4 +74,77 @@ func (s handlers) recordRead(c *gin.Context, what map[string]any) bool {
 		return false
 	}
 	return true
+}
+
+// workspaceChanges are the actions that change a workspace itself, which its
+// members see in its audit log.
+var workspaceChanges = []string{"harness.changed"}
+
+// eventList is a page of the audit log as the API lists it: the events as
+// package auditlog has them, details in their canonical form.
+type eventList struct {
+	Events []auditlog.Event `json:"events"`
+	Next   int64            `json:"next,omitempty"`
+}
+
+// listEvents answers with the page of events f selects, its limit and
+// before taken from the request's parameters. read, if not nil, records the
+// read once the request is valid, and answers when it cannot.
+func (s handlers) listEvents(c *gin.Context, f store.EventFilter, limit int, before int64, read func() bool) {
+	if before < 0 {
+		s.fail(c, http.StatusBadRequest, fmt.Errorf("before %d: must be positive", before))
+		return
+	}
+	limit, ok := s.pageLimit(c, limit)
+	if !ok {
+		return
+	}
+	if read != nil && !read() {
+		return
+	}
+	f.Limit, f.Before = limit, before
+	events, err := s.cfg.Store.ListAuditEvents(c.Request.Context(), f)
+	if err != nil {
+		s.failStore(c, err)
+		return
+	}
+	out := eventList{Events: events}
+	// A full page may be the last: the next one is then empty.
+	if len(events) == limit {
+		out.Next = events[len(events)-1].ID
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// ListMyActivity lists what the user did: the events they are the actor of.
+// What others did, auditors' reads of the user's runs too, is not theirs.
+func (s handlers) ListMyActivity(c *gin.Context, params api.ListMyActivityParams) {
+	s.listEvents(c, store.EventFilter{Actor: c.GetString(userKey)}, params.Limit, params.Before, nil)
+}
+
+// ListWorkspaceAuditEvents lists the changes made to a workspace, for its
+// members.
+func (s handlers) ListWorkspaceAuditEvents(c *gin.Context, workspace string, params api.ListWorkspaceAuditEventsParams) {
+	s.listEvents(c, store.EventFilter{Workspace: workspace, Actions: workspaceChanges}, params.Limit, params.Before, nil)
+}
+
+// ListAuditEvents lists every event of the audit log for an auditor.
+func (s handlers) ListAuditEvents(c *gin.Context, params api.ListAuditEventsParams) {
+	if !s.auditor(c) {
+		return
+	}
+	read := map[string]any{"read": "events"}
+	for key, value := range map[string]string{"actor": params.Actor, "workspace": params.Workspace, "action": params.Action, "run": params.Run} {
+		if value != "" {
+			read[key] = value
+		}
+	}
+	if params.Before != 0 {
+		read["before"] = params.Before
+	}
+	f := store.EventFilter{Actor: params.Actor, Workspace: params.Workspace, RunID: params.Run}
+	if params.Action != "" {
+		f.Actions = []string{params.Action}
+	}
+	s.listEvents(c, f, params.Limit, params.Before, func() bool { return s.recordRead(c, read) })
 }

@@ -125,6 +125,36 @@ type ApprovalRequest struct {
 // AuditEvent defines model for AuditEvent.
 type AuditEvent string
 
+// AuditLogEvent One event of the audit log, as package auditlog hashes it: hash is
+// the SHA-256 of a fixed encoding of the other fields, prev_hash the
+// hash of the event before it, zero before the first.
+type AuditLogEvent struct {
+	Action string `json:"action"`
+
+	// Actor The user who acted; empty for the server itself.
+	Actor   string                 `json:"actor"`
+	Details map[string]interface{} `json:"details"`
+	Hash    string                 `json:"hash"`
+
+	// ID The event's position in the log, from 1 without gaps.
+	ID         int64     `json:"id"`
+	PrevHash   string    `json:"prev_hash"`
+	RecordedAt time.Time `json:"recorded_at"`
+	RunID      string    `json:"run_id"`
+	Target     string    `json:"target"`
+
+	// Workspace Empty for an event of the whole organisation.
+	Workspace string `json:"workspace"`
+}
+
+// AuditLogEventList defines model for AuditLogEventList.
+type AuditLogEventList struct {
+	Events []AuditLogEvent `json:"events"`
+
+	// Next The before parameter of the next page; unset on the last.
+	Next int64 `json:"next,omitempty"`
+}
+
 // AuditRecord One decision, approval or result the tool gateway recorded.
 type AuditRecord struct {
 	// Approver Who approved or rejected the call, if anyone did.
@@ -381,6 +411,9 @@ type Usage struct {
 	OutputTokens int64 `json:"output_tokens"`
 }
 
+// BeforeEvent defines model for BeforeEvent.
+type BeforeEvent = int64
+
 // Limit defines model for Limit.
 type Limit = int
 
@@ -389,6 +422,27 @@ type RunID = string
 
 // Workspace defines model for Workspace.
 type Workspace = string
+
+// ListAuditEventsParams defines parameters for ListAuditEvents.
+type ListAuditEventsParams struct {
+	// Actor Only the events by this user.
+	Actor string `form:"actor,omitempty" json:"actor,omitempty"`
+
+	// Workspace Only the events in this workspace.
+	Workspace string `form:"workspace,omitempty" json:"workspace,omitempty"`
+
+	// Action Only the events with this action.
+	Action string `form:"action,omitempty" json:"action,omitempty"`
+
+	// Run Only the events about this run.
+	Run string `form:"run,omitempty" json:"run,omitempty"`
+
+	// Limit The page size.
+	Limit Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Before Continue before the event with this id, as AuditLogEventList.next gives it.
+	Before BeforeEvent `form:"before,omitempty" json:"before,omitempty"`
+}
 
 // ExportAuditLogParams defines parameters for ExportAuditLog.
 type ExportAuditLogParams struct {
@@ -425,6 +479,24 @@ type ListConversationsParams struct {
 
 	// Before Continue after the conversation this cursor names, as ConversationList.next gives it.
 	Before string `form:"before,omitempty" json:"before,omitempty"`
+}
+
+// ListMyActivityParams defines parameters for ListMyActivity.
+type ListMyActivityParams struct {
+	// Limit The page size.
+	Limit Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Before Continue before the event with this id, as AuditLogEventList.next gives it.
+	Before BeforeEvent `form:"before,omitempty" json:"before,omitempty"`
+}
+
+// ListWorkspaceAuditEventsParams defines parameters for ListWorkspaceAuditEvents.
+type ListWorkspaceAuditEventsParams struct {
+	// Limit The page size.
+	Limit Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Before Continue before the event with this id, as AuditLogEventList.next gives it.
+	Before BeforeEvent `form:"before,omitempty" json:"before,omitempty"`
 }
 
 // PutHarnessJSONRequestBody defines body for PutHarness for application/json ContentType.

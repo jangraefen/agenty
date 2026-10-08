@@ -6,7 +6,7 @@ import {
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { type FormEvent, type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError, type Schemas, unwrap } from "@/api/client";
 import {
   approvalsQuery,
@@ -19,9 +19,8 @@ import {
 import { runEventsQuery } from "@/api/run-events";
 import { AnswerNotice, type AnswerOutcome } from "@/components/answer-notice";
 import { Turn } from "@/components/conversation";
+import { MessageBox } from "@/components/message-box";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { orNotFound } from "@/lib/not-found";
 
 // A run's page shows the conversation the run belongs to as a chat: every
@@ -208,7 +207,6 @@ function Composer({ runs, latest, ready }: { runs: Run[]; latest: Run; ready: bo
   const navigate = useNavigate();
   const [text, setText] = useState("");
   const box = useRef<HTMLTextAreaElement>(null);
-  const id = useId();
   const reply = useMutation({
     mutationFn: (input: string) =>
       unwrap(
@@ -236,73 +234,48 @@ function Composer({ runs, latest, ready }: { runs: Run[]; latest: Run; ready: bo
   });
 
   const waiting = unfinished(latest.status);
-  const blocked = waiting || !ready || reply.isPending;
-
-  function send() {
-    if (!blocked && text.trim() !== "") {
-      reply.mutate(text);
-    }
-  }
-
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    send();
-  }
-
-  function keyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-      event.preventDefault();
-      send();
-    }
-  }
-
   const ended = latest.status === "failed" || latest.status === "cancelled";
-  const described = [
-    waiting && `${id}-waiting`,
-    ended && `${id}-ended`,
-    reply.isError && `${id}-error`,
-  ]
-    .filter(Boolean)
-    .join(" ");
-
-  return (
-    <form onSubmit={submit} className="sticky bottom-0 grid gap-2 border-t bg-background pt-3 pb-4">
-      <Label htmlFor={`${id}-message`} className="sr-only">
-        Message
-      </Label>
-      <div className="flex items-end gap-2">
-        <Textarea
-          ref={box}
-          id={`${id}-message`}
-          rows={2}
-          placeholder="Write a reply…"
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-          onKeyDown={keyDown}
-          aria-invalid={reply.isError}
-          aria-describedby={described === "" ? undefined : described}
-          className="min-w-0 flex-1 resize-none rounded-xl"
-        />
-        <Button type="submit" className="shrink-0" aria-disabled={blocked}>
-          Send
-        </Button>
-      </div>
-      {waiting && (
-        <p id={`${id}-waiting`} className="text-xs text-muted-foreground">
-          You can reply once the agent has answered.
-        </p>
-      )}
-      {ended && (
-        <p id={`${id}-ended`} className="text-xs text-muted-foreground">
+  const notes = [];
+  if (waiting) {
+    notes.push({
+      id: "waiting",
+      note: (
+        <p className="text-xs text-muted-foreground">You can reply once the agent has answered.</p>
+      ),
+    });
+  }
+  if (ended) {
+    notes.push({
+      id: "ended",
+      note: (
+        <p className="text-xs text-muted-foreground">
           The last run {latest.status === "failed" ? "failed" : "was cancelled"}. A reply continues
           from where it stopped.
         </p>
-      )}
-      {reply.isError && (
-        <p id={`${id}-error`} role="alert" className="text-sm text-destructive">
+      ),
+    });
+  }
+  if (reply.isError) {
+    notes.push({
+      id: "error",
+      note: (
+        <p role="alert" className="text-sm text-destructive">
           The reply could not be sent: {reply.error.message}
         </p>
-      )}
-    </form>
+      ),
+    });
+  }
+
+  return (
+    <MessageBox
+      ref={box}
+      value={text}
+      onChange={setText}
+      onSend={(message) => reply.mutate(message)}
+      blocked={waiting || !ready || reply.isPending}
+      invalid={reply.isError}
+      placeholder="Write a reply…"
+      notes={notes}
+    />
   );
 }

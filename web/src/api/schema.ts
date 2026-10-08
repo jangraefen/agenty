@@ -120,8 +120,8 @@ export interface paths {
         put?: never;
         /**
          * Continue a run's conversation with a new run
-         * @description Starts a run of the harness's latest version that continues the
-         *     conversation: the model sees the earlier runs' transcripts, with
+         * @description Starts a run that continues the conversation with the harness
+         *     version it started with, not the latest: the model sees the earlier runs' transcripts, with
          *     secrets redacted, before the new input. Only the conversation's
          *     latest run can be followed up, once it has finished; any other is a
          *     conflict. A run that failed or was cancelled is continued from where

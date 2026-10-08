@@ -17,6 +17,7 @@ import (
 	"github.com/jangraefen/agenty/internal/model/modeltest"
 	"github.com/jangraefen/agenty/internal/policy"
 	"github.com/jangraefen/agenty/internal/store"
+	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
 // finish waits until the run has finished and returns how it ended.
@@ -88,7 +89,7 @@ func TestFollowUp_ContinuesTheConversation(t *testing.T) {
 	}
 }
 
-func TestFollowUp_RunsTheHarnessLatestVersion(t *testing.T) {
+func TestFollowUp_RunsTheConversationsVersion(t *testing.T) {
 	f := newFixture(t, options{})
 	f.putNotes(t)
 	f.script(modeltest.Reply("ok"))
@@ -96,49 +97,52 @@ func TestFollowUp_RunsTheHarnessLatestVersion(t *testing.T) {
 	f.finish(t, first.ID)
 	changed := notes()
 	changed.Instructions = "Shout."
+	changed.Tools = []string{"files_read"}
 	require.Equal(t, http.StatusOK, f.do(t, http.MethodPut, home+"/harnesses/notes", changed, nil))
 	m := f.script(modeltest.Reply("ok"))
 
 	second := f.followUp(t, aliceToken, first.ID, "again")
 	f.finish(t, second.ID)
 
-	assert.Equal(t, 2, second.HarnessVersion, "a follow-up runs the harness as it is now")
-	require.Len(t, m.Requests(), 1)
-	assert.Equal(t, "Shout.", m.Requests()[0].System)
-	assert.Len(t, m.Requests()[0].Messages, 3, "with the conversation so far")
+	assert.Equal(t, first.HarnessVersionID, second.HarnessVersionID, "a follow-up runs the version its conversation started with")
+	assert.Equal(t, 1, second.HarnessVersion)
+	requests := m.Requests()
+	require.Len(t, requests, 1)
+	assert.Equal(t, "Tidy the notes.", requests[0].System)
+	var offered []string
+	for _, def := range requests[0].Tools {
+		offered = append(offered, def.Name)
+	}
+	assert.Contains(t, offered, "files_write", "a grant taken away reaches new conversations only")
+	assert.Len(t, requests[0].Messages, 3, "with the conversation so far")
+	f.script(modeltest.Reply("ok"))
+	assert.Equal(t, 2, f.startRun(t, "anew").HarnessVersion, "a new conversation runs the latest version")
 }
 
-// TestInvariant_FollowUpsCannotRevive guards a trust-model guarantee: a
-// follow-up runs the harness's latest version, so a grant or rule a builder
-// takes away no longer applies to any conversation, however old.
-func TestInvariant_FollowUpsCannotRevive(t *testing.T) {
+// TestInvariant_CentralPolicyReachesEveryConversation guards a trust-model
+// guarantee: central policy is not pinned with a conversation's harness
+// version, so a rule the operator adds applies to every call from then on,
+// ongoing conversations included.
+func TestInvariant_CentralPolicyReachesEveryConversation(t *testing.T) {
 	f := newFixture(t, options{})
 	f.putNotes(t)
 	f.script(modeltest.CallTools(call("c1", "files_write", `{"path":"notes.md"}`)), modeltest.Reply("written"))
 	first := f.startRun(t, "write my notes")
 	require.Equal(t, api.RunStatusSucceeded, f.finish(t, first.ID).Status)
 	require.Equal(t, 1, f.write.Calls)
-	tightened := notes()
-	tightened.Tools = []string{"files_read"}
-	require.Equal(t, http.StatusOK, f.do(t, http.MethodPut, home+"/harnesses/notes", tightened, nil))
-	m := f.script(modeltest.CallTools(call("c2", "files_write", `{"path":"notes.md"}`)), modeltest.Reply("could not"))
+	f.restart(t, options{policy: []policy.Module{policy.RulesModule("central", `deny contains "writes are frozen" if input.tool == "files_write"`)}})
+	f.script(modeltest.CallTools(call("c2", "files_write", `{"path":"notes.md"}`)), modeltest.Reply("could not"))
 
 	second := f.followUp(t, aliceToken, first.ID, "write them again")
 	f.finish(t, second.ID)
 
-	assert.Equal(t, 1, f.write.Calls, "the grant taken away in version 2 does not apply to the follow-up")
-	requests := m.Requests()
-	require.Len(t, requests, 2)
-	var offered []string
-	for _, def := range requests[0].Tools {
-		offered = append(offered, def.Name)
-	}
-	assert.NotContains(t, offered, "files_write")
+	assert.Equal(t, 1, f.write.Calls, "the rule added since applies to the conversation")
 	var audit []api.AuditRecord
 	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+second.ID+"/audit", nil, &audit))
 	require.NotEmpty(t, audit)
 	assert.Equal(t, "files_write", audit[0].Tool)
 	assert.Equal(t, api.DecisionDeny, audit[0].Decision)
+	assert.Contains(t, audit[0].Reason, "writes are frozen")
 }
 
 func TestFollowUp_Rejects(t *testing.T) {
@@ -327,17 +331,16 @@ func TestFollowUp_ReplaysRepliesInTheirProviderForm(t *testing.T) {
 
 // TestFollowUp_DropsTheProviderFormOfRunsWithAnotherPrompt: a provider may
 // bind a reply's reasoning to the instructions and tools it was given, so a
-// reply given under others is sent without its provider form, as is every
-// reply before it, and the replies since keep theirs.
+// reply given under others, such as a tool its server has since described
+// anew, is sent without its provider form, as is every reply before it, and
+// the replies since keep theirs.
 func TestFollowUp_DropsTheProviderFormOfRunsWithAnotherPrompt(t *testing.T) {
 	f := newFixture(t, options{})
 	f.putNotes(t)
 	f.script(thought("one"))
 	first := f.startRun(t, "one")
 	f.finish(t, first.ID)
-	changed := notes()
-	changed.Instructions = "Shout."
-	require.Equal(t, http.StatusOK, f.do(t, http.MethodPut, home+"/harnesses/notes", changed, nil))
+	f.read.Description = "Reads a file, upgraded."
 	m := f.script(thought("two"))
 	second := f.followUp(t, aliceToken, first.ID, "two")
 	f.finish(t, second.ID)
@@ -524,22 +527,20 @@ func TestFollowUp_TellsTheModelWhatAServerLost(t *testing.T) {
 }
 
 // TestFollowUp_ARefusedFollowUpKeepsTheConversationsServers: a follow-up
-// whose harness cannot run gives the conversation's servers back.
+// that cannot run gives the conversation's servers back.
 func TestFollowUp_ARefusedFollowUpKeepsTheConversationsServers(t *testing.T) {
 	f := newFixture(t, options{})
 	f.putNotes(t)
 	f.script(modeltest.Reply("ok"))
 	first := f.startRun(t, "one")
 	f.finish(t, first.ID)
-	broken := notes()
-	broken.Tools = append(broken.Tools, "files_delete")
-	require.Equal(t, http.StatusOK, f.do(t, http.MethodPut, home+"/harnesses/notes", broken, nil))
+	f.files.Tools = []toolgateway.Tool{f.read}
 
 	var refused api.Error
 	require.Equal(t, http.StatusUnprocessableEntity, f.do(t, http.MethodPost, home+"/runs/"+first.ID+"/follow-up", api.FollowUp{Input: "two"}, &refused))
 
 	assert.Zero(t, f.files.ClosedCount(), "the conversation's server is still its own")
-	require.Equal(t, http.StatusOK, f.do(t, http.MethodPut, home+"/harnesses/notes", notes(), nil))
+	f.files.Tools = []toolgateway.Tool{f.read, f.write}
 	f.script(modeltest.Reply("ok"))
 	second := f.followUp(t, aliceToken, first.ID, "two")
 	f.finish(t, second.ID)

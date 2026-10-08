@@ -86,6 +86,22 @@ func newFixture(t *testing.T, opts options) *fixture {
 		write: &gatewaytest.Tool{Name: "files_write", Result: json.RawMessage(`{"ok":true}`)},
 	}
 	f.files = &gatewaytest.Server{Tools: []toolgateway.Tool{f.read, f.write}}
+	f.serve(t, opts)
+	return f
+}
+
+// restart stops the fixture's server and serves its database with a new one,
+// configured by opts, as an operator restarting agenty with a changed config.
+func (f *fixture) restart(t *testing.T, opts options) {
+	t.Helper()
+	f.http.Close()
+	f.server.Close()
+	f.serve(t, opts)
+}
+
+// serve starts the fixture's server on its database.
+func (f *fixture) serve(t *testing.T, opts options) {
+	t.Helper()
 	redactor, err := secret.NewRedactor([]string{token, aliceToken, bobToken, carolToken})
 	require.NoError(t, err)
 	newModel := opts.newModel
@@ -117,7 +133,6 @@ func newFixture(t *testing.T, opts options) *fixture {
 	})
 	require.NoError(t, err)
 	f.http = newHTTP(t, f.server)
-	return f
 }
 
 // userTokens are the users' tokens, as config.Resolve returns them.

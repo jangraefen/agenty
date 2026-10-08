@@ -31,7 +31,7 @@ function Approvals() {
   const [outcome, setOutcome] = useState<AnswerOutcome | null>(null);
 
   return (
-    <section className="grid max-w-4xl gap-4">
+    <section className="grid gap-4">
       <h1 className="text-xl font-semibold">Approvals</h1>
       <p className="text-sm text-muted-foreground">
         Tool calls that policy holds until a member of the workspace answers. An unanswered request

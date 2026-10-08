@@ -110,6 +110,17 @@ test("manages the workspace of the page", async () => {
   );
 });
 
+test("manages none of a workspace the user is not a member of", async () => {
+  renderApp("/w/secret/runs", TOKEN);
+
+  await screen.findByRole("heading", { name: "Workspace not found" });
+  const manage = screen.getByRole("navigation", { name: "Manage" });
+  expect(within(manage).getByRole("link", { name: "Runs" })).toHaveAttribute(
+    "href",
+    "/w/notes/runs",
+  );
+});
+
 test("offers no workspace switcher with one workspace", async () => {
   server.use(meHandler({ user: "demo", workspaces: ["notes"] }));
   renderApp("/w/notes/harnesses", TOKEN);

@@ -72,8 +72,10 @@ test("picks the harness the link asks for over that of the latest chat", async (
     }),
   );
   renderApp("/?harness=work/triage", TOKEN);
-  const picker = await screen.findByRole("combobox", { name: "Harness" });
-  await waitFor(() => expect(picker).toHaveValue("work/triage"));
+
+  const recent = await screen.findByRole("navigation", { name: "Recent chats" });
+  await within(recent).findByRole("link", { name: "tidy my notes" });
+  expect(await screen.findByRole("combobox", { name: "Harness" })).toHaveValue("work/triage");
 });
 
 test("picks the harness of the latest chat", async () => {
@@ -92,7 +94,13 @@ test("picks the harness of the latest chat", async () => {
 test("starts the chat in the picked harness's workspace", async () => {
   twoWorkspaces();
   let body: unknown = null;
-  const first = run({ id: "run-9", harness: "triage", input: "sort the inbox", status: "queued" });
+  const first = run({
+    id: "run-9",
+    conversation_id: "run-9",
+    harness: "triage",
+    input: "sort the inbox",
+    status: "queued",
+  });
   const work = `${apiUrl}/v1/workspaces/work`;
   server.use(
     http.post(`${work}/runs`, async ({ request }) => {
@@ -123,7 +131,8 @@ test("starts the chat in the picked harness's workspace", async () => {
 
   await waitFor(() => expect(history.location.pathname).toBe("/c/run-9"));
   expect(body).toEqual({ harness: "triage", input: "sort the inbox" });
-  expect(await screen.findByText("triage · work")).toBeInTheDocument();
+  const header = (await screen.findByRole("heading", { name: "sort the inbox" })).closest("header");
+  expect(header).toHaveTextContent("triage · work");
 });
 
 test("says so when there is no harness to chat with", async () => {
@@ -163,7 +172,7 @@ test("offers the harnesses that loaded when a workspace's do not", async () => {
 // message is input, after answer if set, and records the request bodies it
 // got in bodies.
 function startsWith(input: string, bodies: unknown[], answer?: Promise<void>) {
-  const first = run({ id: "run-9", input, status: "queued", output: "" });
+  const first = run({ id: "run-9", conversation_id: "run-9", input, status: "queued", output: "" });
   server.use(
     http.post(`${base}/runs`, async ({ request }) => {
       bodies.push(await request.json());
@@ -183,7 +192,18 @@ function startsWith(input: string, bodies: unknown[], answer?: Promise<void>) {
 test("starts the conversation with the first message and opens it", async () => {
   const bodies: unknown[] = [];
   startsWith("tidy my notes", bodies);
+  let started = false;
+  server.use(
+    http.get(`${apiUrl}/v1/conversations`, () =>
+      HttpResponse.json({
+        conversations: started ? [conversation({ id: "run-9", title: "tidy my notes" })] : [],
+      }),
+    ),
+  );
   const { history, user } = renderApp(path, TOKEN);
+  const recent = await screen.findByRole("navigation", { name: "Recent chats" });
+  await within(recent).findByText("No chats yet.");
+  started = true;
 
   await user.type(await screen.findByRole("textbox", { name: "Message" }), "tidy my notes{Enter}");
 
@@ -194,6 +214,18 @@ test("starts the conversation with the first message and opens it", async () => 
   const chat = await screen.findByRole("list", { name: "Conversation" });
   expect(within(chat).getByText("tidy my notes")).toBeInTheDocument();
   expect(screen.getByPlaceholderText("Write a reply…")).toHaveFocus();
+  expect(await within(recent).findByRole("link", { name: "tidy my notes" })).toHaveAttribute(
+    "href",
+    "/c/run-9",
+  );
+});
+
+test("offers no harness until it knows which to offer first", async () => {
+  server.use(http.get(`${apiUrl}/v1/conversations`, () => new Promise<never>(() => undefined)));
+  renderApp("/?harness=notes/notes", TOKEN);
+
+  expect(await screen.findByText("Loading the harnesses…")).toBeInTheDocument();
+  expect(screen.queryByRole("textbox", { name: "Message" })).not.toBeInTheDocument();
 });
 
 test("leaves no empty chat to go back to", async () => {

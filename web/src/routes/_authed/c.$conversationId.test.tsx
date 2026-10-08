@@ -1,7 +1,7 @@
 import { focusManager } from "@tanstack/react-query";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, onTestFinished, test, vi } from "vitest";
 import { apiUrl } from "@/config";
 import { approvalRequest, auditRecord, conversation, run } from "@/test/fixtures";
 import { renderApp } from "@/test/render";
@@ -532,8 +532,14 @@ describe("the conversation page", () => {
     server.use(...conversationHandlers([run()]), finishedEvents("run-1", run()));
     renderApp(path, TOKEN);
 
-    await screen.findByRole("heading", { name: "tidy my notes" });
-    expect(screen.getByText("notes · notes")).toBeInTheDocument();
+    const header = (await screen.findByRole("heading", { name: "tidy my notes" })).closest(
+      "header",
+    );
+    expect(header).toHaveTextContent("notes · notes");
+    expect(within(header as HTMLElement).getByRole("link", { name: "notes" })).toHaveAttribute(
+      "href",
+      "/w/notes/harnesses/notes",
+    );
   });
 
   test("a run's old page opens its conversation at the run", async () => {
@@ -543,6 +549,22 @@ describe("the conversation page", () => {
     await screen.findByRole("heading", { name: "tidy my notes" });
     expect(history.location.pathname).toBe("/c/run-1");
     expect(history.location.hash).toBe("#run-run-2");
+  });
+
+  test("scrolls to the run a link names", async () => {
+    // jsdom does not scroll, and has no scrollIntoView to spy on.
+    const scrolled: string[] = [];
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this.id);
+    };
+    onTestFinished(() => {
+      delete (Element.prototype as Partial<Element>).scrollIntoView;
+    });
+    server.use(...conversationHandlers([run(), second]), finishedEvents("run-2", second));
+    renderApp("/w/notes/runs/run-2", TOKEN);
+
+    await screen.findByRole("heading", { name: "tidy my notes" });
+    await waitFor(() => expect(scrolled).toContain("run-run-2"));
   });
 
   test("a run that does not exist is not found", async () => {
@@ -588,15 +610,13 @@ describe("replying", () => {
     expect(sent).toBeNull();
     await user.keyboard("{Enter}");
 
-    await waitFor(() => {
-      expect(history.location.pathname).toBe("/c/run-1");
-    });
-    expect(sent).toEqual({ id: "run-2", body: { input: "thanks\nbye" } });
     expect(await screen.findByText("Working…")).toBeInTheDocument();
+    expect(sent).toEqual({ id: "run-2", body: { input: "thanks\nbye" } });
+    expect(history.location.pathname).toBe("/c/run-1");
     expect(screen.getByRole("textbox", { name: "Message" })).toHaveValue("");
   });
 
-  test("keeps the conversation in view while the new run loads, and the focus in the box", async () => {
+  test("a reply shows at once, before the conversation is refreshed, and keeps the focus in the box", async () => {
     const third = run({
       id: "run-3",
       follows: "run-2",
@@ -610,23 +630,21 @@ describe("replying", () => {
       http.post(`${base}/runs/:id/follow-up`, () => {
         server.use(
           ...conversationHandlers([run(), second, third]),
-          // The new run's conversation is slow to come.
-          http.get(`${base}/runs/run-3/conversation`, () => new Promise<never>(() => undefined)),
+          // The refreshed conversation is slow to come.
+          http.get(`${base}/runs/run-1/conversation`, () => new Promise<never>(() => undefined)),
           http.get(`${base}/runs/run-3/events`, () => liveEventStream().response()),
         );
         return HttpResponse.json(third, { status: 201 });
       }),
     );
-    const { user, history } = renderApp(path, TOKEN);
+    const { user } = renderApp(path, TOKEN);
 
     const box = await screen.findByRole("textbox", { name: "Message" });
     await screen.findByText("Sorted.");
     await user.type(box, "and file them");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
-    await waitFor(() => {
-      expect(history.location.pathname).toBe("/c/run-1");
-    });
+    expect(await screen.findByText("Working…")).toBeInTheDocument();
     expect(screen.getByText("Sorted.")).toBeInTheDocument();
     expect(screen.getByText("and sort them")).toBeInTheDocument();
     expect(await screen.findByText("and file them")).toBeInTheDocument();

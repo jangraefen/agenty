@@ -5,7 +5,7 @@ import {
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import { useLocation, useRouteContext } from "@tanstack/react-router";
+import { Link, useLocation, useRouteContext } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, type Schemas, unwrap } from "@/api/client";
 import {
@@ -24,10 +24,11 @@ import { Button } from "@/components/ui/button";
 
 type Run = Schemas["Run"];
 
-// ConversationChat shows a conversation, named by its first run,
-// as a chat: every run of it, oldest first, each a message from its user and
-// the agent's replies. The latest run is followed live, and a reply follows
-// it up with a new run. The page scrolls to the run focus names, if any.
+// ConversationChat shows a conversation, named by its first run, as a chat:
+// every run of it, oldest first, each a message from its user and the
+// agent's replies. The latest run is followed live, and a reply follows it up
+// with a new run. The page scrolls to the run focus names, if any, once the
+// conversation is known.
 export function ConversationChat({
   conversation: summary,
   focus,
@@ -52,18 +53,19 @@ export function ConversationChat({
     enabled: !conversation.isPending,
   });
 
+  const known = conversation.isSuccess;
   useEffect(() => {
-    if (focus !== undefined) {
+    if (focus !== undefined && known) {
       // jsdom does not scroll.
       document.getElementById(`run-${focus}`)?.scrollIntoView?.({ block: "start" });
     }
-  }, [focus]);
+  }, [focus, known]);
 
   return (
     <article className="mx-auto grid max-w-3xl gap-4">
       {run.isError && (
         <p role="alert" className="text-sm text-destructive">
-          The conversation could not be refreshed: {run.error.message}
+          The first run could not be refreshed: {run.error.message}
         </p>
       )}
       {conversation.isError && (
@@ -108,7 +110,14 @@ function Header({
         <div className="min-w-0">
           <h1 className="truncate text-xl font-semibold">{conversation.title}</h1>
           <p className="text-sm text-muted-foreground">
-            {conversation.harness} · {workspace}
+            <Link
+              to="/w/$workspace/harnesses/$name"
+              params={{ workspace, name: conversation.harness }}
+              className="underline-offset-4 hover:underline"
+            >
+              {conversation.harness}
+            </Link>{" "}
+            · {workspace}
           </p>
         </div>
         {running && (

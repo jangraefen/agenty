@@ -1,6 +1,6 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useLocation } from "@tanstack/react-router";
-import { conversationSummaryQuery, runQuery } from "@/api/queries";
+import { conversationQuery, conversationSummaryQuery, runQuery } from "@/api/queries";
 import { ConversationChat } from "@/components/chat";
 import { orNotFound } from "@/lib/not-found";
 
@@ -11,7 +11,11 @@ export const Route = createFileRoute("/_authed/c/$conversationId")({
     const summary = await orNotFound(
       queryClient.ensureQueryData(conversationSummaryQuery(api, params.conversationId)),
     );
-    await queryClient.ensureQueryData(runQuery(api, summary.workspace, summary.id));
+    // The whole conversation, so the run the hash names is there to scroll to.
+    await Promise.all([
+      queryClient.ensureQueryData(runQuery(api, summary.workspace, summary.id)),
+      queryClient.ensureQueryData(conversationQuery(api, summary.workspace, summary.id)),
+    ]);
   },
   component: ChatPage,
   notFoundComponent: ConversationNotFound,

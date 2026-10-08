@@ -30,8 +30,10 @@ const itemClass = `flex items-center gap-2 ${linkClass}`;
 export function AppSidebar() {
   const { me, session } = useRouteContext({ from: "/_authed" });
   const navigate = useNavigate();
-  // The workspace of a management page, else the first.
-  const { workspace = me.workspaces[0] } = useParams({ strict: false });
+  // The workspace of a management page, if the user is a member of it, else
+  // the first.
+  const { workspace: param } = useParams({ strict: false });
+  const workspace = param !== undefined && me.workspaces.includes(param) ? param : me.workspaces[0];
 
   async function signOut() {
     session.signOut();
@@ -40,9 +42,7 @@ export function AppSidebar() {
 
   return (
     <>
-      <Link to="/" className="px-2 font-semibold">
-        Agenty
-      </Link>
+      <span className="px-2 font-semibold">Agenty</span>
       <Link to="/" activeOptions={{ includeSearch: false }} className={itemClass}>
         <LuSquarePen aria-hidden="true" className="size-4 shrink-0" />
         New chat

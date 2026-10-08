@@ -19,7 +19,7 @@ test("signs in, makes a harness, chats with it, and signs out", async ({ page })
 
   await page.getByLabel("Token").fill(token);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).toHaveURL(/127\.0\.0\.1:4173\/$/);
+  await expect(page).toHaveURL((url) => url.pathname === "/");
   await expect(page.getByRole("heading", { name: "New chat" })).toBeVisible();
   expect(page.url()).not.toContain(token);
 

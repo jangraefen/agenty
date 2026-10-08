@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useId, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { unwrap } from "@/api/client";
 import { cacheStartedRun, harnessesQuery, recentChatsQuery } from "@/api/queries";
 import { MessageBox } from "@/components/message-box";
@@ -43,7 +43,9 @@ function NewChatPage() {
       .map((ref) => choices.find((choice) => choice.ref === ref))
       .find((choice) => choice !== undefined) ?? choices[0];
   const failed = lists.find((list) => list.isError)?.error;
-  const loading = lists.some((list) => list.isPending);
+  // Until every list and the latest chat are known, the harness to offer
+  // first is not.
+  const loading = lists.some((list) => list.isPending) || recent.isPending;
 
   if (me.workspaces.length === 0) {
     return <Note>You are not a member of any workspace yet.</Note>;
@@ -56,7 +58,9 @@ function NewChatPage() {
           Some harnesses could not be loaded: {failed.message}
         </p>
       )}
-      {chosen !== undefined ? (
+      {loading ? (
+        <Note>Loading the harnesses…</Note>
+      ) : chosen !== undefined ? (
         <Start
           choices={choices}
           chosen={chosen}
@@ -64,7 +68,6 @@ function NewChatPage() {
           grouped={me.workspaces.length > 1}
         />
       ) : (
-        !loading &&
         !failed && (
           <Note>
             No harness to chat with yet.{" "}
@@ -82,7 +85,7 @@ function NewChatPage() {
   );
 }
 
-function Note({ children }: { children: React.ReactNode }) {
+function Note({ children }: { children: ReactNode }) {
   return <p className="py-12 text-center text-sm text-muted-foreground">{children}</p>;
 }
 
@@ -118,7 +121,7 @@ function Start({
       // came from.
       await navigate({
         to: "/c/$conversationId",
-        params: { conversationId: run.id },
+        params: { conversationId: run.conversation_id },
         replace: true,
         // The conversation goes on in the chat's own box.
         state: { focusMessage: true },

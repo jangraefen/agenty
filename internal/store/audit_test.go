@@ -185,6 +185,8 @@ func TestCopyAuditRecords(t *testing.T) {
 		    ('r1', 'c1', 'result', 'files_write', 'allow', '{"ok": true}', '')`)
 	require.NoError(t, err)
 
+	// Pages of 3, so the chain carries over from one page to the next.
+	t.Cleanup(store.SetCopyPage(3))
 	tx, err := sqlDB.BeginTx(ctx, nil)
 	require.NoError(t, err)
 	require.NoError(t, store.CopyAuditRecords(ctx, tx))

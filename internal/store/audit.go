@@ -244,8 +244,9 @@ func (s *Store) AuditEvents(ctx context.Context, after, last int64, limit int) (
 	return out, nil
 }
 
-// copyPage is how many records migration 13 copies at a time.
-const copyPage = 1000
+// copyPage is how many records migration 13 copies at a time; a test lowers
+// it to cross pages with few records.
+var copyPage = 1000
 
 // copyAuditRecords is migration 13: it copies every record of the table that
 // held the tool gateway's records before the audit log held every event,

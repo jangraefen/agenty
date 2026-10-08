@@ -53,8 +53,10 @@ func TestInvariant_RunsArePrivate(t *testing.T) {
 				}
 			}
 		}
-		var e api.Error
-		assert.Equal(t, http.StatusNotFound, f.doAs(t, bobToken, http.MethodGet, "/v1/conversations/"+run.ID, nil, &e))
+		for _, bearer := range []string{bobToken, danaToken} {
+			var e api.Error
+			assert.Equal(t, http.StatusNotFound, f.doAs(t, bearer, http.MethodGet, "/v1/conversations/"+run.ID, nil, &e))
+		}
 	}
 	var theirs []api.ApprovalRequest
 	require.Equal(t, http.StatusOK, f.doAs(t, bobToken, http.MethodGet, home+"/approvals", nil, &theirs))
@@ -105,18 +107,17 @@ func TestInvariant_OnlyAuditorsReadTheAuditLog(t *testing.T) {
 	assert.Equal(t, []string{theirs.ID, mine.ID}, []string{list.Runs[0].ID, list.Runs[1].ID})
 	assert.Equal(t, "work", list.Runs[0].Workspace)
 	assert.Equal(t, "alice", list.Runs[1].StartedBy)
+	var rawDetail json.RawMessage
+	require.Equal(t, http.StatusOK, f.doAs(t, danaToken, http.MethodGet, "/v1/audit/runs/"+mine.ID, nil, &rawDetail))
 	var detail api.AuditRunDetail
-	require.Equal(t, http.StatusOK, f.doAs(t, danaToken, http.MethodGet, "/v1/audit/runs/"+mine.ID, nil, &detail))
+	require.NoError(t, json.Unmarshal(rawDetail, &detail))
 	assert.Equal(t, list.Runs[1], detail.Run)
 	require.NotEmpty(t, detail.Records)
 	assert.Equal(t, "files_read", detail.Records[0].Tool, "the run's calls are evidence")
-	for _, page := range []any{list, detail} {
-		b, err := json.Marshal(page)
-		require.NoError(t, err)
-		assert.NotContains(t, string(b), "a private prompt", "an auditor does not see what was said")
-		assert.NotContains(t, string(b), "a private reply")
+	for _, body := range []json.RawMessage{raw, rawDetail} {
+		assert.NotContains(t, string(body), "a private prompt", "an auditor does not see what was said")
+		assert.NotContains(t, string(body), "a private reply")
 	}
-	assert.NotContains(t, string(raw), "a private prompt")
 
 	var filtered api.AuditRunList
 	require.Equal(t, http.StatusOK, f.doAs(t, danaToken, http.MethodGet, "/v1/audit/runs?workspace=home&started_by=alice&harness=notes&status=succeeded", nil, &filtered))

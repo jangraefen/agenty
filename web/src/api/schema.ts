@@ -32,9 +32,9 @@ export interface paths {
          * The conversations the user started, latest activity first, a page at a time
          * @description The conversations whose first run the user started, in the
          *     workspaces they are a member of, the one whose latest run was
-         *     started last first. Following up a conversation does not make it
-         *     the follower's. A conversation is continued, cancelled and answered
-         *     through its workspace. A conversation followed up while the pages
+         *     started last first. Only its starter continues, cancels and answers
+         *     a conversation, through its workspace; in one from before runs were
+         *     private, another member's follow-up belongs to the starter too. A conversation followed up while the pages
          *     are read moves to the first page, so later pages leave it out.
          */
         get: operations["listConversations"];
@@ -383,7 +383,7 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** The approval requests waiting for an answer, oldest first */
+        /** The approval requests the user's own runs wait for, oldest first */
         get: operations["listApprovals"];
         put?: never;
         post?: never;

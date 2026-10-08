@@ -33,7 +33,7 @@ export const TOKEN = "a-test-token-of-at-least-32-characters";
 export function meHandler(me: Omit<Schemas["Me"], "auditor"> & { auditor?: boolean }) {
   return http.get(`${apiUrl}/v1/me`, ({ request }) => {
     if (request.headers.get("Authorization") !== `Bearer ${TOKEN}`) {
-      return HttpResponse.json({ error: "unauthorized" }, { status: 401 });
+      return HttpResponse.json<Schemas["Error"]>({ error: "unauthorized" }, { status: 401 });
     }
     const full: Schemas["Me"] = { auditor: false, ...me };
     return HttpResponse.json(full);

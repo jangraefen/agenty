@@ -200,13 +200,6 @@ func (s handlers) startRun(c *gin.Context, r newRun) {
 	c.JSON(http.StatusCreated, apiRun(run))
 }
 
-// FollowUpRun starts a run that continues the conversation of a run, the
-// conversation's latest, which must have finished; one that failed or was
-// cancelled is continued from where it stopped, see ended. The new run runs the
-// harness version of the run it follows, so a conversation keeps the version
-// it started with; central policy applies as the server has it now. The
-// model sees the conversation as stored, redacted again with the secrets
-// known now.
 // ownRun finds the run with the given ID in workspace if the user started
 // its conversation, and answers not found itself otherwise, as for a run
 // that does not exist. Every handler of a run calls it first, before it
@@ -221,6 +214,13 @@ func (s handlers) ownRun(c *gin.Context, workspace, id string) (store.Run, bool)
 	return run, true
 }
 
+// FollowUpRun starts a run that continues the conversation of a run, the
+// conversation's latest, which must have finished; one that failed or was
+// cancelled is continued from where it stopped, see ended. The new run runs the
+// harness version of the run it follows, so a conversation keeps the version
+// it started with; central policy applies as the server has it now. The
+// model sees the conversation as stored, redacted again with the secrets
+// known now.
 func (s handlers) FollowUpRun(c *gin.Context, workspace, id string) {
 	if _, ok := s.ownRun(c, workspace, id); !ok {
 		return
@@ -329,9 +329,8 @@ func (s handlers) CancelRun(c *gin.Context, workspace, id string) {
 	}
 }
 
-// ListApprovals returns the approval requests the workspace's runs are
-// waiting for, oldest first.
-// ListApprovals lists the waiting requests of the user's own runs.
+// ListApprovals returns the approval requests the user's own runs in the
+// workspace are waiting for, oldest first.
 func (s handlers) ListApprovals(c *gin.Context, workspace string) {
 	pending, err := s.cfg.Store.PendingApprovals(c.Request.Context(), workspace, c.GetString(userKey))
 	if err != nil {
@@ -431,10 +430,9 @@ func (s handlers) replayEvents(c *gin.Context, run store.Run) {
 	c.Writer.Flush()
 }
 
-// AnswerApproval answers a request a run waits for, which queues the run to
-// resume at the call. A request is answered once, and not once it expired.
-// AnswerApproval answers a request of the user's own run: no one else
-// answers it.
+// AnswerApproval answers a request the user's own run waits for, which
+// queues the run to resume at the call: no one else answers it. A request is
+// answered once, and not once it expired.
 func (s handlers) AnswerApproval(c *gin.Context, workspace, id, approval string) {
 	if _, ok := s.ownRun(c, workspace, id); !ok {
 		return

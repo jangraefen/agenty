@@ -29,7 +29,7 @@ type ServerInterface interface {
 	// GetMe The signed-in user and their workspaces
 	// (GET /v1/me)
 	GetMe(c *gin.Context)
-	// ListApprovals The approval requests waiting for an answer, oldest first
+	// ListApprovals The approval requests the user's own runs wait for, oldest first
 	// (GET /v1/workspaces/{workspace}/approvals)
 	ListApprovals(c *gin.Context, workspace Workspace)
 	// ListHarnesses The latest version of every harness, sorted by name

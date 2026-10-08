@@ -148,12 +148,20 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	}
 	// The runs an earlier server left queued or waiting get their event
 	// streams, with what they recorded so far, before any worker may claim
-	// them.
+	// them. Those of a user who left the run's workspace are cancelled
+	// instead: no agent acts for someone who left.
 	queued := 0
 	for _, r := range idle {
 		h, err := s.register(r.ID, r.Workspace, r.Harness)
 		if err != nil {
 			panic(err) // The server is not closed yet.
+		}
+		if !s.isMember(r.Owner, r.Workspace) {
+			if err := s.cancelLeft(ctx, h, r); err != nil {
+				s.Close()
+				return nil, fmt.Errorf("server: %w", err)
+			}
+			continue
 		}
 		if err := s.replay(ctx, h, r.Status); err != nil {
 			s.Close()
@@ -889,6 +897,25 @@ func (s *Server) cancelIdle(ctx context.Context, h *hub, id string, by cancelled
 		s.publishEnd(ctx, h, store.Run{ID: id, Status: store.RunCancelled, Error: by.Error()})
 		s.unregister(id)
 	}
+}
+
+// cancelLeft cancels the queued or waiting run r, at a start, as its owner
+// is no longer a member of its workspace, and records the calls it did not
+// run, so the conversation can go on if they come back. It fails unless the
+// run was cancelled: the server must not start with it still to be taken
+// up. A failure to record the calls, once the run is cancelled, is not
+// retried at the next start.
+func (s *Server) cancelLeft(ctx context.Context, h *hub, r store.IdleRun) error {
+	defer h.cancel(nil)
+	defer s.unregister(r.ID)
+	by := cancelledBy("the server, as " + r.Owner + " is no longer a member of " + r.Workspace)
+	switch cancelled, err := s.cfg.Store.CancelIdleRun(ctx, r.ID, by.Error()); {
+	case err != nil:
+		return err
+	case !cancelled:
+		return fmt.Errorf("run %s: not queued or waiting, so not cancelled", r.ID)
+	}
+	return s.closeOut(ctx, h, r.ID, by)
 }
 
 // suspend is the approver of every run: it never waits for an answer, but

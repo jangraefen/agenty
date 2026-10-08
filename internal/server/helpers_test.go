@@ -78,6 +78,9 @@ type options struct {
 	// serverIdleTimeout is the files server's idle timeout; unset means the
 	// default.
 	serverIdleTimeout *time.Duration
+	// workspaces replaces the fixture's workspaces, as an operator changing
+	// who is a member.
+	workspaces map[string]config.Workspace
 }
 
 func newFixture(t *testing.T, opts options) *fixture {
@@ -115,6 +118,13 @@ func (f *fixture) serve(t *testing.T, opts options) {
 	case newModel == nil:
 		newModel = f.nextModel
 	}
+	workspaces := map[string]config.Workspace{
+		"home": {Members: []string{"alice", "bob", "dana"}},
+		"work": {Members: []string{"bob"}},
+	}
+	if opts.workspaces != nil {
+		workspaces = opts.workspaces
+	}
 	f.server, err = server.New(context.Background(), server.Config{
 		Store: f.store,
 		Operator: &config.Config{
@@ -123,15 +133,12 @@ func (f *fixture) serve(t *testing.T, opts options) {
 				Args:        []string{"--db", "postgres://files:" + token + "@localhost/files"},
 				IdleTimeout: opts.serverIdleTimeout,
 			}},
-			Policy: opts.policy,
-			Users:  map[string]config.User{"alice": {}, "bob": {}, "carol": {}, "dana": {Auditor: true}},
-			Workspaces: map[string]config.Workspace{
-				"home": {Members: []string{"alice", "bob", "dana"}},
-				"work": {Members: []string{"bob"}},
-			},
-			CORS:      config.CORS{Origins: []string{origin}},
-			Runs:      config.Runs{Workers: opts.workers},
-			Approvals: config.Approvals{Timeout: opts.approvalTimeout},
+			Policy:     opts.policy,
+			Users:      map[string]config.User{"alice": {}, "bob": {}, "carol": {}, "dana": {Auditor: true}},
+			Workspaces: workspaces,
+			CORS:       config.CORS{Origins: []string{origin}},
+			Runs:       config.Runs{Workers: opts.workers},
+			Approvals:  config.Approvals{Timeout: opts.approvalTimeout},
 		},
 		Resolved: &config.Resolved{Redactor: redactor, UserTokens: userTokens},
 		Logger:   slog.New(redactor.Handler(slog.NewTextHandler(f.logs, nil))),
@@ -277,9 +284,15 @@ type stream struct {
 
 func (f *fixture) events(t *testing.T, runID string) *stream {
 	t.Helper()
+	return f.eventsAs(t, aliceToken, runID)
+}
+
+// eventsAs reads a run of home's events as the user with the given token.
+func (f *fixture) eventsAs(t *testing.T, bearer, runID string) *stream {
+	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, f.http.URL+home+"/runs/"+runID+"/events", nil)
 	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer "+aliceToken)
+	req.Header.Set("Authorization", "Bearer "+bearer)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)

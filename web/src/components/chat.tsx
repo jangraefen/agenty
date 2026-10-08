@@ -36,8 +36,10 @@ export function ConversationChat({
   conversation: Schemas["ConversationSummary"];
   focus?: string | undefined;
 }) {
-  const { api } = useRouteContext({ from: "/_authed" });
+  const { api, me } = useRouteContext({ from: "/_authed" });
   const { workspace } = summary;
+  // The chat of a workspace the user left is read-only.
+  const readOnly = !me.workspaces.includes(workspace);
   const run = useSuspenseQuery(runQuery(api, workspace, summary.id));
   const conversation = useQuery(conversationQuery(api, workspace, summary.id));
   const listed = conversation.data ?? [run.data];
@@ -73,14 +75,26 @@ export function ConversationChat({
           The rest of the conversation could not be loaded: {conversation.error.message}
         </p>
       )}
-      <Header workspace={workspace} conversation={summary} latest={current} key={current.id} />
-      <Chat workspace={workspace} runs={runs} latest={current} events={events} />
-      <Composer
+      <Header
         workspace={workspace}
-        runs={runs}
+        conversation={summary}
         latest={current}
-        ready={!conversation.isPending}
+        readOnly={readOnly}
+        key={current.id}
       />
+      <Chat workspace={workspace} runs={runs} latest={current} events={events} />
+      {readOnly ? (
+        <p className="border-t pt-3 text-sm text-muted-foreground">
+          You are no longer a member of {workspace}: this chat is read-only.
+        </p>
+      ) : (
+        <Composer
+          workspace={workspace}
+          runs={runs}
+          latest={current}
+          ready={!conversation.isPending}
+        />
+      )}
     </article>
   );
 }
@@ -89,10 +103,12 @@ function Header({
   workspace,
   conversation,
   latest,
+  readOnly,
 }: {
   workspace: string;
   conversation: Schemas["ConversationSummary"];
   latest: Run;
+  readOnly: boolean;
 }) {
   const { api } = useRouteContext({ from: "/_authed" });
   const running = unfinished(latest.status);
@@ -110,17 +126,21 @@ function Header({
         <div className="min-w-0">
           <h1 className="truncate text-xl font-semibold">{conversation.title}</h1>
           <p className="text-sm text-muted-foreground">
-            <Link
-              to="/w/$workspace/harnesses/$name"
-              params={{ workspace, name: conversation.harness }}
-              className="underline-offset-4 hover:underline"
-            >
-              {conversation.harness}
-            </Link>{" "}
+            {readOnly ? (
+              conversation.harness
+            ) : (
+              <Link
+                to="/w/$workspace/harnesses/$name"
+                params={{ workspace, name: conversation.harness }}
+                className="underline-offset-4 hover:underline"
+              >
+                {conversation.harness}
+              </Link>
+            )}{" "}
             · {workspace}
           </p>
         </div>
-        {running && (
+        {running && !readOnly && (
           <span className="ml-auto">
             <Button
               variant="destructive"

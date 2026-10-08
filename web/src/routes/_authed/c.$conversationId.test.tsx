@@ -35,21 +35,25 @@ type Message = Schemas["TranscriptMessage"];
 
 // Answers for the runs of one conversation: each run, the conversation from
 // any of them, and each run's transcript, by run ID.
-function conversationHandlers(runs: Schemas["Run"][], transcripts: Record<string, Message[]> = {}) {
+function conversationHandlers(
+  runs: Schemas["Run"][],
+  transcripts: Record<string, Message[]> = {},
+  at = base,
+) {
   const find = (id: unknown) => runs.find((r) => r.id === id);
   return [
-    http.get(`${base}/runs/:id`, ({ params }) => {
+    http.get(`${at}/runs/:id`, ({ params }) => {
       const found = find(params.id);
       return found === undefined
         ? HttpResponse.json({ error: "not found" }, { status: 404 })
         : HttpResponse.json(found);
     }),
-    http.get(`${base}/runs/:id/conversation`, ({ params }) =>
+    http.get(`${at}/runs/:id/conversation`, ({ params }) =>
       find(params.id) === undefined
         ? HttpResponse.json({ error: "not found" }, { status: 404 })
         : HttpResponse.json(runs),
     ),
-    http.get(`${base}/runs/:id/transcript`, ({ params }) =>
+    http.get(`${at}/runs/:id/transcript`, ({ params }) =>
       HttpResponse.json(transcripts[String(params.id)] ?? []),
     ),
   ];
@@ -537,6 +541,27 @@ describe("the conversation page", () => {
       await screen.findByRole("heading", { name: "Conversation not found" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Start a new chat" })).toHaveAttribute("href", "/");
+  });
+
+  test("of a workspace the user left, is read-only", async () => {
+    server.use(
+      http.get(`${apiUrl}/v1/conversations/run-1`, () =>
+        HttpResponse.json(conversation({ workspace: "gone" })),
+      ),
+      ...conversationHandlers([run()], {}, `${apiUrl}/v1/workspaces/gone`),
+      http.get(`${apiUrl}/v1/workspaces/gone/runs/run-1/events`, () =>
+        eventStream([{ event: "finished", data: run() }]),
+      ),
+    );
+    renderApp(path, TOKEN);
+
+    expect(
+      await screen.findByText("You are no longer a member of gone: this chat is read-only."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Message" })).not.toBeInTheDocument();
+    const header = screen.getByRole("heading", { name: "tidy my notes" }).closest("header");
+    expect(header).toHaveTextContent("notes · gone");
+    expect(within(header as HTMLElement).queryByRole("link")).not.toBeInTheDocument();
   });
 
   test("names the harness and workspace", async () => {

@@ -121,28 +121,21 @@ func (q *Queries) LastAuditEventID(ctx context.Context) (int64, error) {
 const listActorEvents = `-- name: ListActorEvents :many
 SELECT id, recorded_at, actor, action, workspace, run_id, target, details, prev_hash, hash FROM audit_events
 WHERE actor = $1
-  AND workspace = ANY($2::text[])
-  AND ($3::bigint = 0 OR id < $3)
+  AND ($2::bigint = 0 OR id < $2)
 ORDER BY id DESC
-LIMIT $4
+LIMIT $3
 `
 
 type ListActorEventsParams struct {
-	Actor      string
-	Workspaces []string
-	Before     int64
-	MaxRows    int32
+	Actor   string
+	Before  int64
+	MaxRows int32
 }
 
 // What actor did, newest first, before the event named by before (0 for
-// the newest), in the given workspaces.
+// the newest).
 func (q *Queries) ListActorEvents(ctx context.Context, arg ListActorEventsParams) ([]AuditEvent, error) {
-	rows, err := q.db.Query(ctx, listActorEvents,
-		arg.Actor,
-		arg.Workspaces,
-		arg.Before,
-		arg.MaxRows,
-	)
+	rows, err := q.db.Query(ctx, listActorEvents, arg.Actor, arg.Before, arg.MaxRows)
 	if err != nil {
 		return nil, err
 	}

@@ -264,13 +264,13 @@ func (s *Store) ListAuditEvents(ctx context.Context, f EventFilter) ([]auditlog.
 	return events(rows), nil
 }
 
-// ActorEvents lists up to limit events by actor in workspaces, newest first,
-// before the one with id before (0 for the newest).
-func (s *Store) ActorEvents(ctx context.Context, actor string, workspaces []string, before int64, limit int) ([]auditlog.Event, error) {
+// ActorEvents lists up to limit events by actor, newest first, before the
+// one with id before (0 for the newest).
+func (s *Store) ActorEvents(ctx context.Context, actor string, before int64, limit int) ([]auditlog.Event, error) {
 	if limit <= 0 || limit > math.MaxInt32 {
 		return nil, fmt.Errorf("store: audit: limit %d is out of range", limit)
 	}
-	rows, err := s.queries.ListActorEvents(ctx, db.ListActorEventsParams{Actor: actor, Workspaces: workspaces, Before: before, MaxRows: int32(limit)})
+	rows, err := s.queries.ListActorEvents(ctx, db.ListActorEventsParams{Actor: actor, Before: before, MaxRows: int32(limit)})
 	if err != nil {
 		return nil, fmt.Errorf("store: audit: %w", err)
 	}

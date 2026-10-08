@@ -43,16 +43,15 @@ func (s handlers) memberships(user string) []string {
 	return workspaces
 }
 
-// ListConversations lists the conversations the user started in the
-// workspaces they are a member of. Its route is in no workspace, so the
-// membership middleware leaves it alone and the workspaces are checked here.
+// ListConversations lists the conversations the user started, in every
+// workspace: those of a workspace they left are read-only, not hidden.
 func (s handlers) ListConversations(c *gin.Context, params api.ListConversationsParams) {
 	limit, ok := s.pageLimit(c, params.Limit)
 	if !ok {
 		return
 	}
 	user := c.GetString(userKey)
-	filter := store.ConversationFilter{User: user, Workspaces: s.memberships(user), Limit: limit}
+	filter := store.ConversationFilter{User: user, Limit: limit}
 	if params.Before != "" {
 		var err error
 		if filter.BeforeAt, filter.BeforeID, err = parseConversationCursor(params.Before); err != nil {
@@ -76,10 +75,9 @@ func (s handlers) ListConversations(c *gin.Context, params api.ListConversations
 	c.JSON(http.StatusOK, out)
 }
 
-// GetConversation finds a conversation in one of the user's workspaces.
+// GetConversation finds a conversation the user started, in any workspace.
 func (s handlers) GetConversation(c *gin.Context, id string) {
-	user := c.GetString(userKey)
-	cv, err := s.cfg.Store.FindConversation(c.Request.Context(), user, s.memberships(user), id)
+	cv, err := s.cfg.Store.FindConversation(c.Request.Context(), c.GetString(userKey), id)
 	if err != nil {
 		s.failStore(c, err)
 		return
@@ -206,14 +204,20 @@ func (s handlers) startRun(c *gin.Context, r newRun) {
 // its conversation, and answers not found itself otherwise, as for a run
 // that does not exist. Every handler of a run calls it first, before it
 // reads the request or touches the run, so another user's run gives nothing
-// away.
+// away. A user who is not a member reaches it only to read their own run,
+// and is told what any non-member is: that the workspace is not found.
 func (s handlers) ownRun(c *gin.Context, workspace, id string) (store.Run, bool) {
-	run, err := s.cfg.Store.OwnRun(c.Request.Context(), workspace, c.GetString(userKey), id)
-	if err != nil {
+	user := c.GetString(userKey)
+	run, err := s.cfg.Store.OwnRun(c.Request.Context(), workspace, user, id)
+	switch {
+	case errors.Is(err, store.ErrNotFound) && !s.isMember(user, workspace):
+		s.fail(c, http.StatusNotFound, fmt.Errorf("workspace %s: not found", workspace))
+	case err != nil:
 		s.failStore(c, err)
-		return store.Run{}, false
+	default:
+		return run, true
 	}
-	return run, true
+	return store.Run{}, false
 }
 
 // FollowUpRun starts a run that continues the conversation of a run, the

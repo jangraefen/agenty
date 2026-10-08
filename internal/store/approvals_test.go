@@ -199,7 +199,7 @@ func TestIdleRuns_ListsQueuedAndWaitingRuns(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, []store.IdleRun{
-		{ID: "r1", Status: store.RunWaiting, Workspace: ws, Harness: "notes"},
-		{ID: "r2", Status: store.RunQueued, Workspace: ws, Harness: "notes"},
+		{ID: "r1", Status: store.RunWaiting, Workspace: ws, Harness: "notes", Owner: "alice"},
+		{ID: "r2", Status: store.RunQueued, Workspace: ws, Harness: "notes", Owner: "alice"},
 	}, idle)
 }

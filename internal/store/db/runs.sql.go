@@ -179,13 +179,11 @@ JOIN runs latest ON latest.conversation_id = first.id
  AND NOT EXISTS (SELECT 1 FROM runs n WHERE n.follows = latest.id)
 WHERE first.id = $1 AND first.id = first.conversation_id
   AND first.started_by = $2
-  AND harness_versions.workspace = ANY($3::text[])
 `
 
 type FindConversationParams struct {
-	ID         string
-	StartedBy  string
-	Workspaces []string
+	ID        string
+	StartedBy string
 }
 
 type FindConversationRow struct {
@@ -196,10 +194,9 @@ type FindConversationRow struct {
 	Status    string
 }
 
-// The conversation named by id, if started_by started it in one of the given
-// workspaces.
+// The conversation named by id, if started_by started it, in any workspace.
 func (q *Queries) FindConversation(ctx context.Context, arg FindConversationParams) (FindConversationRow, error) {
-	row := q.db.QueryRow(ctx, findConversation, arg.ID, arg.StartedBy, arg.Workspaces)
+	row := q.db.QueryRow(ctx, findConversation, arg.ID, arg.StartedBy)
 	var i FindConversationRow
 	err := row.Scan(
 		&i.ID,
@@ -383,9 +380,10 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (GetRunRow, erro
 }
 
 const idleRuns = `-- name: IdleRuns :many
-SELECT runs.id, runs.status, harness_versions.workspace, harness_versions.name AS harness
+SELECT runs.id, runs.status, harness_versions.workspace, harness_versions.name AS harness, first.started_by AS owner
 FROM runs
 JOIN harness_versions ON harness_versions.id = runs.harness_version_id
+JOIN runs first ON first.id = runs.conversation_id
 WHERE runs.status IN ('queued', 'waiting')
 ORDER BY runs.created_at, runs.id
 `
@@ -395,10 +393,12 @@ type IdleRunsRow struct {
 	Status    string
 	Workspace string
 	Harness   string
+	Owner     string
 }
 
 // The runs no worker holds that have not finished, queued or waiting, oldest
-// first, with their workspaces and harnesses.
+// first, with their workspaces, harnesses and the users who started their
+// conversations.
 func (q *Queries) IdleRuns(ctx context.Context) ([]IdleRunsRow, error) {
 	rows, err := q.db.Query(ctx, idleRuns)
 	if err != nil {
@@ -413,6 +413,7 @@ func (q *Queries) IdleRuns(ctx context.Context) ([]IdleRunsRow, error) {
 			&i.Status,
 			&i.Workspace,
 			&i.Harness,
+			&i.Owner,
 		); err != nil {
 			return nil, err
 		}
@@ -580,19 +581,17 @@ JOIN runs latest ON latest.conversation_id = first.id
  AND NOT EXISTS (SELECT 1 FROM runs n WHERE n.follows = latest.id)
 WHERE first.id = first.conversation_id
   AND first.started_by = $1
-  AND harness_versions.workspace = ANY($2::text[])
-  AND ($3::text IS NULL
-       OR (latest.created_at, first.id) < ($4::timestamptz, $3::text))
+  AND ($2::text IS NULL
+       OR (latest.created_at, first.id) < ($3::timestamptz, $2::text))
 ORDER BY latest.created_at DESC, first.id DESC
-LIMIT $5
+LIMIT $4
 `
 
 type ListConversationsParams struct {
-	StartedBy  string
-	Workspaces []string
-	BeforeID   pgtype.Text
-	BeforeAt   *time.Time
-	MaxRows    int32
+	StartedBy string
+	BeforeID  pgtype.Text
+	BeforeAt  *time.Time
+	MaxRows   int32
 }
 
 type ListConversationsRow struct {
@@ -604,14 +603,13 @@ type ListConversationsRow struct {
 	UpdatedAt time.Time
 }
 
-// The conversations started_by started in the given workspaces, latest
-// activity first, after the one with before_at and before_id when they are
+// The conversations started_by started, in any workspace, latest activity
+// first, after the one with before_at and before_id when they are
 // set. A conversation is its first run, whose ID names it, and its latest
 // run, the one no run follows, whose creation is its latest activity.
 func (q *Queries) ListConversations(ctx context.Context, arg ListConversationsParams) ([]ListConversationsRow, error) {
 	rows, err := q.db.Query(ctx, listConversations,
 		arg.StartedBy,
-		arg.Workspaces,
 		arg.BeforeID,
 		arg.BeforeAt,
 		arg.MaxRows,

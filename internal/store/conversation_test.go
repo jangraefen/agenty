@@ -107,8 +107,9 @@ func TestConversations(t *testing.T) {
 		return out
 	}
 
-	home := list(store.ConversationFilter{User: "alice", Workspaces: []string{ws}, Limit: 10})
-	require.Equal(t, []string{"a1", "c1"}, ids(home), "one item per conversation alice started, latest activity first")
+	all := list(store.ConversationFilter{User: "alice", Limit: 10})
+	require.Equal(t, []string{"w1", "a1", "c1"}, ids(all), "one item per conversation alice started, in any workspace, latest activity first")
+	home := all[1:]
 	a3, err := s.Run(ctx, ws, "a3")
 	require.NoError(t, err)
 	assert.Equal(t, store.ConversationSummary{ID: "a1", Workspace: ws, Harness: "notes", Title: "tidy", Status: store.RunQueued, UpdatedAt: a3.CreatedAt}, home[0],
@@ -120,28 +121,27 @@ func TestConversations(t *testing.T) {
 		filter store.ConversationFilter
 		want   []string
 	}{
-		{"a page", store.ConversationFilter{User: "alice", Workspaces: []string{ws}, Limit: 1}, []string{"a1"}},
-		{"the next page", store.ConversationFilter{User: "alice", Workspaces: []string{ws}, BeforeAt: home[0].UpdatedAt, BeforeID: "a1", Limit: 10}, []string{"c1"}},
-		{"every workspace given", store.ConversationFilter{User: "alice", Workspaces: []string{ws, "work"}, Limit: 10}, []string{"w1", "a1", "c1"}},
-		{"no workspace", store.ConversationFilter{User: "alice", Limit: 10}, []string{}},
-		{"a follow-up does not make a conversation the follower's", store.ConversationFilter{User: "bob", Workspaces: []string{ws}, Limit: 10}, []string{"b1"}},
+		{"a page", store.ConversationFilter{User: "alice", Limit: 1}, []string{"w1"}},
+		{"the next page", store.ConversationFilter{User: "alice", BeforeAt: home[0].UpdatedAt, BeforeID: "a1", Limit: 10}, []string{"c1"}},
+		{"a follow-up does not make a conversation the follower's", store.ConversationFilter{User: "bob", Limit: 10}, []string{"b1"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, ids(list(tt.filter)))
 		})
 	}
 
-	_, err = s.Conversations(ctx, store.ConversationFilter{User: "alice", Workspaces: []string{ws}})
+	_, err = s.Conversations(ctx, store.ConversationFilter{User: "alice"})
 	require.Error(t, err, "a limit is required")
 
-	found, err := s.FindConversation(ctx, "alice", []string{ws}, "a1")
+	found, err := s.FindConversation(ctx, "alice", "a1")
 	require.NoError(t, err)
 	assert.Equal(t, store.ConversationSummary{ID: "a1", Workspace: ws, Harness: "notes", Title: "tidy", Status: store.RunQueued}, found)
-	_, err = s.FindConversation(ctx, "alice", []string{ws}, "a2")
+	_, err = s.FindConversation(ctx, "alice", "a2")
 	require.ErrorIs(t, err, store.ErrNotFound, "a later run does not name a conversation")
-	_, err = s.FindConversation(ctx, "alice", []string{ws}, "w1")
-	require.ErrorIs(t, err, store.ErrNotFound, "a conversation outside the given workspaces is not found")
-	_, err = s.FindConversation(ctx, "bob", []string{ws}, "a1")
+	inWork, err := s.FindConversation(ctx, "alice", "w1")
+	require.NoError(t, err, "a conversation of any workspace is found for its starter")
+	assert.Equal(t, "work", inWork.Workspace)
+	_, err = s.FindConversation(ctx, "bob", "a1")
 	require.ErrorIs(t, err, store.ErrNotFound, "another user's conversation is not found")
 }
 
@@ -156,7 +156,7 @@ func TestConversations_PagesStayStableAcrossFollowUps(t *testing.T) {
 	for _, id := range []string{"x1", "x2", "x3"} {
 		require.NoError(t, s.FinishRun(ctx, id, store.RunSucceeded, "ok", 1, ""))
 	}
-	filter := store.ConversationFilter{User: "alice", Workspaces: []string{ws}, Limit: 2}
+	filter := store.ConversationFilter{User: "alice", Limit: 2}
 	first, err := s.Conversations(ctx, filter)
 	require.NoError(t, err)
 	require.Len(t, first, 2)

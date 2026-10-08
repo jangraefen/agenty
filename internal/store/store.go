@@ -316,6 +316,8 @@ type IdleRun struct {
 	Status    RunStatus
 	Workspace string
 	Harness   string
+	// Owner started the run's conversation.
+	Owner string
 }
 
 // IdleRuns returns the queued and waiting runs, oldest first.
@@ -326,7 +328,7 @@ func (s *Store) IdleRuns(ctx context.Context) ([]IdleRun, error) {
 	}
 	out := make([]IdleRun, len(rows))
 	for i, r := range rows {
-		out[i] = IdleRun{ID: r.ID, Status: RunStatus(r.Status), Workspace: r.Workspace, Harness: r.Harness}
+		out[i] = IdleRun{ID: r.ID, Status: RunStatus(r.Status), Workspace: r.Workspace, Harness: r.Harness, Owner: r.Owner}
 	}
 	return out, nil
 }
@@ -495,9 +497,8 @@ type ConversationSummary struct {
 
 // ConversationFilter selects conversations to list.
 type ConversationFilter struct {
-	// User started the conversations, in one of Workspaces.
-	User       string
-	Workspaces []string
+	// User started the conversations, in any workspace.
+	User string
 	// BeforeAt and BeforeID, when BeforeID is set, list the conversations
 	// after the one with that UpdatedAt and ID, in the order Conversations
 	// returns them.
@@ -517,11 +518,10 @@ func (s *Store) Conversations(ctx context.Context, f ConversationFilter) ([]Conv
 		before = &f.BeforeAt
 	}
 	rows, err := s.queries.ListConversations(ctx, db.ListConversationsParams{
-		StartedBy:  f.User,
-		Workspaces: f.Workspaces,
-		BeforeID:   optional(f.BeforeID),
-		BeforeAt:   before,
-		MaxRows:    int32(f.Limit),
+		StartedBy: f.User,
+		BeforeID:  optional(f.BeforeID),
+		BeforeAt:  before,
+		MaxRows:   int32(f.Limit),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("store: conversations: %w", err)
@@ -540,10 +540,10 @@ func (s *Store) Conversations(ctx context.Context, f ConversationFilter) ([]Conv
 	return out, nil
 }
 
-// FindConversation returns the conversation named by id, if user started it
-// in one of workspaces. A later run of a conversation does not name it.
-func (s *Store) FindConversation(ctx context.Context, user string, workspaces []string, id string) (ConversationSummary, error) {
-	row, err := s.queries.FindConversation(ctx, db.FindConversationParams{ID: id, StartedBy: user, Workspaces: workspaces})
+// FindConversation returns the conversation named by id, if user started it,
+// in any workspace. A later run of a conversation does not name it.
+func (s *Store) FindConversation(ctx context.Context, user, id string) (ConversationSummary, error) {
+	row, err := s.queries.FindConversation(ctx, db.FindConversationParams{ID: id, StartedBy: user})
 	if err != nil {
 		return ConversationSummary{}, notFound("conversation "+id, err)
 	}

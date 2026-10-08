@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"testing"
 
@@ -180,4 +181,33 @@ func TestQueue_AQueuedRunsStreamEndsWithTheServer(t *testing.T) {
 
 	assert.Empty(t, events.rest(), "the stream ends without the run's end")
 	assert.Equal(t, api.RunStatusQueued, f.status(t, queued.ID))
+}
+
+// TestQueue_ARunFinishingAsItIsReadIsNotOnAnotherServer: a run that ends
+// while its events are asked for, or its cancel, is this server's: its
+// stream replays it, and its cancel finds it finished.
+func TestQueue_ARunFinishingAsItIsReadIsNotOnAnotherServer(t *testing.T) {
+	f := newFixture(t, options{})
+	f.putNotes(t)
+	for range 30 {
+		f.script(modeltest.Reply("done"))
+		run := f.startRun(t, "tidy my notes")
+
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, f.http.URL+home+"/runs/"+run.ID+"/events", nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+aliceToken)
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+		require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
+
+		var e api.Error
+		if code := f.do(t, http.MethodPost, home+"/runs/"+run.ID+"/cancel", nil, &e); code != http.StatusAccepted {
+			require.Equal(t, http.StatusConflict, code)
+			require.Contains(t, e.Error, "has already finished")
+		}
+		f.finish(t, run.ID)
+	}
 }

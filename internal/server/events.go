@@ -63,9 +63,9 @@ func serverStarted(cfg Config) auditlog.Event {
 	return auditlog.Event{Action: "server.started", Details: must.Value(json.Marshal(d))}
 }
 
-// workspaceChanges are the actions that change a workspace itself, which its
-// members see in its audit log.
-var workspaceChanges = []string{"harness.changed"}
+// workspaceChange is the action that changes a workspace itself, which its
+// members see in its audit log: so far, a harness's new version.
+const workspaceChange = "harness.changed"
 
 // eventList is a page of the audit log as the API lists it. It is not the
 // generated api.AuditLogEventList: the events are package auditlog's, so
@@ -112,7 +112,7 @@ func (s handlers) ListMyActivity(c *gin.Context, params api.ListMyActivityParams
 // members.
 func (s handlers) ListWorkspaceAuditEvents(c *gin.Context, workspace string, params api.ListWorkspaceAuditEventsParams) {
 	s.listEvents(c, params.Limit, params.Before, func(before int64, limit int) ([]auditlog.Event, error) {
-		return s.cfg.Store.WorkspaceEvents(c.Request.Context(), workspace, workspaceChanges, before, limit)
+		return s.cfg.Store.WorkspaceEvents(c.Request.Context(), workspace, workspaceChange, before, limit)
 	})
 }
 

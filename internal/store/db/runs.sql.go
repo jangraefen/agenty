@@ -15,8 +15,9 @@ import (
 const cancelIdleRun = `-- name: CancelIdleRun :many
 UPDATE runs
 SET status = 'cancelled', error = $2, finished_at = now()
-WHERE id = $1 AND status IN ('queued', 'waiting')
-RETURNING steps
+FROM harness_versions
+WHERE runs.id = $1 AND runs.status IN ('queued', 'waiting') AND harness_versions.id = runs.harness_version_id
+RETURNING runs.steps, harness_versions.workspace
 `
 
 type CancelIdleRunParams struct {
@@ -24,19 +25,24 @@ type CancelIdleRunParams struct {
 	Error string
 }
 
-func (q *Queries) CancelIdleRun(ctx context.Context, arg CancelIdleRunParams) ([]int32, error) {
+type CancelIdleRunRow struct {
+	Steps     int32
+	Workspace string
+}
+
+func (q *Queries) CancelIdleRun(ctx context.Context, arg CancelIdleRunParams) ([]CancelIdleRunRow, error) {
 	rows, err := q.db.Query(ctx, cancelIdleRun, arg.ID, arg.Error)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []int32
+	var items []CancelIdleRunRow
 	for rows.Next() {
-		var steps int32
-		if err := rows.Scan(&steps); err != nil {
+		var i CancelIdleRunRow
+		if err := rows.Scan(&i.Steps, &i.Workspace); err != nil {
 			return nil, err
 		}
-		items = append(items, steps)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -141,13 +147,15 @@ func (q *Queries) ConversationRuns(ctx context.Context, arg ConversationRunsPara
 const failRunningRuns = `-- name: FailRunningRuns :many
 UPDATE runs
 SET status = 'failed', error = $1, finished_at = now()
-WHERE status = 'running'
-RETURNING id, steps
+FROM harness_versions
+WHERE runs.status = 'running' AND harness_versions.id = runs.harness_version_id
+RETURNING runs.id, runs.steps, harness_versions.workspace
 `
 
 type FailRunningRunsRow struct {
-	ID    string
-	Steps int32
+	ID        string
+	Steps     int32
+	Workspace string
 }
 
 func (q *Queries) FailRunningRuns(ctx context.Context, error string) ([]FailRunningRunsRow, error) {
@@ -159,7 +167,7 @@ func (q *Queries) FailRunningRuns(ctx context.Context, error string) ([]FailRunn
 	var items []FailRunningRunsRow
 	for rows.Next() {
 		var i FailRunningRunsRow
-		if err := rows.Scan(&i.ID, &i.Steps); err != nil {
+		if err := rows.Scan(&i.ID, &i.Steps, &i.Workspace); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -208,10 +216,12 @@ func (q *Queries) FindConversation(ctx context.Context, arg FindConversationPara
 	return i, err
 }
 
-const finishRun = `-- name: FinishRun :execrows
+const finishRun = `-- name: FinishRun :one
 UPDATE runs
 SET status = $2, output = $3, steps = $4, error = $5, finished_at = now()
-WHERE id = $1 AND status = 'running'
+FROM harness_versions
+WHERE runs.id = $1 AND runs.status = 'running' AND harness_versions.id = runs.harness_version_id
+RETURNING harness_versions.workspace
 `
 
 type FinishRunParams struct {
@@ -222,18 +232,18 @@ type FinishRunParams struct {
 	Error  string
 }
 
-func (q *Queries) FinishRun(ctx context.Context, arg FinishRunParams) (int64, error) {
-	result, err := q.db.Exec(ctx, finishRun,
+// The run's end, if it was running; it returns the run's workspace.
+func (q *Queries) FinishRun(ctx context.Context, arg FinishRunParams) (string, error) {
+	row := q.db.QueryRow(ctx, finishRun,
 		arg.ID,
 		arg.Status,
 		arg.Output,
 		arg.Steps,
 		arg.Error,
 	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+	var workspace string
+	err := row.Scan(&workspace)
+	return workspace, err
 }
 
 const getAuditRun = `-- name: GetAuditRun :one
@@ -431,7 +441,8 @@ LEFT JOIN runs f ON f.id = wanted.id AND f.started_by = $4::text
 WHERE wanted.id IS NULL OR f.id IS NOT NULL
 RETURNING runs.id, runs.harness_version_id, runs.input, runs.started_by, runs.conversation_id, runs.follows, runs.status, runs.output, runs.steps, runs.error, runs.prompt_digest, runs.history_digest, runs.input_tokens, runs.output_tokens, runs.cache_write_tokens, runs.cache_read_tokens, runs.created_at, runs.finished_at,
     (SELECT hv.name FROM harness_versions hv WHERE hv.id = runs.harness_version_id)::text AS harness,
-    (SELECT hv.version FROM harness_versions hv WHERE hv.id = runs.harness_version_id)::integer AS harness_version
+    (SELECT hv.version FROM harness_versions hv WHERE hv.id = runs.harness_version_id)::integer AS harness_version,
+    (SELECT hv.workspace FROM harness_versions hv WHERE hv.id = runs.harness_version_id)::text AS workspace
 `
 
 type InsertRunParams struct {
@@ -446,6 +457,7 @@ type InsertRunRow struct {
 	Run            Run
 	Harness        string
 	HarnessVersion int32
+	Workspace      string
 }
 
 // A run is stored as queued. A run that follows another joins its
@@ -483,6 +495,7 @@ func (q *Queries) InsertRun(ctx context.Context, arg InsertRunParams) (InsertRun
 		&i.Run.FinishedAt,
 		&i.Harness,
 		&i.HarnessVersion,
+		&i.Workspace,
 	)
 	return i, err
 }

@@ -787,13 +787,15 @@ func (s *Server) approvalTimeout() time.Duration {
 	return cmp.Or(s.cfg.Operator.Approvals.Timeout, config.DefaultApprovalTimeout)
 }
 
-// expiryRetry is how long the expiry loop waits before it tries again to
-// expire a request that is due: the database's clock decides, which may not
-// have reached it yet.
+// expiryRetry is how long the expiry loop waits at least before it expires
+// requests again. A request may fall due after the loop expired requests and
+// before it reads when the next one is due, which is then past; a database
+// whose clock is behind the server's may also not have seen it fall due.
 const expiryRetry = 10 * time.Millisecond
 
 // expiryWait is how long the expiry loop waits at now for the next request
-// to expire at next, if one is pending, or whether it waits until woken.
+// to expire at next, if one is pending, or whether it waits until woken. A
+// request due already is tried again after expiryRetry, never forgotten.
 func expiryWait(now, next time.Time, pending bool) (wait time.Duration, forever bool) {
 	if !pending {
 		return 0, true

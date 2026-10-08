@@ -25,10 +25,10 @@ const (
 	EventFinished = "finished"
 )
 
-// The page sizes of listing runs, as the spec gives them.
+// The page sizes of lists, as the spec's Limit parameter gives them.
 const (
-	DefaultRunsLimit = 50
-	MaxRunsLimit     = 200
+	DefaultPageLimit = 50
+	MaxPageLimit     = 200
 )
 
 // FromHarness returns h in its API form.

@@ -31,9 +31,11 @@ export interface paths {
         /**
          * The conversations the user started, latest activity first, a page at a time
          * @description The conversations whose first run the user started, in the
-         *     workspaces they are a member of. Following up a conversation does
-         *     not make it the follower's. A conversation is continued, cancelled
-         *     and answered through its workspace.
+         *     workspaces they are a member of, the one whose latest run was
+         *     started last first. Following up a conversation does not make it
+         *     the follower's. A conversation is continued, cancelled and answered
+         *     through its workspace. A conversation followed up while the pages
+         *     are read moves to the first page, so later pages leave it out.
          */
         get: operations["listConversations"];
         put?: never;
@@ -51,7 +53,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** A conversation in one of the user's workspaces */
+        /**
+         * A conversation in one of the user's workspaces
+         * @description Any member of the conversation's workspace finds it, not only the
+         *     user who started it; in a workspace the user is not a member of, it
+         *     is not found. Only the ID of its first run names it.
+         */
         get: operations["getConversation"];
         put?: never;
         post?: never;
@@ -573,6 +580,8 @@ export interface components {
     parameters: {
         Workspace: string;
         RunID: string;
+        /** @description The page size. */
+        Limit: number;
     };
     requestBodies: never;
     headers: never;
@@ -605,7 +614,7 @@ export interface operations {
         parameters: {
             query?: {
                 /** @description The page size. */
-                limit?: number;
+                limit?: components["parameters"]["Limit"];
                 /** @description Continue after the conversation this cursor names, as ConversationList.next gives it. */
                 before?: string;
             };
@@ -734,7 +743,7 @@ export interface operations {
                 /** @description Only the runs with this status. */
                 status?: components["schemas"]["RunStatus"];
                 /** @description The page size. */
-                limit?: number;
+                limit?: components["parameters"]["Limit"];
                 /**
                  * @description Continue after the run with this ID, as RunList.next gives it. A
                  *     run that is not one of the workspace's gives an empty page.

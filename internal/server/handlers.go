@@ -90,7 +90,6 @@ func apiConversation(cv store.ConversationSummary) api.ConversationSummary {
 
 // conversationCursor names the conversation a page of them ends with, for
 // the next page: its latest activity, in microseconds as stored, and its ID.
-// Run IDs hold no dot.
 func conversationCursor(cv store.ConversationSummary) string {
 	return strconv.FormatInt(cv.UpdatedAt.UnixMicro(), 10) + "." + cv.ID
 }
@@ -109,10 +108,10 @@ func parseConversationCursor(cursor string) (time.Time, string, error) {
 // not ok.
 func (s handlers) pageLimit(c *gin.Context, limit int) (int, bool) {
 	if _, set := c.GetQuery("limit"); !set {
-		return api.DefaultRunsLimit, true
+		return api.DefaultPageLimit, true
 	}
-	if limit < 1 || limit > api.MaxRunsLimit {
-		s.fail(c, http.StatusBadRequest, fmt.Errorf("limit %d: must be from 1 to %d", limit, api.MaxRunsLimit))
+	if limit < 1 || limit > api.MaxPageLimit {
+		s.fail(c, http.StatusBadRequest, fmt.Errorf("limit %d: must be from 1 to %d", limit, api.MaxPageLimit))
 		return 0, false
 	}
 	return limit, true

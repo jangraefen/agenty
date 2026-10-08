@@ -344,6 +344,9 @@ type Usage struct {
 	OutputTokens int64 `json:"output_tokens"`
 }
 
+// Limit defines model for Limit.
+type Limit = int
+
 // RunID defines model for RunID.
 type RunID = string
 
@@ -353,7 +356,7 @@ type Workspace = string
 // ListConversationsParams defines parameters for ListConversations.
 type ListConversationsParams struct {
 	// Limit The page size.
-	Limit int `form:"limit,omitempty" json:"limit,omitempty"`
+	Limit Limit `form:"limit,omitempty" json:"limit,omitempty"`
 
 	// Before Continue after the conversation this cursor names, as ConversationList.next gives it.
 	Before string `form:"before,omitempty" json:"before,omitempty"`
@@ -368,7 +371,7 @@ type ListRunsParams struct {
 	Status RunStatus `form:"status,omitempty" json:"status,omitempty"`
 
 	// Limit The page size.
-	Limit int `form:"limit,omitempty" json:"limit,omitempty"`
+	Limit Limit `form:"limit,omitempty" json:"limit,omitempty"`
 
 	// Before Continue after the run with this ID, as RunList.next gives it. A
 	// run that is not one of the workspace's gives an empty page.

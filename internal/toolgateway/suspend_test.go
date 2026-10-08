@@ -74,6 +74,7 @@ func TestCall_SuspendsWhenTheApproverDoes(t *testing.T) {
 	assert.Equal(t, "tickets_close", suspended.Request.Tool)
 	assert.JSONEq(t, `{"id":7}`, string(suspended.Request.Args))
 	assert.Equal(t, []string{"closing needs a human"}, suspended.Reasons)
+	assert.EqualError(t, suspended, "tool tickets_close: waiting for approval")
 }
 
 // TestInvariant_ACallHoldingASecretNeverWaits guards a trust-model

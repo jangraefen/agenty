@@ -787,6 +787,20 @@ func (s *Server) approvalTimeout() time.Duration {
 	return cmp.Or(s.cfg.Operator.Approvals.Timeout, config.DefaultApprovalTimeout)
 }
 
+// expiryRetry is how long the expiry loop waits before it tries again to
+// expire a request that is due: the database's clock decides, which may not
+// have reached it yet.
+const expiryRetry = 10 * time.Millisecond
+
+// expiryWait is how long the expiry loop waits at now for the next request
+// to expire at next, if one is pending, or whether it waits until woken.
+func expiryWait(now, next time.Time, pending bool) (wait time.Duration, forever bool) {
+	if !pending {
+		return 0, true
+	}
+	return max(next.Sub(now), expiryRetry), false
+}
+
 // expire rejects approval requests nobody answered in time, which queues
 // their runs, as each request expires, until the server stops.
 func (s *Server) expire() {
@@ -799,20 +813,18 @@ func (s *Server) expire() {
 		for range min(n, cap(s.wake)) {
 			s.signal()
 		}
-		wait := claimRetry
+		wait, forever := claimRetry, false
 		if err == nil {
-			next, ok, err := s.cfg.Store.NextApprovalExpiry(s.ctx)
+			next, pending, err := s.cfg.Store.NextApprovalExpiry(s.ctx)
 			switch {
 			case err != nil && s.ctx.Err() == nil:
 				s.cfg.Logger.Error("cannot read when approval requests expire", "error", err)
-			case ok:
-				wait = time.Until(next)
-			default:
-				wait = -1
+			case err == nil:
+				wait, forever = expiryWait(time.Now(), next, pending)
 			}
 		}
 		var timer <-chan time.Time
-		if wait >= 0 {
+		if !forever {
 			timer = time.After(wait)
 		}
 		select {

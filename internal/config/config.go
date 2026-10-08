@@ -110,6 +110,10 @@ type User struct {
 	// Token is the user's bearer token. It must come from the environment:
 	// a token is a credential.
 	Token Value `yaml:"token"`
+	// Auditor lets the user read the audit log of every workspace. It gives
+	// nothing in a workspace: what the user may do there comes from being a
+	// member.
+	Auditor bool `yaml:"auditor"`
 }
 
 // Workspace is a group of harnesses and runs.

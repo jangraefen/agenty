@@ -44,7 +44,7 @@ func TestSuspendRun_StoresTheRequestAndWaits(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, store.RunWaiting, run.Status)
 	assert.False(t, run.Finished())
-	pending, err := s.PendingApprovals(ctx, ws)
+	pending, err := s.PendingApprovals(ctx, ws, "alice")
 	require.NoError(t, err)
 	require.Len(t, pending, 1)
 	got := pending[0]
@@ -64,9 +64,12 @@ func TestSuspendRun_StoresTheRequestAndWaits(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	assert.Equal(t, got, latest)
-	other, err := s.PendingApprovals(ctx, "work")
+	other, err := s.PendingApprovals(ctx, "work", "alice")
 	require.NoError(t, err)
 	assert.Empty(t, other, "a workspace sees its own requests only")
+	theirs, err := s.PendingApprovals(ctx, ws, "bob")
+	require.NoError(t, err)
+	assert.Empty(t, theirs, "a user sees the requests of their own runs only")
 
 	err = s.SuspendRun(ctx, store.NewApproval{ID: "a2", RunID: "r1", CallID: "call-2", Tool: "files_write", CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour)})
 	require.ErrorIs(t, err, store.ErrNotFound, "only a running run is suspended")
@@ -93,7 +96,7 @@ func TestAnswerApproval_QueuesTheRunOnce(t *testing.T) {
 	assert.Equal(t, "alice", latest.Approver)
 	assert.Equal(t, "fine", latest.Reason)
 	assert.NotNil(t, latest.AnsweredAt)
-	pending, err := s.PendingApprovals(ctx, ws)
+	pending, err := s.PendingApprovals(ctx, ws, "alice")
 	require.NoError(t, err)
 	assert.Empty(t, pending)
 	for _, tt := range []struct{ name, workspace, run, id string }{

@@ -111,7 +111,7 @@ func TestConversations(t *testing.T) {
 	require.Equal(t, []string{"a1", "c1"}, ids(home), "one item per conversation alice started, latest activity first")
 	a3, err := s.Run(ctx, ws, "a3")
 	require.NoError(t, err)
-	assert.Equal(t, store.ConversationSummary{ID: "a1", Workspace: ws, Harness: "notes", Title: "tidy", UpdatedAt: a3.CreatedAt}, home[0],
+	assert.Equal(t, store.ConversationSummary{ID: "a1", Workspace: ws, Harness: "notes", Title: "tidy", Status: store.RunQueued, UpdatedAt: a3.CreatedAt}, home[0],
 		"the first run's input is the title, the latest run's creation the latest activity")
 	assert.Equal(t, strings.Repeat("é", 100), home[1].Title, "a title is cut to 100 characters")
 
@@ -134,13 +134,15 @@ func TestConversations(t *testing.T) {
 	_, err = s.Conversations(ctx, store.ConversationFilter{User: "alice", Workspaces: []string{ws}})
 	require.Error(t, err, "a limit is required")
 
-	found, err := s.FindConversation(ctx, []string{ws}, "a1")
+	found, err := s.FindConversation(ctx, "alice", []string{ws}, "a1")
 	require.NoError(t, err)
-	assert.Equal(t, store.ConversationSummary{ID: "a1", Workspace: ws, Harness: "notes", Title: "tidy"}, found)
-	_, err = s.FindConversation(ctx, []string{ws}, "a2")
+	assert.Equal(t, store.ConversationSummary{ID: "a1", Workspace: ws, Harness: "notes", Title: "tidy", Status: store.RunQueued}, found)
+	_, err = s.FindConversation(ctx, "alice", []string{ws}, "a2")
 	require.ErrorIs(t, err, store.ErrNotFound, "a later run does not name a conversation")
-	_, err = s.FindConversation(ctx, []string{ws}, "w1")
+	_, err = s.FindConversation(ctx, "alice", []string{ws}, "w1")
 	require.ErrorIs(t, err, store.ErrNotFound, "a conversation outside the given workspaces is not found")
+	_, err = s.FindConversation(ctx, "bob", []string{ws}, "a1")
+	require.ErrorIs(t, err, store.ErrNotFound, "another user's conversation is not found")
 }
 
 func TestConversations_PagesStayStableAcrossFollowUps(t *testing.T) {

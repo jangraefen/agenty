@@ -41,6 +41,7 @@ func TestLoad_Valid(t *testing.T) {
 	assert.Equal(t, map[string]config.User{
 		"alice": {Token: config.Value{Env: "ALICE_TOKEN"}},
 		"bob":   {Token: config.Value{Env: "BOB_TOKEN"}},
+		"carol": {Token: config.Value{Env: "CAROL_TOKEN"}, Auditor: true},
 	}, got.Users)
 	assert.Equal(t, map[string]config.Workspace{
 		"notes": {Members: []string{"alice", "bob"}},
@@ -172,7 +173,7 @@ func TestResolve_ReadsTheEnvironmentAndRedactsItsSecrets(t *testing.T) {
 	assert.Equal(t, "sk-ant-key-0123456789", got.AnthropicAPIKey)
 	assert.Equal(t, "postgres://agenty:db-password-0123@localhost/agenty", got.DatabaseURL)
 	assert.Equal(t, map[string]map[string]string{"tickets": {"TICKETS_TOKEN": "tickets-token-0123", "LOG_LEVEL": "info"}}, got.MCPServerEnv)
-	assert.Equal(t, map[string]string{"alice": env["ALICE_TOKEN"], "bob": env["BOB_TOKEN"]}, got.UserTokens)
+	assert.Equal(t, map[string]string{"alice": env["ALICE_TOKEN"], "bob": env["BOB_TOKEN"], "carol": env["CAROL_TOKEN"]}, got.UserTokens)
 	assert.Equal(t, "[redacted]", got.Redactor.String(env["ALICE_TOKEN"]), "user tokens are secrets")
 	assert.Equal(t, "[redacted] [redacted] [redacted] info", got.Redactor.String("sk-ant-key-0123456789 tickets-token-0123 postgres://agenty:db-password-0123@localhost/agenty info"),
 		"everything read from the environment is a secret; plain values are not")
@@ -186,6 +187,7 @@ func fullEnv() map[string]string {
 		"DATABASE_URL":      "postgres://agenty:db-password-0123@localhost/agenty",
 		"ALICE_TOKEN":       "alice-token-0123456789abcdefghijklmn",
 		"BOB_TOKEN":         "bob-token-0123456789abcdefghijklmnop",
+		"CAROL_TOKEN":       "carol-token-0123456789abcdefghijklm",
 	}
 }
 

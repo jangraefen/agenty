@@ -301,7 +301,7 @@ func TestRuns_Cancelled(t *testing.T) {
 	assert.Equal(t, "cancelled by alice", r.Error)
 }
 
-func TestRuns_List(t *testing.T) {
+func TestAuditRuns(t *testing.T) {
 	ctx := context.Background()
 	s := storetest.New(t)
 	v := newRun(t, s, "r1")
@@ -309,23 +309,24 @@ func TestRuns_List(t *testing.T) {
 	other.Name = "agenda"
 	ov, err := s.PutHarness(ctx, ws, other)
 	require.NoError(t, err)
+	theirs, err := s.PutHarness(ctx, "work", notes())
+	require.NoError(t, err)
 	for _, r := range []store.NewRun{
 		{ID: "r2", HarnessVersionID: ov.ID, Input: "x", StartedBy: "bob"},
+		{ID: "w1", HarnessVersionID: theirs.ID, Input: "x", StartedBy: "bob"},
 		{ID: "r3", HarnessVersionID: v.ID, Input: "x", StartedBy: "alice"},
 		{ID: "r4", HarnessVersionID: ov.ID, Input: "x", StartedBy: "alice"},
 	} {
 		createRun(t, s, r)
 	}
 	claim(t, s, "r2")
+	claim(t, s, "w1")
 	claim(t, s, "r3")
 	require.NoError(t, s.FinishRun(ctx, "r3", store.RunSucceeded, "ok", 1, ""))
-	theirs, err := s.PutHarness(ctx, "work", notes())
-	require.NoError(t, err)
-	createRun(t, s, store.NewRun{ID: "w1", HarnessVersionID: theirs.ID, Input: "x", StartedBy: "bob"})
 
 	ids := func(f store.RunFilter) []string {
 		t.Helper()
-		runs, err := s.Runs(ctx, ws, f)
+		runs, err := s.AuditRuns(ctx, f)
 		require.NoError(t, err)
 		out := make([]string, len(runs))
 		for i, r := range runs {
@@ -339,14 +340,16 @@ func TestRuns_List(t *testing.T) {
 		filter store.RunFilter
 		want   []string
 	}{
-		{"all, newest first", store.RunFilter{Limit: 10}, []string{"r4", "r3", "r2", "r1"}},
+		{"every workspace's, newest first", store.RunFilter{Limit: 10}, []string{"r4", "r3", "w1", "r2", "r1"}},
 		{"a page", store.RunFilter{Limit: 2}, []string{"r4", "r3"}},
-		{"the next page", store.RunFilter{Limit: 2, Before: "r3"}, []string{"r2", "r1"}},
+		{"the next page", store.RunFilter{Limit: 2, Before: "r3"}, []string{"w1", "r2"}},
 		{"after the last", store.RunFilter{Limit: 2, Before: "r1"}, []string{}},
+		{"of one workspace", store.RunFilter{Limit: 10, Workspace: "work"}, []string{"w1"}},
 		{"of one harness", store.RunFilter{Limit: 10, Harness: "agenda"}, []string{"r4", "r2"}},
+		{"of one harness, in every workspace", store.RunFilter{Limit: 10, Harness: "notes"}, []string{"r3", "w1", "r1"}},
+		{"started by one user", store.RunFilter{Limit: 10, StartedBy: "bob"}, []string{"w1", "r2"}},
 		{"with one status", store.RunFilter{Limit: 10, Status: store.RunSucceeded}, []string{"r3"}},
-		{"both", store.RunFilter{Limit: 10, Harness: "notes", Status: store.RunRunning}, []string{"r1"}},
-		{"before a run of another workspace", store.RunFilter{Limit: 10, Before: "w1"}, []string{}},
+		{"all of them", store.RunFilter{Limit: 10, Workspace: ws, Harness: "notes", StartedBy: "alice", Status: store.RunRunning}, []string{"r1"}},
 		{"before a run that does not exist", store.RunFilter{Limit: 10, Before: "ghost"}, []string{}},
 	}
 	for _, tt := range tests {
@@ -354,11 +357,46 @@ func TestRuns_List(t *testing.T) {
 			assert.Equal(t, tt.want, ids(tt.filter))
 		})
 	}
-	runs, err := s.Runs(ctx, ws, store.RunFilter{Limit: 1})
+	runs, err := s.AuditRuns(ctx, store.RunFilter{Limit: 1})
 	require.NoError(t, err)
 	assert.Equal(t, "agenda", runs[0].Harness, "a listed run names its harness")
-	_, err = s.Runs(ctx, ws, store.RunFilter{})
+	assert.Equal(t, ws, runs[0].Workspace, "and its workspace")
+	_, err = s.AuditRuns(ctx, store.RunFilter{})
 	require.ErrorContains(t, err, "limit")
+
+	found, err := s.AuditRun(ctx, "w1")
+	require.NoError(t, err)
+	assert.Equal(t, "work", found.Workspace, "a run is found in any workspace")
+	assert.Equal(t, "bob", found.StartedBy)
+	_, err = s.AuditRun(ctx, "ghost")
+	require.ErrorIs(t, err, store.ErrNotFound)
+}
+
+func TestOwnRun(t *testing.T) {
+	ctx := context.Background()
+	s := storetest.New(t)
+	v := newRun(t, s, "a1")
+	require.NoError(t, s.FinishRun(ctx, "a1", store.RunSucceeded, "ok", 1, ""))
+	// A follow-up another member started before runs were private is part
+	// of the conversation of the user who started it.
+	createRun(t, s, store.NewRun{ID: "a2", HarnessVersionID: v.ID, Input: "more", StartedBy: "bob", Follows: "a1"})
+
+	for _, id := range []string{"a1", "a2"} {
+		run, err := s.OwnRun(ctx, ws, "alice", id)
+		require.NoError(t, err, id)
+		assert.Equal(t, id, run.ID)
+	}
+	for _, tt := range []struct{ name, workspace, user, id string }{
+		{"another member's", ws, "bob", "a1"},
+		{"another member's, though they started this run", ws, "bob", "a2"},
+		{"in another workspace", "work", "alice", "a1"},
+		{"that does not exist", ws, "alice", "ghost"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := s.OwnRun(ctx, tt.workspace, tt.user, tt.id)
+			require.ErrorIs(t, err, store.ErrNotFound)
+		})
+	}
 }
 
 func TestFailRunningRuns(t *testing.T) {
@@ -660,7 +698,7 @@ func TestRecord_FailsClosed(t *testing.T) {
 	_, err = s.CancelIdleRun(ctx, "r1", "x")
 	require.Error(t, err)
 	require.Error(t, s.SuspendRun(ctx, store.NewApproval{ID: "a1", RunID: "r1"}))
-	_, err = s.PendingApprovals(ctx, ws)
+	_, err = s.PendingApprovals(ctx, ws, "alice")
 	require.Error(t, err)
 	_, _, err = s.LatestApproval(ctx, "r1")
 	require.Error(t, err)

@@ -108,10 +108,10 @@ func nonNil[T any](s []T) []T {
 	return s
 }
 
-// PendingApprovals returns the requests the runs of workspace wait for,
-// oldest first.
-func (s *Store) PendingApprovals(ctx context.Context, workspace string) ([]Approval, error) {
-	rows, err := s.queries.PendingApprovals(ctx, workspace)
+// PendingApprovals returns the requests the runs of workspace wait for whose
+// conversations user started, oldest first.
+func (s *Store) PendingApprovals(ctx context.Context, workspace, user string) ([]Approval, error) {
+	rows, err := s.queries.PendingApprovals(ctx, db.PendingApprovalsParams{Workspace: workspace, Owner: user})
 	if err != nil {
 		return nil, fmt.Errorf("store: approvals: %w", err)
 	}

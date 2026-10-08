@@ -24,23 +24,41 @@ FROM runs
 JOIN harness_versions ON harness_versions.id = runs.harness_version_id
 WHERE runs.id = sqlc.arg(id) AND harness_versions.workspace = sqlc.arg(workspace);
 
--- name: ListRuns :many
--- The runs of a workspace, newest first, optionally of one harness or with
--- one status, starting after the run named by before. A before that is not
--- a run of the workspace matches nothing.
+-- name: GetOwnRun :one
+-- A run of the workspace, found only for the user who started its
+-- conversation.
 SELECT sqlc.embed(runs), harness_versions.name AS harness, harness_versions.version AS harness_version
 FROM runs
 JOIN harness_versions ON harness_versions.id = runs.harness_version_id
-WHERE harness_versions.workspace = sqlc.arg(workspace)
+JOIN runs first ON first.id = runs.conversation_id
+WHERE runs.id = sqlc.arg(id) AND harness_versions.workspace = sqlc.arg(workspace)
+  AND first.started_by = sqlc.arg(owner);
+
+-- name: ListAuditRuns :many
+-- The runs of every workspace, newest first, each with its workspace,
+-- optionally of one workspace, harness, starter or status, starting after
+-- the run named by before. A before that is not a run matches nothing. For
+-- auditors only.
+SELECT sqlc.embed(runs), harness_versions.name AS harness, harness_versions.version AS harness_version,
+       harness_versions.workspace
+FROM runs
+JOIN harness_versions ON harness_versions.id = runs.harness_version_id
+WHERE (sqlc.narg(workspace)::text IS NULL OR harness_versions.workspace = sqlc.narg(workspace))
   AND (sqlc.narg(harness)::text IS NULL OR harness_versions.name = sqlc.narg(harness))
+  AND (sqlc.narg(started_by)::text IS NULL OR runs.started_by = sqlc.narg(started_by))
   AND (sqlc.narg(status)::text IS NULL OR runs.status = sqlc.narg(status))
   AND (sqlc.narg(before)::text IS NULL
-       OR (runs.created_at, runs.id) < (
-           SELECT b.created_at, b.id FROM runs b
-           JOIN harness_versions bv ON bv.id = b.harness_version_id
-           WHERE b.id = sqlc.narg(before) AND bv.workspace = sqlc.arg(workspace)))
+       OR (runs.created_at, runs.id) < (SELECT b.created_at, b.id FROM runs b WHERE b.id = sqlc.narg(before)))
 ORDER BY runs.created_at DESC, runs.id DESC
 LIMIT sqlc.arg(max_rows);
+
+-- name: GetAuditRun :one
+-- A run of any workspace, with its workspace. For auditors only.
+SELECT sqlc.embed(runs), harness_versions.name AS harness, harness_versions.version AS harness_version,
+       harness_versions.workspace
+FROM runs
+JOIN harness_versions ON harness_versions.id = runs.harness_version_id
+WHERE runs.id = sqlc.arg(id);
 
 -- name: FailRunningRuns :execrows
 UPDATE runs
@@ -100,7 +118,7 @@ WHERE id = $1 AND status = 'running';
 -- set. A conversation is its first run, whose ID names it, and its latest
 -- run, the one no run follows, whose creation is its latest activity.
 SELECT first.id, harness_versions.workspace, harness_versions.name AS harness,
-       left(first.input, 100)::text AS title, latest.created_at AS updated_at
+       left(first.input, 100)::text AS title, latest.status, latest.created_at AS updated_at
 FROM runs first
 JOIN harness_versions ON harness_versions.id = first.harness_version_id
 JOIN runs latest ON latest.conversation_id = first.id
@@ -114,10 +132,14 @@ ORDER BY latest.created_at DESC, first.id DESC
 LIMIT sqlc.arg(max_rows);
 
 -- name: FindConversation :one
--- The conversation named by id, if it is in one of the given workspaces.
+-- The conversation named by id, if started_by started it in one of the given
+-- workspaces.
 SELECT first.id, harness_versions.workspace, harness_versions.name AS harness,
-       left(first.input, 100)::text AS title
+       left(first.input, 100)::text AS title, latest.status
 FROM runs first
 JOIN harness_versions ON harness_versions.id = first.harness_version_id
+JOIN runs latest ON latest.conversation_id = first.id
+ AND NOT EXISTS (SELECT 1 FROM runs n WHERE n.follows = latest.id)
 WHERE first.id = sqlc.arg(id) AND first.id = first.conversation_id
+  AND first.started_by = sqlc.arg(started_by)
   AND harness_versions.workspace = ANY(sqlc.arg(workspaces)::text[]);

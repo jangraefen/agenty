@@ -149,13 +149,13 @@ func (s *Store) RecordAt(ctx context.Context, rec toolgateway.Record) (time.Time
 			err = fmt.Errorf("run %s: %w", rec.RunID, ErrNotFound)
 		}
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("store: audit: %w", err)
 		}
 		e, err := toolEvent(rec, owner.StartedBy, owner.Workspace)
 		return []auditlog.Event{e}, err
 	})
 	if err != nil {
-		return time.Time{}, fmt.Errorf("audit: %s %s of run %s: %w", rec.Event, rec.Tool, rec.RunID, err)
+		return time.Time{}, err
 	}
 	return appended[0].RecordedAt, nil
 }
@@ -301,23 +301,6 @@ func events(rows []db.AuditEvent) []auditlog.Event {
 		copy(out[i].Hash[:], row.Hash)
 	}
 	return out
-}
-
-// inTx runs f in a transaction, which it commits unless f fails. The
-// transaction reads committed data, whatever the database's default, so an
-// append to the audit log in it sees the event appended just before it.
-func (s *Store) inTx(ctx context.Context, f func(*db.Queries) error) error {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
-	if err != nil {
-		return fmt.Errorf("store: %w", err)
-	}
-	if err := f(s.queries.WithTx(tx)); err != nil {
-		return errors.Join(err, tx.Rollback(ctx))
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("store: %w", err)
-	}
-	return nil
 }
 
 // withEvents runs change in a transaction and appends the audit events it

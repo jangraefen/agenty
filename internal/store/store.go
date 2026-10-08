@@ -73,6 +73,23 @@ func migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	return errors.Join(err, sqlDB.Close())
 }
 
+// inTx runs f in a transaction, which it commits unless f fails. The
+// transaction reads committed data, whatever the database's default, so an
+// append to the audit log in it sees the event appended just before it.
+func (s *Store) inTx(ctx context.Context, f func(*db.Queries) error) error {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return fmt.Errorf("store: %w", err)
+	}
+	if err := f(s.queries.WithTx(tx)); err != nil {
+		return errors.Join(err, tx.Rollback(ctx))
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("store: %w", err)
+	}
+	return nil
+}
+
 // Close closes the database connections.
 func (s *Store) Close() {
 	s.pool.Close()

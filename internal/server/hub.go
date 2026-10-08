@@ -26,9 +26,7 @@ type event struct {
 // hub holds the events of one run that has not finished, for any number of
 // subscribers.
 type hub struct {
-	workspace, harness string
-	// runID is set once the run has an ID, before it executes.
-	runID string
+	runID, workspace, harness string
 	// ctx is the run's context, and cancel cancels it, with the cause
 	// recorded as the run's end.
 	ctx    context.Context
@@ -41,8 +39,8 @@ type hub struct {
 	changed chan struct{}
 }
 
-func newHub(workspace, harness string) *hub {
-	return &hub{workspace: workspace, harness: harness, changed: make(chan struct{})}
+func newHub(runID, workspace, harness string) *hub {
+	return &hub{runID: runID, workspace: workspace, harness: harness, changed: make(chan struct{})}
 }
 
 // publish appends e. An EventFinished event is the last: the hub publishes

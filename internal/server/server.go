@@ -1,6 +1,7 @@
 // Package server is Agenty's HTTP API: it stores harnesses, runs them, and
 // streams each run's events, approval requests included, to its clients.
-// Runs execute in the server's own process; see package api for the routes.
+// Runs execute in the server's own process. schema/openapi.yaml defines the
+// routes, which oapi-codegen generates the gin interface of into this package.
 //
 // Every request signs in with a configured user's bearer token, and sees
 // only the workspaces that user is a member of.
@@ -78,7 +79,8 @@ type Server struct {
 	mu sync.Mutex
 	// closed is set by Close; no run is queued after it.
 	closed bool
-	// runs holds the hubs of the queued and running runs of this server.
+	// runs holds the hubs of the runs of this server that have not finished:
+	// queued, running and waiting.
 	runs map[string]*hub
 }
 
@@ -378,8 +380,7 @@ func (s *Server) enqueue(r newRun) (store.Run, int, error) {
 // register gives the run id a hub, unless the server is stopping. Registering
 // under the lock Close takes means no run is queued once Close has begun.
 func (s *Server) register(id, workspace, harness string) (*hub, error) {
-	h := newHub(workspace, harness)
-	h.runID = id
+	h := newHub(id, workspace, harness)
 	h.ctx, h.cancel = context.WithCancelCause(s.ctx)
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -591,15 +592,11 @@ func (s *Server) answered(ctx context.Context, approval store.Approval) ([]toolg
 // transcript does not hold the call as the approver saw it, as redaction
 // changed it, the answer is a rejection.
 func (s *Server) resumption(ctx context.Context, p *prepared, approval store.Approval) error {
-	transcript, err := s.cfg.Store.Transcript(ctx, approval.RunID)
+	own, altered, err := s.ownMessages(ctx, approval.RunID)
 	if err != nil {
 		return err
 	}
-	altered := false
-	for _, m := range transcript {
-		p.own = append(p.own, m.Message)
-		altered = altered || m.Altered
-	}
+	p.own = own
 	answer := toolgateway.Approval{Approved: approval.Status == store.ApprovalApproved, Approver: approval.Approver, Reason: approval.Reason}
 	if !asked(p.own, approval) {
 		answer = toolgateway.Approval{Approver: approval.Approver, Reason: "the call cannot run as it was asked for: the model's call is not stored as it was"}
@@ -867,17 +864,13 @@ func (s *Server) closeOut(ctx context.Context, h *hub, id string, by cancelledBy
 	if err != nil || !ok {
 		return err
 	}
-	transcript, err := s.cfg.Store.Transcript(ctx, id)
+	own, _, err := s.ownMessages(ctx, id)
 	if err != nil {
 		return err
 	}
 	records, err := s.cfg.Store.AuditRecords(ctx, id)
 	if err != nil {
 		return err
-	}
-	own := make([]model.Message, len(transcript))
-	for i, m := range transcript {
-		own[i] = m.Message
 	}
 	if used(records, a.CallID) || !asked(own, a) {
 		return nil
@@ -898,7 +891,22 @@ func (s *Server) closeOut(ctx context.Context, h *hub, id string, by cancelledBy
 		}
 		results = append(results, model.ToolResult{CallID: c.ID, Content: content, IsError: true})
 	}
-	return s.cfg.Store.AppendMessage(ctx, id, store.NewMessage{Position: len(transcript), Message: model.Message{Role: model.RoleUser, ToolResults: results}})
+	return s.cfg.Store.AppendMessage(ctx, id, store.NewMessage{Position: len(own), Message: model.Message{Role: model.RoleUser, ToolResults: results}})
+}
+
+// ownMessages returns the run's messages as stored, and whether redaction
+// altered any of them from what the model saw.
+func (s *Server) ownMessages(ctx context.Context, id string) (own []model.Message, altered bool, err error) {
+	transcript, err := s.cfg.Store.Transcript(ctx, id)
+	if err != nil {
+		return nil, false, err
+	}
+	own = make([]model.Message, len(transcript))
+	for i, m := range transcript {
+		own[i] = m.Message
+		altered = altered || m.Altered
+	}
+	return own, altered, nil
 }
 
 // used reports whether the call callID was answered in the gateway already,
@@ -973,8 +981,8 @@ func (s *Server) publishEnd(ctx context.Context, h *hub, fallback store.Run) {
 	h.publish(event{api.EventFinished, apiRun(finished)})
 }
 
-// hub returns the hub of the running run id in workspace, or nil if there is
-// none.
+// hub returns the hub of the unfinished run id in workspace, or nil if there
+// is none.
 func (s *Server) hub(workspace, id string) *hub {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -1,5 +1,6 @@
 import type { InfiniteData, UseInfiniteQueryResult } from "@tanstack/react-query";
-import type { ReactNode } from "react";
+import { type ReactNode, useId, useState } from "react";
+import { LuChevronRight } from "react-icons/lu";
 import type { Schemas } from "@/api/client";
 import { Json } from "@/components/json";
 import { Button } from "@/components/ui/button";
@@ -75,6 +76,9 @@ export function EventsTable({
             <caption className="sr-only">Events</caption>
             <thead className="border-b text-muted-foreground">
               <tr>
+                <th className="w-0 py-2 pr-2">
+                  <span className="sr-only">Show details</span>
+                </th>
                 <th className="py-2 pr-4 font-medium">When</th>
                 {showActor && <th className="py-2 pr-4 font-medium">Who</th>}
                 <th className="py-2 pr-4 font-medium">What</th>
@@ -85,33 +89,13 @@ export function EventsTable({
             </thead>
             <tbody>
               {listed.map((event) => (
-                <tr key={event.id} className="border-b align-top last:border-0">
-                  <td className="py-2 pr-4 whitespace-nowrap">
-                    <time dateTime={event.recorded_at}>{formatTime(event.recorded_at)}</time>
-                  </td>
-                  {showActor && (
-                    <td className="py-2 pr-4">
-                      {event.actor === "" ? (
-                        <span className="text-muted-foreground">the server</span>
-                      ) : (
-                        event.actor
-                      )}
-                    </td>
-                  )}
-                  <td className="py-2 pr-4 whitespace-nowrap">
-                    {labels[event.action] ?? event.action}
-                  </td>
-                  {showWorkspace && <td className="py-2 pr-4">{event.workspace}</td>}
-                  <td className="py-2 pr-4">{subject(event)}</td>
-                  <td className="py-2">
-                    <details>
-                      <summary className="cursor-pointer wrap-anywhere">
-                        {summary(event) || "Details"}
-                      </summary>
-                      <Json value={event.details} />
-                    </details>
-                  </td>
-                </tr>
+                <EventRow
+                  key={event.id}
+                  event={event}
+                  showActor={showActor}
+                  showWorkspace={showWorkspace}
+                  subject={subject}
+                />
               ))}
             </tbody>
           </table>
@@ -130,6 +114,69 @@ export function EventsTable({
         >
           Load more
         </Button>
+      )}
+    </>
+  );
+}
+
+// EventRow is an event in a row of its own; a toggle at its start shows
+// the whole of its details in a row below, as wide as the table.
+function EventRow({
+  event,
+  showActor,
+  showWorkspace,
+  subject,
+}: {
+  event: Event;
+  showActor: boolean;
+  showWorkspace: boolean;
+  subject: (event: Event) => ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  const columns = 4 + Number(showActor) + Number(showWorkspace);
+  return (
+    <>
+      <tr className={open ? "align-top" : "border-b align-top last:border-0"}>
+        <td className="py-1 pr-2">
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-controls={id}
+            onClick={() => setOpen(!open)}
+            className="rounded-sm p-1 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          >
+            <LuChevronRight
+              aria-hidden="true"
+              className={`size-4 transition-transform ${open ? "rotate-90" : ""}`}
+            />
+            <span className="sr-only">Details</span>
+          </button>
+        </td>
+        <td className="py-2 pr-4 whitespace-nowrap">
+          <time dateTime={event.recorded_at}>{formatTime(event.recorded_at)}</time>
+        </td>
+        {showActor && (
+          <td className="py-2 pr-4">
+            {event.actor === "" ? (
+              <span className="text-muted-foreground">the server</span>
+            ) : (
+              event.actor
+            )}
+          </td>
+        )}
+        <td className="py-2 pr-4 whitespace-nowrap">{labels[event.action] ?? event.action}</td>
+        {showWorkspace && <td className="py-2 pr-4">{event.workspace}</td>}
+        <td className="py-2 pr-4">{subject(event)}</td>
+        <td className="py-2 wrap-anywhere">{summary(event)}</td>
+      </tr>
+      {open && (
+        <tr id={id} className="border-b last:border-0">
+          <td />
+          <td colSpan={columns} className="pb-3">
+            <Json value={event.details} />
+          </td>
+        </tr>
       )}
     </>
   );

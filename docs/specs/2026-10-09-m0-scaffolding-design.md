@@ -233,7 +233,9 @@ All commands run through `Taskfile.yml`, identically locally and in CI.
   `docker/postgres/init.sql` with `psql`; `task setup` (Playwright with
   `--with-deps`); `task ci`; upload the Playwright report on failure. Job
   `docker`: Postgres 18 service plus `init.sql`, `task docker:build`, then
-  run the image's `node migrate.mjs` against the service.
+  run the image's `node migrate.mjs` against the service
+  (`docker run --network host`; the script resolves the migrations folder
+  relative to its own location, not the working directory).
 
 ## CLAUDE.md
 

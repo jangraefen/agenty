@@ -1,7 +1,42 @@
+import Link from "next/link";
+import { Suspense } from "react";
+import { AppHeader } from "@/components/app-header";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { SignOutButton } from "@/components/user-menu";
+import { ForbiddenError, getSignedIn, UnauthorizedError } from "@/server/auth/tenant";
 
 export default function HomePage() {
+  return (
+    <Suspense>
+      <Home />
+    </Suspense>
+  );
+}
+
+async function Home() {
+  try {
+    const signedIn = await getSignedIn();
+    return (
+      <>
+        <AppHeader signedIn={signedIn} />
+        <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 p-8">
+          <Card>
+            <CardHeader>
+              <CardTitle>Agents arrive in the next milestone</CardTitle>
+            </CardHeader>
+          </Card>
+        </main>
+      </>
+    );
+  } catch (error) {
+    if (error instanceof UnauthorizedError) return <Landing />;
+    if (error instanceof ForbiddenError) return <NoOrganization />;
+    throw error;
+  }
+}
+
+function Landing() {
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center gap-6 p-8">
       <div className="flex flex-col gap-2">
@@ -10,15 +45,27 @@ export default function HomePage() {
           Self-hosted AI agents for your organization.
         </p>
       </div>
+      <div>
+        <Link className={buttonVariants()} href="/sign-in">
+          Sign in
+        </Link>
+      </div>
+    </main>
+  );
+}
+
+function NoOrganization() {
+  return (
+    <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center gap-6 p-8">
       <Card>
         <CardHeader>
-          <CardTitle>Under construction</CardTitle>
-          <CardDescription>Sign-in, agents and chat arrive in the next milestones.</CardDescription>
+          <CardTitle>No active organization</CardTitle>
+          <CardDescription>
+            Your account has no active organization. Contact your administrator.
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          <a className={buttonVariants({ variant: "outline" })} href="/api/health">
-            Check server health
-          </a>
+          <SignOutButton />
         </CardContent>
       </Card>
     </main>

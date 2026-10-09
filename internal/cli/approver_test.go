@@ -14,6 +14,7 @@ import (
 	"github.com/jangraefen/agenty/internal/api"
 )
 
+// approvalRequest is a request for a write, as the server would send it.
 var approvalRequest = api.ApprovalRequest{
 	ID:      "a1",
 	Harness: "notes",
@@ -148,6 +149,8 @@ func TestTerminalApprover_InvalidArgsAreShownAsText(t *testing.T) {
 	assert.Contains(t, out.String(), "{not json")
 }
 
+// failingWriter fails every write, to test that a prompt that cannot be
+// shown is an error rather than an approval or rejection.
 type failingWriter struct{}
 
 func (failingWriter) Write([]byte) (int, error) { return 0, assert.AnError }

@@ -1,4 +1,42 @@
-// Package anthropic is the Anthropic Messages API model provider.
+// Package anthropic is the Anthropic Messages API model provider: the
+// production implementation of model.Model, on the official Anthropic Go
+// SDK rather than an agent framework.
+//
+// # Role in the architecture
+//
+// The server (internal/server) builds a Model per run with New, from the
+// harness's model name and the operator config's API key, reply token
+// limit, endpoint and history cache TTL. Package agent then calls Generate
+// once per step. The package translates in both directions: params maps a
+// provider-neutral model.Request to SDK parameters, with toolParam and
+// messageParam for its tools and messages, and reply maps the API's answer
+// back to a model.Message. Package anthropictest has a fake API that tests
+// point BaseURL at.
+//
+// # Design decisions
+//
+//   - Replies are replayed as the API sent them. Each reply keeps its raw
+//     JSON as a model.ProviderPart, which the store saves with the
+//     transcript; when the conversation is sent again, messageParam
+//     restores it, so thinking blocks come back unchanged and in place, as
+//     the API requires.
+//   - Prompt caching: every request carries the automatic cache breakpoint
+//     at its end, so the instructions, tools and earlier turns are read
+//     from the cache on the next step. A history cache TTL of an hour adds
+//     a breakpoint at the end of the earlier runs, so a follow-up after a
+//     longer pause still reads them from the cache.
+//   - Fail closed: a reply cut off by a limit, a refusal, an unknown stop
+//     reason or an unknown content block is an error, never an answer, so
+//     the run ends instead of acting on part of a reply.
+//
+// # Trust-model guarantees
+//
+// Credentials never reach the model (guarantee 5): the API key travels only
+// in the x-api-key header, and the SDK's environment defaults are off, so
+// no environment variable can redirect requests, and the key with them, to
+// another endpoint, or add credentials or headers. What the model asks for
+// is only mapped into model.ToolCall values, which the agent hands to the
+// tool gateway (guarantee 1).
 package anthropic
 
 import (
@@ -17,6 +55,8 @@ import (
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
+// defaultBaseURL is Anthropic's API endpoint, set explicitly because the
+// SDK's environment defaults, which would supply it, are off.
 const defaultBaseURL = "https://api.anthropic.com"
 
 // providerName names this provider's parts of messages; see
@@ -49,9 +89,12 @@ type Config struct {
 	HistoryCacheTTL string
 }
 
+// A compile-time check that *Model implements model.Model.
 var _ model.Model = (*Model)(nil)
 
-// Model generates replies with the Anthropic Messages API.
+// Model generates replies with the Anthropic Messages API. It holds no
+// conversation state: every Generate sends the whole conversation, so one
+// Model could serve any number of runs; the server builds one per run.
 type Model struct {
 	client    sdk.Client
 	model     sdk.Model
@@ -61,7 +104,9 @@ type Model struct {
 	historyCache *sdk.CacheControlEphemeralParam
 }
 
-// New validates cfg and returns a Model.
+// New validates cfg and returns a Model. It fails on a missing key, model or
+// reply limit, and on a TTL the API does not offer, so a misconfigured
+// provider fails when the run starts instead of on its first model call.
 func New(cfg Config) (*Model, error) {
 	switch {
 	case cfg.APIKey == "":
@@ -79,6 +124,11 @@ func New(cfg Config) (*Model, error) {
 	default:
 		return nil, errors.New(`anthropic: history cache TTL must be "5m" or "1h"`)
 	}
+	// WithoutEnvironmentDefaults stops the SDK from reading its environment
+	// variables, such as ANTHROPIC_BASE_URL, which could send the key to
+	// another endpoint, or another key or token, which would add a
+	// credential the operator did not configure. Everything the client uses
+	// comes from cfg.
 	client := sdk.NewClient(
 		option.WithoutEnvironmentDefaults(),
 		option.WithBaseURL(cmp.Or(cfg.BaseURL, defaultBaseURL)),
@@ -89,6 +139,10 @@ func New(cfg Config) (*Model, error) {
 
 // Generate sends the conversation and returns the model's reply. A reply cut
 // off by a limit, a refusal, and anything the agent cannot use are errors.
+// It maps the request first, so a conversation the API would refuse fails
+// before anything is sent, then calls the API once and maps the reply. Every
+// error is prefixed with the provider's name; the SDK's errors are wrapped,
+// so callers can inspect API errors with errors.As.
 func (m *Model) Generate(ctx context.Context, req model.Request) (model.Message, error) {
 	params, err := m.params(req)
 	if err != nil {
@@ -117,6 +171,8 @@ func (m *Model) params(req model.Request) (sdk.MessageNewParams, error) {
 		MaxTokens:    m.maxTokens,
 		CacheControl: sdk.NewCacheControlEphemeralParam(),
 	}
+	// An empty system prompt is left out rather than sent as an empty text
+	// block; without tools, the request has no tools field at all.
 	if req.System != "" {
 		params.System = []sdk.TextBlockParam{{Text: req.System}}
 	}
@@ -143,7 +199,8 @@ func (m *Model) params(req model.Request) (sdk.MessageNewParams, error) {
 }
 
 // markCache makes the last block of msg that can be a cache breakpoint one.
-// Thinking blocks cannot.
+// Thinking blocks cannot. Searching backwards finds the block nearest the
+// end of the message, so the breakpoint covers as much of it as possible.
 func markCache(msg sdk.MessageParam, cache sdk.CacheControlEphemeralParam) {
 	for _, block := range slices.Backward(msg.Content) {
 		if cc := block.GetCacheControl(); cc != nil {
@@ -153,6 +210,11 @@ func markCache(msg sdk.MessageParam, cache sdk.CacheControlEphemeralParam) {
 	}
 }
 
+// toolParam maps a tool the gateway offers to the API's tool form. The API
+// takes only object schemas, and the SDK sets their type itself, so the
+// schema is checked to be one and passed on without its type key. A tool
+// without a schema takes any object; a schema that is not an object, or not
+// JSON, is an error.
 func toolParam(def toolgateway.Definition) (*sdk.ToolParam, error) {
 	raw := def.InputSchema
 	if len(raw) == 0 {
@@ -173,6 +235,11 @@ func toolParam(def toolgateway.Definition) (*sdk.ToolParam, error) {
 	return tool, nil
 }
 
+// messageParam maps message i of a conversation to the API's form. A reply
+// this provider generated is restored from its provider part; any other
+// message, an input, tool results, or a reply without a part of this
+// provider, is built from its text, calls and results. i only names the
+// message in errors.
 func messageParam(i int, msg model.Message) (sdk.MessageParam, error) {
 	var blocks []sdk.ContentBlockParamUnion
 	switch msg.Role {
@@ -194,6 +261,9 @@ func messageParam(i int, msg model.Message) (sdk.MessageParam, error) {
 			}
 			return reply.ToParam(), nil
 		}
+		// Rebuilt from text and calls: a reply of another provider, one
+		// without a part, or one whose part the server dropped, as it does
+		// when the reply's provider form is no longer valid to replay.
 		if msg.Text != "" {
 			blocks = append(blocks, sdk.NewTextBlock(msg.Text))
 		}
@@ -210,6 +280,8 @@ func messageParam(i int, msg model.Message) (sdk.MessageParam, error) {
 	default:
 		return sdk.MessageParam{}, fmt.Errorf("message %d has unknown role %q", i, msg.Role)
 	}
+	// The API refuses a message without content; failing here names the
+	// message instead.
 	if len(blocks) == 0 {
 		return sdk.MessageParam{}, fmt.Errorf("message %d is empty", i)
 	}
@@ -219,6 +291,11 @@ func messageParam(i int, msg model.Message) (sdk.MessageParam, error) {
 	return sdk.NewAssistantMessage(blocks...), nil
 }
 
+// reply maps an API response to the assistant message the agent sees: its
+// text blocks joined, its tool calls, its usage and its raw JSON as the
+// provider part. Only stop reasons that end a complete reply are accepted;
+// the others, and unknown ones, are errors, so a new stop reason or block
+// type fails closed until it is handled.
 func reply(resp *sdk.Message) (model.Message, error) {
 	switch resp.StopReason {
 	case sdk.StopReasonEndTurn, sdk.StopReasonToolUse, sdk.StopReasonStopSequence:

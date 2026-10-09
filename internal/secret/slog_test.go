@@ -59,6 +59,7 @@ func TestHandler_KeepsTheKindOfValuesWithoutASecret(t *testing.T) {
 // lazy is a LogValuer whose value holds the secret only once resolved.
 type lazy struct{}
 
+// LogValue resolves to the secret.
 func (lazy) LogValue() slog.Value { return slog.StringValue(apiKey) }
 
 func TestHandler_KeepsLevels(t *testing.T) {

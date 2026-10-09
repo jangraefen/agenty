@@ -1,3 +1,18 @@
+/**
+ * The sidebar beside every page of a signed-in user, which the authed layout
+ * (routes/_authed.tsx) puts in the Shell.
+ *
+ * From top to bottom: New chat (`/`), the user's recent chats (RecentChats,
+ * linking to `/c/{conversation}`), the management of one workspace (Manage,
+ * with a switcher, WorkspaceMenu, and links under `/w/{ws}`), the audit log
+ * for auditors (`/audit`), and at the foot the user's name, linking to their
+ * activity, Sign out and the theme menu.
+ *
+ * It reads the signed-in user from the authed layout's context, and the
+ * recent chats from recentChatsQuery, which polls while a chat's run is
+ * under way or waits for approval, and which the chat's event stream and
+ * approval answers invalidate, so the marks beside the chats keep up.
+ */
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useRouteContext } from "@tanstack/react-router";
 import {
@@ -23,11 +38,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
+/** The classes of a sidebar link; the router marks the current page's with aria-current. */
 const itemClass =
   "flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent aria-[current=page]:bg-accent aria-[current=page]:font-medium";
 
-// AppSidebar is beside every page of a signed-in user: a new chat, their
-// recent chats, the management of a workspace, and signing out.
+/**
+ * AppSidebar is beside every page of a signed-in user: a new chat, their
+ * recent chats, the management of a workspace, and signing out. The
+ * Compliance section shows only to auditors, whose `me.auditor` the server
+ * set; for anyone else the audit log's pages do not exist.
+ */
 export function AppSidebar() {
   const { me, session } = useRouteContext({ from: "/_authed" });
   const navigate = useNavigate();
@@ -36,6 +56,8 @@ export function AppSidebar() {
   const { workspace: param } = useParams({ strict: false });
   const workspace = param !== undefined && me.workspaces.includes(param) ? param : me.workspaces[0];
 
+  // Signing out forgets the token; App.tsx, told by the session, clears the
+  // query cache, so nothing of the user's stays in memory for the next.
   async function signOut() {
     session.signOut();
     await navigate({ to: "/sign-in" });
@@ -44,6 +66,7 @@ export function AppSidebar() {
   return (
     <>
       <span className="px-2 font-semibold">Agenty</span>
+      {/* Current on the new chat page whichever harness its search picks. */}
       <Link to="/" activeOptions={{ includeSearch: false }} className={itemClass}>
         <LuSquarePen aria-hidden="true" className="size-4 shrink-0" />
         New chat
@@ -80,6 +103,15 @@ export function AppSidebar() {
   );
 }
 
+/**
+ * RecentChats lists the conversations the user started, in every workspace
+ * of theirs, the latest active first, a page at a time with Show more.
+ *
+ * A chat in a workspace the user left is marked read-only, and a chat whose
+ * latest run waits for approval is marked so, the mark the user acts on.
+ * The icons are hidden from screen readers, which read the words beside
+ * them instead.
+ */
 function RecentChats() {
   const { api, me } = useRouteContext({ from: "/_authed" });
   const chats = useInfiniteQuery(recentChatsQuery(api));
@@ -137,6 +169,12 @@ function RecentChats() {
   );
 }
 
+/**
+ * Manage links the management pages of one workspace: its overview, its
+ * harnesses and its audit log, under the switcher that names it. The
+ * section shows even for a user of one workspace, so the sidebar always
+ * says which workspace its links manage.
+ */
 function Manage({ workspace, workspaces }: { workspace: string; workspaces: string[] }) {
   return (
     <nav aria-label="Manage" className="grid gap-1">
@@ -145,6 +183,7 @@ function Manage({ workspace, workspaces }: { workspace: string; workspaces: stri
       <Link
         to="/w/$workspace"
         params={{ workspace }}
+        // Only the overview itself, not every page under /w/{ws}.
         activeOptions={{ exact: true }}
         className={itemClass}
       >
@@ -163,9 +202,12 @@ function Manage({ workspace, workspaces }: { workspace: string; workspaces: stri
   );
 }
 
-// WorkspaceMenu names the workspace managed and switches to the overview of
-// another of the user's. Not modal, so the page stays usable while it is
-// open.
+/**
+ * WorkspaceMenu names the workspace managed and switches to the overview of
+ * another of the user's. Not modal, so the page stays usable while it is
+ * open. Its items are links, so switching is navigation, and the sidebar
+ * follows the new URL's workspace.
+ */
 function WorkspaceMenu({ workspace, workspaces }: { workspace: string; workspaces: string[] }) {
   return (
     <DropdownMenu modal={false}>

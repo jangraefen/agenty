@@ -1,4 +1,13 @@
 // Package gatewaytest provides fakes for testing code that uses the tool gateway.
+//
+// The gateway depends only on its own interfaces, so tests of the gateway,
+// the agent loop and the server swap in these fakes for real MCP servers, OPA
+// policy and the database audit log: Tool and Server stand in for tool
+// servers, Policy for internal/policy, Audit for the store, and NoSecrets for
+// a redactor. The real gateway still runs in between, so a test through these
+// fakes exercises the same grant, policy, audit and redaction path as
+// production. Each fake records what it was asked, so tests can assert that a
+// denied call never reached a tool and that every call left its records.
 package gatewaytest
 
 import (
@@ -60,7 +69,9 @@ var ErrAuditDown = errors.New("audit store down")
 
 var _ toolgateway.Audit = (*Audit)(nil)
 
-// Audit keeps every record and fails writes of the event in FailOn.
+// Audit keeps every record and fails writes of the event in FailOn, so tests
+// can check that a call whose decision or approval cannot be recorded never
+// runs. It is not safe for concurrent use; one run's calls are sequential.
 type Audit struct {
 	Records []toolgateway.Record
 	FailOn  toolgateway.Event
@@ -89,7 +100,9 @@ func WithoutIDs(records []toolgateway.Record) []toolgateway.Record {
 var _ toolgateway.Policy = (*Policy)(nil)
 
 // Policy is a fake policy. It returns the verdict configured for the tool,
-// allows tools without one, and records every input.
+// allows tools without one, and records every input. Allowing by default
+// lets a test configure only the calls it is about; the gateway's own grant
+// check still denies anything not granted.
 type Policy struct {
 	Verdicts map[string]toolgateway.Verdict
 	Err      error
@@ -158,14 +171,18 @@ func (s *Server) Start(ctx context.Context, name string) (toolgateway.ToolSessio
 
 var _ toolgateway.ToolSession = (*session)(nil)
 
+// session is a started Server; it serves the server's Tools and counts its
+// closes on the server.
 type session struct {
 	server *Server
 }
 
+// Tools returns the server's Tools and ToolsErr.
 func (s *session) Tools(context.Context) ([]toolgateway.Tool, error) {
 	return s.server.Tools, s.server.ToolsErr
 }
 
+// Close runs OnClose, counts the close and returns CloseErr.
 func (s *session) Close() error {
 	if s.server.OnClose != nil {
 		s.server.OnClose()

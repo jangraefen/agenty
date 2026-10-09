@@ -30,6 +30,8 @@ import (
 	"github.com/jangraefen/agenty/internal/toolgateway/gatewaytest"
 )
 
+// The fixture's secrets. Each is long enough to be redacted, and distinct,
+// so a leak test can tell which one escaped.
 const (
 	apiKey     = "sk-ant-api-key-0123456789"
 	filesToken = "files-token-abcdef0123"
@@ -37,6 +39,10 @@ const (
 	bobToken   = "bob-token-0123456789abcdefghijklmnopq"
 )
 
+// configYAML is the fixture's operator config. %s is replaced with the fake
+// Anthropic API's URL. alice is an auditor and the only member of home, bob
+// the only member of work, so the tests can sign in as either side of a
+// workspace boundary.
 const configYAML = `provider:
   anthropic:
     api_key: {env: ANTHROPIC_API_KEY}
@@ -70,11 +76,16 @@ policy:
   files: [central.rego]
 `
 
+// centralRego is the fixture's central policy: every files_write call needs
+// approval, which drives the CLI's terminal approver.
 const centralRego = `package agenty.tool
 
 require_approval contains "writes need a human" if input.tool == "files_write"
 `
 
+// harnessYAML is the fixture's harness: it grants files_read and
+// files_write, not files_delete, and its own policy denies reading dotfiles,
+// so one harness exercises default deny and both policy layers.
 const harnessYAML = `name: notes
 instructions: Keep the notes tidy.
 model:
@@ -118,6 +129,10 @@ type fixture struct {
 	configs map[string]mcptool.Server
 }
 
+// newFixture returns a fixture whose fake Anthropic API replies with
+// responses in order. The CLI signs in as alice in her workspace, stdin is a
+// terminal that answers "y", and the config, central policy and harness are
+// written to the working directory; the server itself starts on first use.
 func newFixture(t *testing.T, responses ...anthropictest.Response) *fixture {
 	t.Helper()
 	f := &fixture{
@@ -149,13 +164,17 @@ func newFixture(t *testing.T, responses ...anthropictest.Response) *fixture {
 	return f
 }
 
+// writeFile writes content to name in the fixture's working directory.
 func (f *fixture) writeFile(t *testing.T, name, content string) {
 	t.Helper()
 	require.NoError(t, os.WriteFile(filepath.Join(f.dir, name), []byte(content), 0o600))
 }
 
+// path returns the path of name in the fixture's working directory.
 func (f *fixture) path(name string) string { return filepath.Join(f.dir, name) }
 
+// lookupEnv reads the fixture's environment, which tests change through
+// f.vars.
 func (f *fixture) lookupEnv(k string) (string, bool) {
 	v, ok := f.vars[k]
 	return v, ok
@@ -224,6 +243,7 @@ func (f *fixture) run(input string) int {
 	return f.main("run", "--server", f.serverURL(), "--log-level", "debug", "notes", input)
 }
 
+// runID finds the run ID in the CLI's "run started" log line.
 var runID = regexp.MustCompile(`run_id=(\S+)`)
 
 // audit returns the audit records of the run the CLI started.
@@ -245,11 +265,13 @@ func events(records []store.AuditRecord) []string {
 	return out
 }
 
+// toolUse returns a model reply that calls tool name with input.
 func toolUse(t *testing.T, id, name string, input any) anthropictest.Response {
 	t.Helper()
 	return anthropictest.Reply(t, "tool_use", anthropictest.ToolUseBlock(id, name, input))
 }
 
+// done returns a model reply that ends the run with a short answer.
 func done(t *testing.T) anthropictest.Response {
 	t.Helper()
 	return anthropictest.Reply(t, "end_turn", anthropictest.TextBlock("Notes are tidy."))
@@ -669,6 +691,8 @@ func TestMain_Usage(t *testing.T) {
 	}
 }
 
+// failingWriter fails every write, to test that a command reports a stream
+// it cannot write to.
 type failingWriter struct{}
 
 func (failingWriter) Write([]byte) (int, error) { return 0, assert.AnError }

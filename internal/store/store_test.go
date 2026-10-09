@@ -24,6 +24,8 @@ import (
 // ws is the workspace the tests store harnesses in.
 const ws = "home"
 
+// notes is a valid harness, with tools and an inline policy, that most
+// tests store.
 func notes() harness.Harness {
 	return harness.Harness{
 		Name:         "notes",
@@ -35,6 +37,8 @@ func notes() harness.Harness {
 	}
 }
 
+// TestOpen_MigratesAgain: opening a database that is already migrated
+// succeeds, as every server start migrates.
 func TestOpen_MigratesAgain(t *testing.T) {
 	_, url := storetest.NewWithURL(t)
 
@@ -197,8 +201,8 @@ func TestWorkspaces_AreSeparate(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrNotFound, "a run is found only in its harness's workspace")
 }
 
-// newRun stores the notes harness and a run of it.
 // newRun stores a run of the notes harness and claims it, so it is running.
+// It returns the harness version the run runs.
 func newRun(t *testing.T, s *store.Store, id string) store.HarnessVersion {
 	t.Helper()
 	v, err := s.PutHarness(context.Background(), ws, "alice", notes())

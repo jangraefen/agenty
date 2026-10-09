@@ -15,7 +15,9 @@ import (
 	"github.com/jangraefen/agenty/internal/store"
 )
 
-// priorRun is an earlier run of the conversation a run continues.
+// priorRun is an earlier run of the conversation a run continues: its stored
+// messages and the two digests it recorded when it ran, against which
+// conversationHistory checks whether its provider forms are still valid.
 type priorRun struct {
 	// digest is the run's prompt digest; see agent.Agent.PromptDigest.
 	digest string
@@ -48,6 +50,9 @@ func conversationHistory(redact *secret.Redactor, prior []priorRun, digest strin
 		// messages are sent as the model saw them.
 		unchanged = make([]bool, len(prior))
 	)
+	// Redact every prior message again with the secrets known now, which may
+	// include one configured since, noting which runs come through as the
+	// model saw them.
 	for i, p := range prior {
 		from[i] = len(history)
 		unchanged[i] = p.digest != "" && p.digest == digest
@@ -85,6 +90,9 @@ func conversationHistory(redact *secret.Redactor, prior []priorRun, digest strin
 		}
 		return true
 	}
+	// Find the earliest run from which on every form can be kept. Validity
+	// is not monotonic, so each start is tried in turn rather than searched
+	// for by halves.
 	// Keeping more forms may be valid where keeping fewer is not: a run sent
 	// an earlier run's form must be sent it again. Keeping none always is.
 	keepFrom := 0
@@ -127,6 +135,8 @@ func ended(r store.Run, messages []store.TranscriptMessage) []store.TranscriptMe
 	if r.Status == store.RunSucceeded {
 		return messages
 	}
+	// Complete what the run left, in order: its input if nothing was stored,
+	// interrupted results for calls without any, then a note as its answer.
 	if len(messages) == 0 {
 		// The run ended before it stored its input: it was cancelled while
 		// queued, could not start, or storing the input failed.
@@ -184,7 +194,9 @@ func lostState(fresh []string, history []model.Message) string {
 	return "[The tool servers " + strings.Join(lost, ", ") + " were started anew since this conversation last used them: what they held from earlier, such as open files or pages, is gone.]"
 }
 
-// historyDigest identifies a history as it is sent to the model.
+// historyDigest identifies a history as it is sent to the model. Each run
+// stores the digest of what it was sent before its input, which a later
+// follow-up compares with to keep that run's provider forms or drop them.
 func historyDigest(history []model.Message) string {
 	h := newHistoryHash()
 	for _, msg := range history {
@@ -197,14 +209,18 @@ func historyDigest(history []model.Message) string {
 // of each of its beginnings is known along the way.
 type historyHash struct{ hash.Hash }
 
+// newHistoryHash returns the hash of an empty history.
 func newHistoryHash() historyHash {
 	return historyHash{sha256.New()}
 }
 
+// add appends a message, by its messageSum, to the history hashed.
 func (h historyHash) add(sum [sha256.Size]byte) {
 	must.Value(h.Write(sum[:]))
 }
 
+// digest returns the hex digest of the history added so far, without
+// ending it: Sum does not change the hash's state, so more may be added.
 func (h historyHash) digest() string {
 	return hex.EncodeToString(h.Sum(nil))
 }
@@ -232,6 +248,9 @@ func messageSum(msg model.Message) [sha256.Size]byte {
 
 // redactMessage returns a copy of msg with every secret redact knows of
 // redacted, wherever in the message it is, and whether that changed it.
+// The provider form is redacted too: it may quote what a tool returned. The
+// slices are cloned before they are changed, so the caller's message, which
+// may be the agent's own, is left as it was.
 func redactMessage(redact *secret.Redactor, msg model.Message) (model.Message, bool) {
 	changed := false
 	text := func(s string) string {

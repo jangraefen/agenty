@@ -14,6 +14,8 @@ SELECT id, workspace, name, version, definition, created_at FROM harness_version
 WHERE id = $1
 `
 
+// A version by its id, as a run names it: a follow-up runs its
+// conversation's version, not the latest.
 func (q *Queries) HarnessVersionByID(ctx context.Context, id int64) (HarnessVersion, error) {
 	row := q.db.QueryRow(ctx, harnessVersionByID, id)
 	var i HarnessVersion
@@ -41,6 +43,8 @@ type InsertHarnessVersionParams struct {
 	Definition []byte
 }
 
+// Stores a new version, numbered by the caller under LockHarnessName, and
+// returns it with its id and time.
 func (q *Queries) InsertHarnessVersion(ctx context.Context, arg InsertHarnessVersionParams) (HarnessVersion, error) {
 	row := q.db.QueryRow(ctx, insertHarnessVersion,
 		arg.Workspace,
@@ -72,6 +76,8 @@ type LatestHarnessVersionParams struct {
 	Name      string
 }
 
+// The latest version of a harness in a workspace: the one new runs start
+// with, and the one a new version is compared with and numbered after.
 func (q *Queries) LatestHarnessVersion(ctx context.Context, arg LatestHarnessVersionParams) (HarnessVersion, error) {
 	row := q.db.QueryRow(ctx, latestHarnessVersion, arg.Workspace, arg.Name)
 	var i HarnessVersion
@@ -92,6 +98,9 @@ WHERE workspace = $1
 ORDER BY name, version DESC
 `
 
+// The latest version of every harness of a workspace, by name: DISTINCT ON
+// keeps the first row per name, which the ordering makes the highest
+// version.
 func (q *Queries) LatestHarnessVersions(ctx context.Context, workspace string) ([]HarnessVersion, error) {
 	rows, err := q.db.Query(ctx, latestHarnessVersions, workspace)
 	if err != nil {
@@ -125,6 +134,8 @@ SELECT pg_advisory_xact_lock(hashtext($1))
 
 // Serializes versioning of one harness until the transaction ends. The key
 // is the workspace and harness name, joined by a character neither has.
+// An advisory lock, as the first version has no row to lock; two harnesses
+// whose keys hash alike only wait for each other, which is harmless.
 func (q *Queries) LockHarnessName(ctx context.Context, hashtext string) error {
 	_, err := q.db.Exec(ctx, lockHarnessName, hashtext)
 	return err

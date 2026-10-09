@@ -21,6 +21,7 @@ const (
 	quotedHTML = `q"<x>&-0123`
 )
 
+// newRedactor returns a Redactor for every test secret.
 func newRedactor(t *testing.T) *secret.Redactor {
 	t.Helper()
 	r, err := secret.NewRedactor([]string{apiKey, apiKeyV2, quoted, html, quotedHTML})

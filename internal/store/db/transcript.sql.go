@@ -43,7 +43,10 @@ type InsertRunMessageParams struct {
 	CacheReadTokens  int64
 }
 
-// Stores a message and adds its tokens to its run's.
+// Stores a message and adds its tokens to its run's. One statement does
+// both, so a run's totals always equal the sum of its stored messages. The
+// primary key refuses a position written before, and the foreign key a run
+// that is not stored.
 func (q *Queries) InsertRunMessage(ctx context.Context, arg InsertRunMessageParams) error {
 	_, err := q.db.Exec(ctx, insertRunMessage,
 		arg.RunID,
@@ -69,6 +72,8 @@ WHERE run_id = $1
 ORDER BY position
 `
 
+// A run's transcript in order. A run without messages, or one that does not
+// exist, has none.
 func (q *Queries) RunMessages(ctx context.Context, runID string) ([]RunMessage, error) {
 	rows, err := q.db.Query(ctx, runMessages, runID)
 	if err != nil {

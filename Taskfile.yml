@@ -51,12 +51,10 @@ tasks:
       - go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}} run ./...
 
   test:
-    desc: Run the tests with the race detector against the local database; pass Go test flags after --
-    deps: [db]
-    env:
-      AGENTY_TEST_DATABASE_URL: "{{.DATABASE_URL}}"
+    desc: Run the tests with the race detector on a database of their own; pass Go test flags after --
     cmds:
-      - go test -race {{.CLI_ARGS | default "./..."}}
+      # On a database of its own, on a free port: see the script.
+      - scripts/with-test-db.sh go test -race {{.CLI_ARGS | default "./..."}}
 
   coverage:
     desc: Check that the tool gateway, policy and secret redaction are fully covered by their tests
@@ -151,18 +149,12 @@ tasks:
 
   web:e2e:
     desc: Run the web frontend's smoke test against a real agenty server (needs Google Chrome)
-    deps: [build, db, web:install]
-    vars:
-      # A database of its own on the compose server, made afresh each time:
-      # a starting server fails every running run in its database, which
-      # must not be those of the development server.
-      E2E_DATABASE_URL: postgres://agenty:{{.POSTGRES_PASSWORD | default "agenty-dev-password"}}@127.0.0.1:{{.POSTGRES_PORT | default "5432"}}/agenty_e2e
-    env:
-      AGENTY_E2E_DATABASE_URL: "{{.E2E_DATABASE_URL}}"
+    deps: [build, web:install]
     cmds:
-      - docker compose exec -T postgres dropdb --username agenty --if-exists agenty_e2e
-      - docker compose exec -T postgres createdb --username agenty agenty_e2e
-      - cd web && pnpm e2e
+      # A database of its own, made afresh each time, on a free port: a
+      # starting server fails every running run in its database, which must
+      # not be those of the development server. See the script.
+      - scripts/with-test-db.sh pnpm --dir web e2e
 
   web:check:
     desc: "What CI checks of the web frontend: lint, types, tests, the build and its generated route tree"

@@ -29,6 +29,8 @@ type turn struct {
 	tools bool
 }
 
+// simSecret is a secret a simulated run's messages may hold, which a
+// redactor made with redactorFor(t, true) knows of.
 const simSecret = "sk-simulated-0123456789"
 
 // TestConversationHistory_SendsOnlyValidProviderForms simulates
@@ -130,10 +132,13 @@ func simulate(t *testing.T, turns []turn) ([]model.Message, [][]model.Message) {
 	return history, seen
 }
 
+// thinking is a simulated provider form: reasoning about the given text.
 func thinking(about string) *model.ProviderPart {
 	return &model.ProviderPart{Name: "sim", Data: json.RawMessage(fmt.Sprintf(`{"thinking":%q}`, about))}
 }
 
+// redactorFor returns a redactor that knows simSecret if configured, and no
+// secret otherwise, as when a secret is added to the config between runs.
 func redactorFor(t *testing.T, configured bool) *secret.Redactor {
 	t.Helper()
 	var secrets []string
@@ -176,6 +181,7 @@ func keptRuns(history []model.Message, seen [][]model.Message) []int {
 	return kept
 }
 
+// hasForm reports whether any of messages carries a provider form.
 func hasForm(messages []model.Message) bool {
 	return slices.ContainsFunc(messages, func(m model.Message) bool { return m.Provider != nil })
 }

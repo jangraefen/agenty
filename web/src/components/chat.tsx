@@ -1,3 +1,33 @@
+/**
+ * The chat of a conversation: the page `/c/{conversation}` shows
+ * (routes/_authed/c.$conversationId.tsx).
+ *
+ * ConversationChat composes it from three parts:
+ *
+ * - Header: the conversation's title, harness and workspace, and Cancel run
+ *   while its latest run is under way.
+ * - Chat: every run as a Turn (components/conversation.tsx), oldest first,
+ *   the latest run's waiting approvals in place, how the last answer went
+ *   (AnswerNotice), and a Reconnect button when live updates stop.
+ * - Composer: the MessageBox that follows up the latest run once it has
+ *   finished; in a workspace the user left, a note that the chat is read
+ *   only takes its place.
+ *
+ * Data flow. The conversation with its runs is one query
+ * (conversationQuery), which the route's loader filled. Only its latest run
+ * can still change, so only that run is followed live: runEventsQuery reads
+ * its event stream and, as events arrive, invalidates the queries they
+ * change: the run's transcript (each Turn's messages), the workspace's
+ * waiting approvals, the recent chats in the sidebar, and, when the run
+ * finishes, the conversation itself, which carries the run's final status.
+ * A new latest run, after a reply, gives runEventsQuery a new key, so the
+ * stream of the run before is left and the new one's is read.
+ *
+ * Writes go through the workspace's endpoints (cancel, follow-up, answering
+ * an approval), as a conversation is continued, cancelled and answered only
+ * in its workspace; reading it needs no membership, which is why a chat of a
+ * workspace the user left still shows, read only.
+ */
 import {
   type UseQueryResult,
   useMutation,
@@ -17,20 +47,31 @@ import { Button } from "@/components/ui/button";
 
 type Run = Schemas["Run"];
 
-// ConversationChat shows the conversation named by its first run, id, as a
-// chat: every run of it, oldest first, each a message from its user and the
-// agent's replies. The latest run is followed live, and a reply follows it up
-// with a new run. The page scrolls to the run focus names, if any.
+/**
+ * ConversationChat shows the conversation named by its first run, id, as a
+ * chat: every run of it, oldest first, each a message from its user and the
+ * agent's replies. The latest run is followed live, and a reply follows it up
+ * with a new run. The page scrolls to the run focus names, if any.
+ *
+ * It reads the conversation with useSuspenseQuery, as the route's loader has
+ * it in the cache already, and opens the latest run's event stream with
+ * useQuery, whose data, the run's audit records, matter here only for the
+ * stream's state: the stream's effect is the invalidations it makes.
+ */
 export function ConversationChat({ id, focus }: { id: string; focus?: string | undefined }) {
   const { api, me } = useRouteContext({ from: "/_authed" });
   // The latest run's events keep the conversation current.
   const conversation = useSuspenseQuery(conversationQuery(api, id));
   const { workspace, runs } = conversation.data;
-  // The chat of a workspace the user left is read-only.
+  // The chat of a workspace the user left is read-only: the server would
+  // refuse its writes, so the page offers none (no reply, cancel or answer,
+  // no link to the harness's management page).
   const readOnly = !me.workspaces.includes(workspace);
   const latest = latestRun(conversation.data);
   const events = useQuery(runEventsQuery(api, workspace, id, latest.id));
 
+  // A URL with a #run-<id> hash opens the chat at that run rather than at
+  // its top.
   useEffect(() => {
     if (focus !== undefined) {
       // jsdom does not scroll.
@@ -50,6 +91,8 @@ export function ConversationChat({ id, focus }: { id: string; focus?: string | u
         conversation={conversation.data}
         latest={latest}
         readOnly={readOnly}
+        // A new latest run gets a fresh Cancel button: the state of
+        // cancelling the run before does not carry over to it.
         key={latest.id}
       />
       <Chat workspace={workspace} runs={runs} latest={latest} events={events} />
@@ -64,7 +107,11 @@ export function ConversationChat({ id, focus }: { id: string; focus?: string | u
   );
 }
 
-// latestRun is the conversation's latest run; a conversation always has one.
+/**
+ * latestRun is the conversation's latest run; a conversation always has one,
+ * as it is made by its first run, so an empty one is a bug and throws, which
+ * the route's error page shows.
+ */
 function latestRun(conversation: Schemas["Conversation"]): Run {
   const latest = conversation.runs.at(-1);
   if (latest === undefined) {
@@ -73,6 +120,17 @@ function latestRun(conversation: Schemas["Conversation"]): Run {
   return latest;
 }
 
+/**
+ * Header heads the chat with the conversation's title, its harness and its
+ * workspace, and offers Cancel run while the latest run has yet to end.
+ *
+ * Cancelling only asks the server (`POST .../runs/{id}/cancel`); the run's
+ * end, and so the button's leaving, comes through the event stream as for
+ * any other end. Until then the button ignores clicks, saying Cancelling
+ * once the server took the request; a failed request lets it be tried again.
+ * The harness links to its management page, except in a read-only chat,
+ * whose workspace's pages the user can no longer open.
+ */
 function Header({
   workspace,
   conversation,
@@ -136,6 +194,20 @@ function Header({
   );
 }
 
+/**
+ * Chat lists the conversation's runs as turns, with the latest run's waiting
+ * approvals in place, and tells how the last answer to one went.
+ *
+ * The approvals come from the workspace's list of waiting requests
+ * (approvalsQuery), filtered to the latest run: an earlier run has ended, so
+ * none of its requests can still wait. The list is only fetched while the
+ * latest run is under way; the event stream refreshes it when the run asks
+ * for an approval, gets an answer or ends.
+ *
+ * When live updates stop before the run ends, the stream's query fails and
+ * a Reconnect button refetches it, which reads the stream again from the
+ * run's start.
+ */
 function Chat({
   workspace,
   runs,
@@ -155,6 +227,8 @@ function Chat({
     : [];
   const [outcome, setOutcome] = useState<AnswerOutcome | null>(null);
   // An answer is news about the run it was given in, not a later one.
+  // Reset while rendering, React's pattern for state derived from a prop,
+  // rather than in an effect, which would first show the stale notice.
   const [answered, setAnswered] = useState(latest.id);
   if (answered !== latest.id) {
     setAnswered(latest.id);
@@ -163,6 +237,7 @@ function Chat({
 
   return (
     <>
+      {/* Announces the latest run's status, and calls waiting, as they change. */}
       <p role="status" className="sr-only">
         The latest run is {latest.status}.
         {waiting.length > 0 &&
@@ -180,6 +255,7 @@ function Chat({
         ))}
       </ol>
       <AnswerNotice outcome={outcome} />
+      {/* A stream that failed for a run since ended has nothing left to tell. */}
       {events.isError && running && (
         <div role="alert" className="flex items-center gap-3 text-sm text-destructive">
           Live updates stopped: {events.error.message}
@@ -192,9 +268,18 @@ function Chat({
   );
 }
 
-// Composer replies to the conversation by following up its latest run, once
-// that run has finished. A run that failed or was cancelled is continued from
-// where it stopped. Enter sends, Shift+Enter starts a new line.
+/**
+ * Composer replies to the conversation by following up its latest run, once
+ * that run has finished. A run that failed or was cancelled is continued from
+ * where it stopped. Enter sends, Shift+Enter starts a new line.
+ *
+ * A reply posts `.../runs/{id}/follow-up` for the latest run, and
+ * cacheStartedRun adds the new run to the cached conversation at once, which
+ * makes it the latest and so the one the chat follows live. The box stays
+ * editable while a run is under way, so the next message can be written, but
+ * sending is blocked until the run ends, as the server follows up only a
+ * finished run.
+ */
 function Composer({
   workspace,
   conversation,
@@ -208,6 +293,8 @@ function Composer({
   const queryClient = useQueryClient();
   const [text, setText] = useState("");
   const box = useRef<HTMLTextAreaElement>(null);
+  // Arriving from the new chat page, whose first message started this
+  // conversation, the focus moves here, so the user can write on.
   const focusOnArrival = useLocation({
     select: (location) => location.state.focusMessage === true,
   });
@@ -225,6 +312,8 @@ function Composer({
         }),
       ),
     onSuccess: (run) => {
+      // Only a sent reply clears the box; a failed one keeps the text to
+      // send again.
       setText("");
       cacheStartedRun(queryClient, api, workspace, run, conversation);
       box.current?.focus();

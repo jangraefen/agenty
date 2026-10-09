@@ -20,7 +20,8 @@ import (
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
-// export writes the whole audit log as an export.
+// export writes the whole audit log as an export, two events a page, so
+// paging is exercised too.
 func export(t *testing.T, s *store.Store) []byte {
 	t.Helper()
 	var b bytes.Buffer
@@ -37,6 +38,7 @@ func export(t *testing.T, s *store.Store) []byte {
 	}
 }
 
+// record appends rec to the audit log, which must succeed.
 func record(t *testing.T, s *store.Store, rec toolgateway.Record) {
 	t.Helper()
 	require.NoError(t, s.Record(context.Background(), rec))

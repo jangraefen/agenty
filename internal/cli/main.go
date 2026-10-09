@@ -1,10 +1,3 @@
-// Package cli is the agenty command line. "agenty serve" runs the server,
-// which keeps harnesses, runs and the audit log in PostgreSQL and runs
-// agents. "agenty apply", "agenty run" and "agenty audit export" are its
-// clients: they store a harness, run one, answering approvals at the
-// terminal, and export the audit log, which "agenty audit verify" checks
-// offline. Clients sign in with the token in AGENTY_TOKEN; apply and run
-// work in one workspace.
 package cli
 
 import (
@@ -20,7 +13,8 @@ import (
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
-// Exit codes.
+// Exit codes. Usage errors get their own code so scripts can tell a mistyped
+// command from one that ran and failed.
 const (
 	exitOK      = 0
 	exitFailure = 1
@@ -28,7 +22,10 @@ const (
 )
 
 // Env is the process around a command: its streams, its environment, and
-// what runs an MCP server.
+// what runs an MCP server. It is the seam between the real process, which
+// cmd/agenty binds to it, and the commands: no command touches os.Stdin,
+// os.Getenv or a subprocess directly, so tests run each command in-process
+// with buffers, a map for an environment, and fake tool servers.
 type Env struct {
 	Stdin  io.Reader
 	Stdout io.Writer
@@ -46,6 +43,8 @@ type Env struct {
 
 // Main runs the command line args, without the program name, and returns the
 // exit code: 0 on success, 1 when the command fails, 2 on a usage error.
+// It fills in an empty environment when env has none and dispatches on the
+// first argument; each command parses its own flags from the rest.
 func Main(ctx context.Context, args []string, env Env) int {
 	if env.LookupEnv == nil {
 		env.LookupEnv = func(string) (string, bool) { return "", false }
@@ -69,6 +68,8 @@ func Main(ctx context.Context, args []string, env Env) int {
 	}
 }
 
+// commands is the top-level usage text, printed by "agenty help" and after a
+// usage error.
 const commands = `usage: agenty <command> [flags]
 
 Commands:
@@ -80,6 +81,9 @@ Commands:
 Run "agenty <command> -h" for a command's flags.
 `
 
+// printUsage writes msg, if any, then the top-level usage to w, and returns
+// code. If writing fails it returns exitFailure instead, as the error cannot
+// be reported anywhere and code would claim the usage was shown.
 func printUsage(w io.Writer, msg string, code int) int {
 	if _, err := io.WriteString(w, msg+commands); err != nil {
 		return exitFailure
@@ -88,7 +92,7 @@ func printUsage(w io.Writer, msg string, code int) int {
 }
 
 // clientFlags are the flags every client command has, and the token it signs
-// in with.
+// in with. parseFlags fills them; newClient and clientLogger consume them.
 type clientFlags struct {
 	server, workspace string
 	logLevel          slog.Level
@@ -100,7 +104,9 @@ type clientFlags struct {
 // tokenVar is the environment variable holding the client's token.
 const tokenVar = "AGENTY_TOKEN"
 
-// command describes a command's flags and arguments.
+// command describes a command's flags and arguments. The client commands
+// declare themselves with it, so they share one flag parser and report
+// missing arguments, workspace and token the same way.
 type command struct {
 	// name is the command after "agenty", and usage its usage line and
 	// description.
@@ -117,7 +123,9 @@ type command struct {
 	define func(*flag.FlagSet)
 }
 
-// The environment of client commands, for their usage.
+// The environment of client commands, for their usage. Variables do not
+// show in the flag package's defaults, so they are listed by hand; the token
+// above all must be documented, as no flag hints at it.
 const (
 	tokenEnv = `
 Environment:
@@ -130,6 +138,13 @@ Environment:
 // parseFlags parses cmd's flags and checks that exactly cmd.nargs arguments
 // follow them. ok is false, with the exit code, when the command is not to
 // run.
+//
+// It builds a fresh FlagSet per call with ContinueOnError, so a bad flag
+// returns a usage code rather than exiting the process, which tests rely on.
+// Client commands get --server and --log-level and read their token from
+// AGENTY_TOKEN; workspace commands also get --workspace, defaulting to
+// AGENTY_WORKSPACE. The checks after parsing run in order of what the user
+// most likely got wrong, and only the first is reported.
 func parseFlags(cmd command, args []string, env Env) (f clientFlags, rest []string, code int, ok bool) {
 	stderr := env.Stderr
 	usage := cmd.usage
@@ -148,6 +163,8 @@ func parseFlags(cmd command, args []string, env Env) (f clientFlags, rest []stri
 	}
 	f.logLevel = slog.LevelInfo
 	if cmd.client {
+		// The token is read here, never declared as a flag: a flag's value
+		// would land in shell history and in the process list.
 		f.token, _ = env.LookupEnv(tokenVar)
 		fs.StringVar(&f.server, "server", "http://127.0.0.1:8080", "`URL` of the agenty server")
 		fs.TextVar(&f.logLevel, "log-level", slog.LevelInfo, "log `level`: debug, info, warn or error")
@@ -165,6 +182,8 @@ func parseFlags(cmd command, args []string, env Env) (f clientFlags, rest []stri
 		}
 		return f, nil, exitUsage, false
 	}
+	// Missing pieces are reported after parsing, so that "-h" still shows
+	// the usage when the token or workspace is not set.
 	missing := ""
 	switch {
 	case fs.NArg() != cmd.nargs:

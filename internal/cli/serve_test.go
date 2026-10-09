@@ -28,18 +28,23 @@ type lockedBuffer struct {
 	buf bytes.Buffer
 }
 
+// Write appends p under the lock.
 func (b *lockedBuffer) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.Write(p)
 }
 
+// String returns what was written so far, under the lock.
 func (b *lockedBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
 }
 
+// serve runs "agenty serve" with args until ctx ends, with the fixture's
+// environment and its fake MCP servers in place of subprocesses. It logs to
+// stderr, which the test reads while the server runs.
 func (f *fixture) serve(ctx context.Context, stderr *lockedBuffer, args ...string) int {
 	return cli.Main(ctx, append([]string{"serve"}, args...), cli.Env{
 		Stdout: &f.stdout,
@@ -52,6 +57,8 @@ func (f *fixture) serve(ctx context.Context, stderr *lockedBuffer, args ...strin
 	})
 }
 
+// servingAddr finds the URL in serve's "serving the API" log line, which
+// tells the test the port the server listens on.
 var servingAddr = regexp.MustCompile(`addr=(http://\S+)`)
 
 func TestServe_ServesTheAPIUntilStopped(t *testing.T) {

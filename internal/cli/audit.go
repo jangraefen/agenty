@@ -16,6 +16,7 @@ import (
 	"github.com/jangraefen/agenty/internal/secret"
 )
 
+// auditUsage is the usage text of "agenty audit" and both its subcommands.
 const auditUsage = `usage: agenty audit export [flags] > FILE
        agenty audit verify [--anchor ID:HASH]... FILE
 
@@ -31,6 +32,10 @@ The server marks a complete export with an HTTP trailer; a proxy between
 that drops trailers makes export fail as cut short.
 `
 
+// audit implements "agenty audit": it dispatches to export or verify, the
+// two halves of keeping the audit log as evidence (guarantee 9). export
+// fetches the log from the server; verify checks a saved export offline, so
+// an auditor can check it without trusting the server that produced it.
 func audit(ctx context.Context, args []string, env Env) int {
 	if len(args) == 0 {
 		return printAuditUsage(env.Stderr, "", exitUsage)
@@ -47,6 +52,8 @@ func audit(ctx context.Context, args []string, env Env) int {
 	}
 }
 
+// printAuditUsage writes msg, if any, then the audit usage to w and returns
+// code, or exitFailure when writing fails, as printUsage does.
 func printAuditUsage(w io.Writer, msg string, code int) int {
 	if _, err := io.WriteString(w, msg+auditUsage); err != nil {
 		return exitFailure
@@ -54,6 +61,13 @@ func printAuditUsage(w io.Writer, msg string, code int) int {
 	return code
 }
 
+// auditExport implements "agenty audit export": it writes the audit log, or
+// its events after --after, to stdout as JSON lines.
+//
+// It is a client command like apply and run, but needs no workspace: the
+// audit log spans every workspace, and the server lets only auditors read it
+// (guarantee 8). The export goes to stdout untouched, so the file holds the
+// server's bytes exactly, which verify hashes.
 func auditExport(ctx context.Context, args []string, env Env) int {
 	var after int64
 	flags, _, code, ok := parseFlags(command{name: "audit export", usage: auditUsage, client: true, signer: "an auditor's", define: func(fs *flag.FlagSet) {
@@ -78,6 +92,11 @@ func auditExport(ctx context.Context, args []string, env Env) int {
 
 // export copies the audit log after the given event to w, failing unless
 // the server said it was complete.
+//
+// The response is streamed, so its status is sent before the last event is
+// read from the database; a failure partway can then only show as a missing
+// trailer. Without that check a cut-short export would look like a log whose
+// newest events were removed, which verify alone cannot tell apart.
 func (c *client) export(ctx context.Context, after int64, w io.Writer) (err error) {
 	path := "/v1/audit/export?after=" + strconv.FormatInt(after, 10)
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
@@ -99,17 +118,23 @@ func (c *client) export(ctx context.Context, after int64, w io.Writer) (err erro
 	if _, err := io.Copy(w, resp.Body); err != nil {
 		return fmt.Errorf("GET %s: %w", path, err)
 	}
+	// Trailers are only known once the body has been read to its end,
+	// which io.Copy has done.
 	if resp.Trailer.Get("Audit-Export-Complete") != "true" {
 		return errors.New("the export was cut short: the server did not finish it")
 	}
 	return nil
 }
 
-// anchors collects the --anchor flags.
+// anchors collects the --anchor flags. It implements flag.Value, so the
+// flag may be repeated and each value is parsed, and rejected, as it is
+// given.
 type anchors []auditlog.Anchor
 
+// String formats the anchors collected so far, as flag.Value requires.
 func (a *anchors) String() string { return fmt.Sprint(*a) }
 
+// Set parses one --anchor value, ID:HASH, and appends it.
 func (a *anchors) Set(s string) error {
 	anchor, err := auditlog.ParseAnchor(s)
 	if err != nil {
@@ -119,6 +144,15 @@ func (a *anchors) Set(s string) error {
 	return nil
 }
 
+// auditVerify implements "agenty audit verify": it checks an export file's
+// hash chain and that it holds every --anchor, then prints how many events it
+// verified and its last event's anchor, for the auditor to keep apart from
+// Agenty.
+//
+// It is not a client command: it needs neither a server nor a token, which
+// is the point, as evidence must be checkable without the system it
+// describes. An export that does not start at the first event is verified on
+// its own, and a note says which anchor would link it to an earlier one.
 func auditVerify(args []string, env Env) int {
 	var want anchors
 	_, rest, code, ok := parseFlags(command{name: "audit verify", usage: auditUsage, nargs: 1, define: func(fs *flag.FlagSet) {
@@ -143,6 +177,9 @@ func auditVerify(args []string, env Env) int {
 	return exitOK
 }
 
+// verifyFile opens the export file name and verifies it with
+// auditlog.Verify against the anchors in want. The close error is joined in,
+// never dropped.
 func verifyFile(name string, want []auditlog.Anchor) (summary auditlog.Summary, err error) {
 	f, err := os.Open(name) //nolint:gosec // G304: the user names the file to verify.
 	if err != nil {

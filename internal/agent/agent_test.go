@@ -17,6 +17,9 @@ import (
 	"github.com/jangraefen/agenty/internal/toolgateway/gatewaytest"
 )
 
+// TestRun_Outcomes covers how a run ends, by output, steps and error: an
+// answer, calls run in order, tool errors the model is told of, the step
+// limit, model errors and audit failures.
 func TestRun_Outcomes(t *testing.T) {
 	boom := errors.New("provider overloaded")
 	tests := []struct {

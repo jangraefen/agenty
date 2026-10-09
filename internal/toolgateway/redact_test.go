@@ -20,6 +20,8 @@ const (
 	quoted   = `pa"ss\word-123`
 )
 
+// newRedactingGateway returns a gateway that grants and allows tool, records
+// to audit, and redacts apiKey, apiKeyV2 and quoted.
 func newRedactingGateway(t *testing.T, tool *gatewaytest.Tool, audit *gatewaytest.Audit) *toolgateway.Gateway {
 	t.Helper()
 	gw, err := toolgateway.New(context.Background(), toolgateway.Config{

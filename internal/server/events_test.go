@@ -138,6 +138,8 @@ type eventPage struct {
 	Next   int64            `json:"next"`
 }
 
+// actions lists a page's events as "actor action", so a test compares who
+// did what in one assertion.
 func actions(page eventPage) []string {
 	out := make([]string, len(page.Events))
 	for i, e := range page.Events {

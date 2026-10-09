@@ -63,14 +63,18 @@ func (f *fixture) run(t *testing.T, m model.Model) (agent.Result, error) {
 	return a.Continue(context.Background(), nil, "ticket 7")
 }
 
+// toolCalls counts the calls that reached any of the fixture's tools, the
+// ungranted one included, to show which calls executed.
 func (f *fixture) toolCalls() int {
 	return f.read.Calls + f.label.Calls + f.del.Calls
 }
 
+// call is a model's call of tool name, with fixed arguments.
 func call(id, name string) model.ToolCall {
 	return model.ToolCall{ID: id, Name: name, Args: json.RawMessage(`{"id":7}`)}
 }
 
+// recordsOf returns the audit records of one event kind, in order.
 func recordsOf(records []toolgateway.Record, event toolgateway.Event) []toolgateway.Record {
 	var out []toolgateway.Record
 	for _, r := range records {

@@ -5,8 +5,18 @@ import { harnessesQuery, workspaceAuditQuery, workspaceQuery } from "@/api/queri
 import { EventsTable } from "@/components/events-table";
 import { buttonVariants } from "@/components/ui/button";
 
-// The overview of a workspace: who is in it, its harnesses, and its latest
-// changes. Each section loads, and fails, on its own.
+/**
+ * The overview of a workspace, at `/w/{ws}`: the page the sidebar's
+ * workspace switcher and Overview link open.
+ *
+ * It shows who is in the workspace (workspaceQuery, `GET /v1/workspaces/{ws}`),
+ * its harnesses (harnessesQuery) and its latest changes (workspaceAuditQuery,
+ * fetched in a page of `latestChanges` events), linking to the harness pages,
+ * the new-harness form and the workspace's full audit log.
+ *
+ * It has no loader: each section loads, and fails, on its own, so a slow or
+ * failing audit log does not keep the members and harnesses from showing.
+ */
 export const Route = createFileRoute("/_authed/w/$workspace/")({
   component: Overview,
 });
@@ -14,6 +24,7 @@ export const Route = createFileRoute("/_authed/w/$workspace/")({
 // How many of the latest changes the overview shows, and so fetches.
 const latestChanges = 5;
 
+/** The overview page: the workspace's name, then its three sections. */
 function Overview() {
   const { workspace } = Route.useParams();
   const { api } = Route.useRouteContext();
@@ -108,6 +119,11 @@ function Overview() {
   );
 }
 
+/**
+ * A titled section of the overview, with an optional action, such as a link,
+ * beside its heading. The heading names the section for assistive
+ * technology, and its id names the list inside, too.
+ */
 function Section({
   id,
   title,

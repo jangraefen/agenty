@@ -1,8 +1,17 @@
 // Package api holds the JSON types of Agenty's HTTP API, shared by the
 // server and its clients. schema/openapi.yaml at the module root defines the
-// API: its routes, and the types generated from it into api.gen.go. This file adds what the spec
-// cannot express in Go: the event names of a run's stream, and conversions
-// from and to the platform's own types.
+// API: its routes, and the types generated from it into api.gen.go. This file
+// adds what the spec cannot express in Go: the event names of a run's
+// stream, and conversions from and to the platform's own types.
+//
+// The package is the boundary between the platform's internal types
+// (harness, model, toolgateway) and what crosses the wire. Package server
+// answers with these types, and the CLI's client decodes them; the web
+// frontend generates its TypeScript types from the same spec, so the three
+// agree by construction. Keeping the conversions here, not in the server,
+// means the internal types can change without changing the API, and what a
+// conversion leaves out, such as a reply's provider form, is left out for
+// every client alike.
 package api
 
 //go:generate go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0 -config oapi-codegen.yaml ../../schema/openapi.yaml
@@ -31,7 +40,8 @@ const (
 	MaxPageLimit     = 200
 )
 
-// FromHarness returns h in its API form.
+// FromHarness returns h in its API form, field by field, so the API's JSON
+// does not follow the harness package's own encoding.
 func FromHarness(h harness.Harness) Harness {
 	out := Harness{
 		Name:         h.Name,
@@ -46,7 +56,8 @@ func FromHarness(h harness.Harness) Harness {
 	return out
 }
 
-// ToHarness returns h as a harness.Harness.
+// ToHarness returns h as a harness.Harness. It does not validate it: the
+// server validates the result before it stores it.
 func (h Harness) ToHarness() harness.Harness {
 	out := harness.Harness{
 		Name:         h.Name,
@@ -61,7 +72,10 @@ func (h Harness) ToHarness() harness.Harness {
 	return out
 }
 
-// FromRecord returns rec, recorded at the given time, in its API form.
+// FromRecord returns rec, recorded at the given time, in its API form. The
+// record's run ID is left out, as every route that returns records names the
+// run already. Its arguments and result are as the gateway recorded them,
+// redacted.
 func FromRecord(rec toolgateway.Record, recordedAt time.Time) AuditRecord {
 	return AuditRecord{
 		CallID:     rec.CallID,
@@ -91,7 +105,8 @@ func FromMessage(position int, msg model.Message) TranscriptMessage {
 	return out
 }
 
-// FromUsage maps a model call's usage.
+// FromUsage maps a model call's usage, or a run's sums of it, with the
+// tokens read from and written to the prompt cache apart.
 func FromUsage(u model.Usage) Usage {
 	return Usage{InputTokens: u.InputTokens, OutputTokens: u.OutputTokens, CacheWriteTokens: u.CacheWriteTokens, CacheReadTokens: u.CacheReadTokens}
 }

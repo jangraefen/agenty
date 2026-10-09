@@ -73,6 +73,8 @@ tasks:
     desc: Run Playwright E2E tests against the standalone production build
     deps: [build]
     cmds:
+      - task: db:migrate
+      - task: db:seed
       - pnpm exec playwright test {{.CLI_ARGS}}
 
   playwright:install:

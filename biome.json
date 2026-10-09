@@ -1,12 +1,25 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
-  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
   "files": {
     "ignoreUnknown": true,
     "includes": ["**", "!node_modules", "!.next", "!build", "!src/server/db/migrations"]
   },
-  "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2, "lineWidth": 100 },
-  "css": { "parser": { "tailwindDirectives": true } },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  },
   "linter": {
     "enabled": true,
     "rules": {
@@ -14,11 +27,79 @@
       "nursery": {
         "useSortedClasses": {
           "level": "error",
-          "options": { "attributes": ["className"], "functions": ["cn", "cva"] }
+          "options": {
+            "attributes": ["className"],
+            "functions": ["cn", "cva"]
+          }
         }
       }
     },
-    "domains": { "next": "recommended", "react": "recommended" }
+    "domains": {
+      "next": "recommended",
+      "react": "recommended"
+    }
   },
-  "assist": { "actions": { "source": { "organizeImports": "on" } } }
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": [
+        "**",
+        "!src/server/auth/**",
+        "!src/server/db/**",
+        "!scripts/**",
+        "!tests/**",
+        "!**/*.test.ts"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "@/server/db/auth-schema": "Only src/server/auth may use the auth tables",
+                  "@/server/auth/tenant-context": {
+                    "importNames": ["createTenantContext"],
+                    "message": "Only src/server/auth may create a tenant context"
+                  }
+                },
+                "patterns": [
+                  {
+                    "group": ["**/db/auth-schema", "**/db/auth-schema.ts"],
+                    "message": "Only src/server/auth may use the auth tables"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/server/db/**", "scripts/**", "!**/*.test.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "@/server/auth/tenant-context": {
+                    "importNames": ["createTenantContext"],
+                    "message": "Only src/server/auth may create a tenant context"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

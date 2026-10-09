@@ -15,8 +15,11 @@ type Deps = { headers?: Headers; auth?: Auth; db?: Db };
 
 /** The signed-in user's tenant context and display data, from one session lookup. */
 export async function getSignedIn(deps: Deps = {}) {
+  // Request headers first: during prerender this suspends before getAuth() reads the env, which
+  // `next build` does not have.
+  const requestHeaders = deps.headers ?? (await headers());
   const auth = deps.auth ?? getAuth();
-  const session = await auth.api.getSession({ headers: deps.headers ?? (await headers()) });
+  const session = await auth.api.getSession({ headers: requestHeaders });
   if (!session) throw new UnauthorizedError("Not signed in");
   const db = deps.db ?? getDb();
   const [row] = await db

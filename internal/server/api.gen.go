@@ -70,7 +70,7 @@ type ServerInterface interface {
 	CancelRun(c *gin.Context, workspace Workspace, id RunID)
 	// StreamRunEvents A run's events, as server-sent events
 	// (GET /v1/workspaces/{workspace}/runs/{id}/events)
-	StreamRunEvents(c *gin.Context, workspace Workspace, id RunID)
+	StreamRunEvents(c *gin.Context, workspace Workspace, id RunID, params StreamRunEventsParams)
 	// FollowUpRun Continue a run's conversation with a new run
 	// (POST /v1/workspaces/{workspace}/runs/{id}/follow-up)
 	FollowUpRun(c *gin.Context, workspace Workspace, id RunID)
@@ -729,6 +729,30 @@ func (siw *ServerInterfaceWrapper) StreamRunEvents(c *gin.Context) {
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params StreamRunEventsParams
+
+	headers := c.Request.Header
+
+	// ------------- Optional header parameter "Last-Event-ID" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Last-Event-ID")]; found {
+		var LastEventID int64
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandler(c, fmt.Errorf("Expected one value for Last-Event-ID, got %d", n), http.StatusBadRequest)
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Last-Event-ID", valueList[0], &LastEventID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"})
+		if err != nil {
+			siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter Last-Event-ID: %w", err), http.StatusBadRequest)
+			return
+		}
+
+		params.LastEventID = LastEventID
+
+	}
+
 	for _, middleware := range siw.HandlerMiddlewares {
 		middleware(c)
 		if c.IsAborted() {
@@ -736,7 +760,7 @@ func (siw *ServerInterfaceWrapper) StreamRunEvents(c *gin.Context) {
 		}
 	}
 
-	siw.Handler.StreamRunEvents(c, workspace, id)
+	siw.Handler.StreamRunEvents(c, workspace, id, params)
 }
 
 // FollowUpRun operation middleware

@@ -31,6 +31,7 @@ import (
 	"github.com/jangraefen/agenty/internal/model"
 	"github.com/jangraefen/agenty/internal/must"
 	"github.com/jangraefen/agenty/internal/store/db"
+	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
 //go:embed migrations/*.sql
@@ -348,11 +349,27 @@ func (s *Store) IdleRuns(ctx context.Context) ([]IdleRun, error) {
 	return out, nil
 }
 
+// Closing is what a cancelled run did not do, recorded before its end: the
+// tool gateway's records of the calls that did not run, and the messages of
+// its transcript that say so.
+type Closing struct {
+	Records  []toolgateway.Record
+	Messages []NewMessage
+}
+
+// Closer returns the Closing of the run being cancelled, read from tx, the
+// store within the cancel's transaction, which it may only read.
+type Closer func(ctx context.Context, tx *Store) (Closing, error)
+
 // CancelIdleRun records a queued or waiting run as cancelled, giving why, and
 // withdraws the approval request it waits for. It reports false if the run
-// is neither, such as one a worker has claimed.
-func (s *Store) CancelIdleRun(ctx context.Context, id, why string) (bool, error) {
+// is neither, such as one a worker has claimed. If closing is set, what it
+// returns is recorded in the same transaction, before the run's end. A
+// closing that fails does not stop the cancel: the run is cancelled without
+// it, and the error says why.
+func (s *Store) CancelIdleRun(ctx context.Context, id, why string, closing Closer) (bool, error) {
 	cancelled := false
+	var closeErr error
 	_, err := s.withEvents(ctx, func(q *db.Queries) ([]auditlog.Event, error) {
 		// The request first, then the run, as AnswerApproval and
 		// ExpireApprovals lock them.
@@ -364,9 +381,61 @@ func (s *Store) CancelIdleRun(ctx context.Context, id, why string) (bool, error)
 			return nil, wrapRun(id, err)
 		}
 		cancelled = true
-		return []auditlog.Event{runFinished(rows[0].Workspace, id, RunCancelled, rows[0].Steps, why)}, nil
+		finished := runFinished(rows[0].Workspace, id, RunCancelled, rows[0].Steps, why)
+		if closing == nil {
+			return []auditlog.Event{finished}, nil
+		}
+		events, err := s.closeOut(ctx, q, id, closing)
+		if err != nil {
+			closeErr = fmt.Errorf("store: run %s is cancelled, but what it did not do is not recorded: %w", id, err)
+			events = nil
+		}
+		return append(events, finished), nil
 	})
-	return cancelled, err
+	if err != nil {
+		return false, err
+	}
+	return cancelled, closeErr
+}
+
+// closeOut stores the messages of the Closing of the run id that closing
+// returns, read and stored in q's transaction, and returns the events of
+// its records. It stores nothing if it fails: the transaction rolls back to
+// a savepoint.
+func (s *Store) closeOut(ctx context.Context, q *db.Queries, id string, closing Closer) ([]auditlog.Event, error) {
+	tx := &Store{queries: q}
+	if err := q.SavepointClosing(ctx); err != nil {
+		return nil, err
+	}
+	events, err := func() ([]auditlog.Event, error) {
+		c, err := closing(ctx, tx)
+		if err != nil {
+			return nil, err
+		}
+		owner, err := q.RunOwner(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range c.Messages {
+			if err := tx.AppendMessage(ctx, id, m); err != nil {
+				return nil, err
+			}
+		}
+		events := make([]auditlog.Event, len(c.Records))
+		for i, rec := range c.Records {
+			if rec.RunID != id {
+				return nil, fmt.Errorf("a record of run %s", rec.RunID)
+			}
+			if events[i], err = toolEvent(rec, owner.StartedBy, owner.Workspace); err != nil {
+				return nil, err
+			}
+		}
+		return events, nil
+	}()
+	if err != nil {
+		return nil, errors.Join(err, q.RollbackToClosing(ctx))
+	}
+	return events, nil
 }
 
 // SetRunDigests records what a running run sends the model; see Run.

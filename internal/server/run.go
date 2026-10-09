@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/jangraefen/agenty/internal/agent"
-	"github.com/jangraefen/agenty/internal/api"
 	"github.com/jangraefen/agenty/internal/config"
 	"github.com/jangraefen/agenty/internal/mcptool"
 	"github.com/jangraefen/agenty/internal/model"
@@ -35,21 +34,21 @@ type newRun struct {
 }
 
 // enqueue stores r as a queued run and wakes a worker for it. The run gets
-// its hub first, so a stored queued run of this server always has an event
+// its job first, so a stored queued run of this server always has an event
 // stream. On error it also returns the status to respond with: 409 for a
 // run that another run already follows, 503 when the server is stopping,
 // 500 otherwise.
 func (s *Server) enqueue(r newRun) (store.Run, int, error) {
 	v := r.version
 	id := rand.Text()
-	h, err := s.register(id, v.Workspace, v.Harness.Name)
+	j, err := s.register(id, v.Workspace, v.Harness.Name)
 	if err != nil {
 		return store.Run{}, http.StatusServiceUnavailable, err
 	}
 	run, err := s.cfg.Store.CreateRun(s.ctx, store.NewRun{ID: id, HarnessVersionID: v.ID, Input: r.input, StartedBy: r.user, Follows: r.follows})
 	if err != nil {
 		s.unregister(id)
-		h.cancel(nil)
+		j.cancel(nil)
 		status := http.StatusInternalServerError
 		if errors.Is(err, store.ErrConflict) {
 			// Another follow-up of the same run was stored first.
@@ -62,22 +61,32 @@ func (s *Server) enqueue(r newRun) (store.Run, int, error) {
 	return run, 0, nil
 }
 
-// register gives the run id a hub, unless the server is stopping. Registering
+// job is a run of this server that has not finished: queued, running or
+// waiting. Its events are not held here: the audit log holds them.
+type job struct {
+	workspace, harness string
+	// ctx is the run's context, and cancel cancels it, with the cause
+	// recorded as the run's end.
+	ctx    context.Context
+	cancel context.CancelCauseFunc
+}
+
+// register gives the run id a job, unless the server is stopping. Registering
 // under the lock Close takes means no run is queued once Close has begun.
-func (s *Server) register(id, workspace, harness string) (*hub, error) {
-	h := newHub(id, workspace, harness)
-	h.ctx, h.cancel = context.WithCancelCause(s.ctx)
+func (s *Server) register(id, workspace, harness string) (*job, error) {
+	j := &job{workspace: workspace, harness: harness}
+	j.ctx, j.cancel = context.WithCancelCause(s.ctx)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		h.cancel(nil)
+		j.cancel(nil)
 		return nil, errClosed
 	}
-	s.runs[id] = h
-	return h, nil
+	s.runs[id] = j
+	return j, nil
 }
 
-// unregister removes the hub of the run id.
+// unregister removes the job of the run id.
 func (s *Server) unregister(id string) {
 	s.mu.Lock()
 	delete(s.runs, id)
@@ -131,33 +140,33 @@ const claimRetry = 5 * time.Second
 // take executes a run a worker claimed, unless it was cancelled while it was
 // queued.
 func (s *Server) take(claimed store.ClaimedRun) {
-	h := s.hub(claimed.Workspace, claimed.ID)
-	if h == nil {
-		// Every queued run of this server has a hub, and New gives one to
+	j := s.job(claimed.Workspace, claimed.ID)
+	if j == nil {
+		// Every queued run of this server has a job, and New gives one to
 		// those an earlier server left queued.
-		s.cfg.Logger.Error("a claimed run has no event stream", "run_id", claimed.ID)
+		s.cfg.Logger.Error("a claimed run has no job", "run_id", claimed.ID)
 		s.finish(context.Background(), nil, claimed.ID, store.RunFailed, agent.Result{}, "the server lost the run")
 		return
 	}
-	p, err := s.prepare(h, claimed)
+	p, err := s.prepare(j, claimed)
 	if err != nil {
 		// A run cancelled while it was queued, or while it was being
 		// prepared, fails to prepare, as its context is cancelled.
 		var by cancelledBy
 		switch {
-		case errors.As(context.Cause(h.ctx), &by):
-			if err := s.closeOut(h.ctx, h, claimed.ID, by); err != nil {
+		case errors.As(context.Cause(j.ctx), &by):
+			if err := s.closeOut(j.ctx, claimed.ID, by); err != nil {
 				s.cfg.Logger.Error("cannot record the calls a cancelled run did not run", "run_id", claimed.ID, "error", err)
 			}
-			s.finish(h.ctx, h, claimed.ID, store.RunCancelled, agent.Result{}, by.Error())
+			s.finish(j.ctx, j, claimed.ID, store.RunCancelled, agent.Result{}, by.Error())
 		case s.ctx.Err() != nil:
-			s.finish(h.ctx, h, claimed.ID, store.RunFailed, agent.Result{}, errStopped)
+			s.finish(j.ctx, j, claimed.ID, store.RunFailed, agent.Result{}, errStopped)
 		default:
-			s.finish(h.ctx, h, claimed.ID, store.RunFailed, agent.Result{}, s.cfg.Resolved.Redactor.String(err.Error()))
+			s.finish(j.ctx, j, claimed.ID, store.RunFailed, agent.Result{}, s.cfg.Resolved.Redactor.String(err.Error()))
 		}
 		return
 	}
-	s.execute(h.ctx, h, p)
+	s.execute(j.ctx, j, p)
 }
 
 // errStopped is how a run ends that the server stopped before it finished.
@@ -180,8 +189,8 @@ type prepared struct {
 // the MCP servers it needs or takes those its conversation keeps, and the
 // conversation so far. A run that does not go ahead gives the conversation
 // back the servers it took.
-func (s *Server) prepare(h *hub, claimed store.ClaimedRun) (prepared, error) {
-	ctx := h.ctx
+func (s *Server) prepare(j *job, claimed store.ClaimedRun) (prepared, error) {
+	ctx := j.ctx
 	if err := context.Cause(ctx); err != nil {
 		return prepared{}, err
 	}
@@ -224,7 +233,7 @@ func (s *Server) prepare(h *hub, claimed store.ClaimedRun) (prepared, error) {
 		Model:      m,
 		Servers:    lease.Servers(),
 		Policy:     s.cfg.Operator.Policy,
-		Audit:      runAudit{store: s.cfg.Store, hub: h},
+		Audit:      runAudit{store: s.cfg.Store, events: &s.events},
 		Redactor:   s.cfg.Resolved.Redactor,
 		Transcript: runTranscript{store: s.cfg.Store, redact: s.cfg.Resolved.Redactor},
 	})
@@ -277,7 +286,7 @@ func (s *Server) answered(ctx context.Context, approval store.Approval) ([]toolg
 // transcript does not hold the call as the approver saw it, as redaction
 // changed it, the answer is a rejection.
 func (s *Server) resumption(ctx context.Context, p *prepared, approval store.Approval) error {
-	own, altered, err := s.ownMessages(ctx, approval.RunID)
+	own, altered, err := ownMessages(ctx, s.cfg.Store, approval.RunID)
 	if err != nil {
 		return err
 	}
@@ -378,7 +387,7 @@ func (u cancelledBy) Error() string { return "cancelled by " + string(u) }
 // the conversation, and records how the run ended. The servers are kept
 // before, so a follow-up the end allows finds them. A run that fails after a
 // user cancelled it ended as cancelled.
-func (s *Server) execute(ctx context.Context, h *hub, p prepared) {
+func (s *Server) execute(ctx context.Context, j *job, p prepared) {
 	var (
 		res    agent.Result
 		runErr error
@@ -395,7 +404,7 @@ func (s *Server) execute(ctx context.Context, h *hub, p prepared) {
 		if err := errors.Join(p.agent.Close(), keep(ctx, p.lease)); err != nil {
 			s.cfg.Logger.Error("cannot keep a suspended run's tool servers", "run_id", p.agent.ID(), "error", err)
 		}
-		s.suspend(ctx, h, p.agent.ID(), res, suspended)
+		s.suspend(ctx, j, p.agent.ID(), res, suspended)
 		return
 	}
 	err := errors.Join(runErr, p.agent.Close(), keep(ctx, p.lease))
@@ -408,21 +417,21 @@ func (s *Server) execute(ctx context.Context, h *hub, p prepared) {
 		status, errMsg = store.RunCancelled, by.Error()
 		s.cfg.Logger.Info("run cancelled", "run_id", p.agent.ID(), "error", err)
 		if p.resume != nil {
-			if err := s.closeOut(ctx, h, p.agent.ID(), by); err != nil {
+			if err := s.closeOut(ctx, p.agent.ID(), by); err != nil {
 				s.cfg.Logger.Error("cannot record the calls a cancelled run did not run", "run_id", p.agent.ID(), "error", err)
 			}
 		}
 	case err != nil:
 		status, errMsg = store.RunFailed, s.cfg.Resolved.Redactor.String(err.Error())
 	}
-	s.finish(ctx, h, p.agent.ID(), status, res, errMsg)
+	s.finish(ctx, j, p.agent.ID(), status, res, errMsg)
 }
 
 // suspend records that the run waits for approval of the call suspended
-// names, and publishes the request. The run then waits, holding no worker,
+// names, which the audit log records as its request. The run then waits, holding no worker,
 // until the request is answered or expires, either of which queues it. A run
 // that cannot be suspended fails.
-func (s *Server) suspend(ctx context.Context, h *hub, id string, res agent.Result, suspended *agent.Suspended) {
+func (s *Server) suspend(ctx context.Context, j *job, id string, res agent.Result, suspended *agent.Suspended) {
 	// As precise as PostgreSQL keeps it, so the event and the stored request
 	// agree.
 	now := time.Now().Truncate(time.Microsecond)
@@ -444,21 +453,21 @@ func (s *Server) suspend(ctx context.Context, h *hub, id string, res agent.Resul
 		ExpiresAt: now.Add(s.approvalTimeout()),
 	}
 	if err := s.cfg.Store.SuspendRun(context.WithoutCancel(ctx), a); err != nil {
-		s.finish(ctx, h, id, store.RunFailed, res, s.cfg.Resolved.Redactor.String(err.Error()))
+		s.finish(ctx, j, id, store.RunFailed, res, s.cfg.Resolved.Redactor.String(err.Error()))
 		return
 	}
+	s.events.notify(id)
 	// A cancel that came as the run suspended found it still running.
 	var by cancelledBy
 	if errors.As(context.Cause(ctx), &by) {
-		s.cancelIdle(ctx, h, id, by)
+		s.cancelIdle(ctx, id, by)
 		return
 	}
 	select {
 	case s.expiry <- struct{}{}:
 	default:
 	}
-	s.cfg.Logger.Info("run waits for approval", "harness", h.harness, "run_id", id, "tool", a.Tool)
-	h.publish(event{api.EventApproval, apiApproval(store.Approval{NewApproval: a, Harness: h.harness})})
+	s.cfg.Logger.Info("run waits for approval", "harness", j.harness, "run_id", id, "tool", a.Tool)
 }
 
 // approvalTimeout is how long an approval request waits for an answer.
@@ -517,57 +526,55 @@ func (s *Server) expire() {
 	}
 }
 
-// replay publishes to a run's new hub what the run recorded so far: its
-// audit records and, if it waits, its approval request.
-func (s *Server) replay(ctx context.Context, h *hub, status store.RunStatus) error {
-	records, err := s.cfg.Store.AuditRecords(ctx, h.runID)
+// closeOut completes the record of a running run that was cancelled as it
+// was to resume after an approval: see notRun. A run that has no such call
+// is left as it is.
+func (s *Server) closeOut(ctx context.Context, id string, by cancelledBy) error {
+	ctx = context.WithoutCancel(ctx)
+	c, err := notRun(ctx, s.cfg.Store, id, by)
 	if err != nil {
 		return err
 	}
-	for _, r := range records {
-		h.publish(event{api.EventAudit, api.FromRecord(r.Record, r.RecordedAt)})
+	for _, rec := range c.Records {
+		if err := s.cfg.Store.Record(ctx, rec); err != nil {
+			return err
+		}
+		s.events.notify(id)
 	}
-	if status != store.RunWaiting {
-		return nil
+	for _, m := range c.Messages {
+		if err := s.cfg.Store.AppendMessage(ctx, id, m); err != nil {
+			return err
+		}
 	}
-	a, ok, err := s.cfg.Store.LatestApproval(ctx, h.runID)
-	if err == nil && ok && a.Status == store.ApprovalPending {
-		h.publish(event{api.EventApproval, apiApproval(a)})
-	}
-	return err
+	return nil
 }
 
-// closeOut completes the record of a run that was cancelled while it waited
-// for approval, or to resume after one: the waiting call did not run, nor
-// did the calls after it in the model's reply. The audit log records the
-// call's approval as failed, and the transcript the results of the reply's
-// calls, so the conversation can continue from it. A run that has no such
-// call, as its waiting call was answered in the gateway, is left as it is.
-func (s *Server) closeOut(ctx context.Context, h *hub, id string, by cancelledBy) error {
-	ctx = context.WithoutCancel(ctx)
-	a, ok, err := s.cfg.Store.LatestApproval(ctx, id)
+// notRun reads from st what the run id, cancelled by by while it waited for
+// approval, or to resume after one, did not do: the waiting call did not
+// run, nor did the calls after it in the model's reply. The audit log
+// records the call's approval as failed, and the transcript the results of
+// the reply's calls, so the conversation can continue from it. A run that
+// has no such call, as its waiting call was answered in the gateway, has
+// nothing to record.
+func notRun(ctx context.Context, st *store.Store, id string, by cancelledBy) (store.Closing, error) {
+	a, ok, err := st.LatestApproval(ctx, id)
 	if err != nil || !ok {
-		return err
+		return store.Closing{}, err
 	}
-	own, _, err := s.ownMessages(ctx, id)
+	own, _, err := ownMessages(ctx, st, id)
 	if err != nil {
-		return err
+		return store.Closing{}, err
 	}
-	records, err := s.cfg.Store.AuditRecords(ctx, id)
+	records, err := st.AuditRecords(ctx, id)
 	if err != nil {
-		return err
+		return store.Closing{}, err
 	}
 	if used(records, a.CallID) || !asked(own, a) {
-		return nil
+		return store.Closing{}, nil
 	}
 	calls := own[len(own)-1].ToolCalls
 	failed := "approval failed: " + by.Error()
 	rec := toolgateway.Record{RunID: id, CallID: a.CallID, Event: toolgateway.EventApproval, Tool: a.Tool, Args: a.Args, Decision: toolgateway.Deny, Reason: failed}
-	at, err := s.cfg.Store.RecordAt(ctx, rec)
-	if err != nil {
-		return err
-	}
-	h.publish(event{api.EventAudit, api.FromRecord(rec, at)})
 	results := slices.Clone(a.Results)
 	for i, c := range calls[a.Call:] {
 		content := "Not run: the run was " + by.Error() + "."
@@ -576,13 +583,24 @@ func (s *Server) closeOut(ctx context.Context, h *hub, id string, by cancelledBy
 		}
 		results = append(results, model.ToolResult{CallID: c.ID, Content: content, IsError: true})
 	}
-	return s.cfg.Store.AppendMessage(ctx, id, store.NewMessage{Position: len(own), Message: model.Message{Role: model.RoleUser, ToolResults: results}})
+	return store.Closing{
+		Records:  []toolgateway.Record{rec},
+		Messages: []store.NewMessage{{Position: len(own), Message: model.Message{Role: model.RoleUser, ToolResults: results}}},
+	}, nil
+}
+
+// closing is the store.Closer of the run id, cancelled by by while it was
+// queued or waiting.
+func closing(id string, by cancelledBy) store.Closer {
+	return func(ctx context.Context, tx *store.Store) (store.Closing, error) {
+		return notRun(ctx, tx, id, by)
+	}
 }
 
 // ownMessages returns the run's messages as stored, and whether redaction
 // altered any of them from what the model saw.
-func (s *Server) ownMessages(ctx context.Context, id string) (own []model.Message, altered bool, err error) {
-	transcript, err := s.cfg.Store.Transcript(ctx, id)
+func ownMessages(ctx context.Context, st *store.Store, id string) (own []model.Message, altered bool, err error) {
+	transcript, err := st.Transcript(ctx, id)
 	if err != nil {
 		return nil, false, err
 	}
@@ -603,17 +621,18 @@ func used(records []store.AuditRecord, callID string) bool {
 }
 
 // cancelIdle cancels the queued or waiting run id in the store, and if it was
-// one, completes its record, publishes its end and unregisters its hub h.
-func (s *Server) cancelIdle(ctx context.Context, h *hub, id string, by cancelledBy) {
+// one, records what it did not do and unregisters its job.
+func (s *Server) cancelIdle(ctx context.Context, id string, by cancelledBy) {
 	ctx = context.WithoutCancel(ctx)
-	switch cancelled, err := s.cfg.Store.CancelIdleRun(ctx, id, by.Error()); {
+	cancelled, err := s.cfg.Store.CancelIdleRun(ctx, id, by.Error(), closing(id, by))
+	switch {
+	case cancelled && err != nil:
+		s.cfg.Logger.Error("cannot record the calls a cancelled run did not run", "run_id", id, "error", err)
 	case err != nil:
 		s.cfg.Logger.Error("cannot cancel a queued or waiting run in the store", "run_id", id, "error", err)
-	case cancelled:
-		if err := s.closeOut(ctx, h, id, by); err != nil {
-			s.cfg.Logger.Error("cannot record the calls a cancelled run did not run", "run_id", id, "error", err)
-		}
-		s.publishEnd(ctx, h, store.Run{ID: id, Status: store.RunCancelled, Error: by.Error()})
+	}
+	if cancelled {
+		s.events.notify(id)
 		s.unregister(id)
 	}
 }
@@ -621,25 +640,23 @@ func (s *Server) cancelIdle(ctx context.Context, h *hub, id string, by cancelled
 // cancelLeft cancels the queued or waiting run r, at a start, as its owner
 // is no longer a member of its workspace, and records the calls it did not
 // run, so the conversation can go on if they come back. It fails unless the
-// run was cancelled: the server must not start with it still to be taken
-// up. A failure to record the calls, once the run is cancelled, is not
-// retried at the next start.
-func (s *Server) cancelLeft(ctx context.Context, h *hub, r store.IdleRun) error {
-	defer h.cancel(nil)
+// run was cancelled, with them recorded: the server must not start with it
+// still to be taken up. A failure to record the calls, once the run is
+// cancelled, is not retried at the next start.
+func (s *Server) cancelLeft(ctx context.Context, j *job, r store.IdleRun) error {
+	defer j.cancel(nil)
 	defer s.unregister(r.ID)
 	by := cancelledBy("the server, as " + r.Owner + " is no longer a member of " + r.Workspace)
-	switch cancelled, err := s.cfg.Store.CancelIdleRun(ctx, r.ID, by.Error()); {
-	case err != nil:
-		return err
-	case !cancelled:
-		return fmt.Errorf("run %s: not queued or waiting, so not cancelled", r.ID)
+	cancelled, err := s.cfg.Store.CancelIdleRun(ctx, r.ID, by.Error(), closing(r.ID, by))
+	if err == nil && !cancelled {
+		err = fmt.Errorf("run %s: not queued or waiting, so not cancelled", r.ID)
 	}
-	return s.closeOut(ctx, h, r.ID, by)
+	return err
 }
 
-// finish records how the run id ended and publishes that as the last event
-// of its hub, if it has one, which it then unregisters.
-func (s *Server) finish(ctx context.Context, h *hub, id string, status store.RunStatus, res agent.Result, errMsg string) {
+// finish records how the run id ended, which ends its event streams, and
+// unregisters its job j, if it has one.
+func (s *Server) finish(ctx context.Context, j *job, id string, status store.RunStatus, res agent.Result, errMsg string) {
 	redact := s.cfg.Resolved.Redactor
 	// The run's context may be cancelled; how the run ended is recorded
 	// regardless.
@@ -647,32 +664,21 @@ func (s *Server) finish(ctx context.Context, h *hub, id string, status store.Run
 	if err := s.cfg.Store.FinishRun(ctx, id, status, redact.String(res.Output), res.Steps, errMsg); err != nil {
 		s.cfg.Logger.Error("cannot record the end of a run", "run_id", id, "error", err)
 	}
-	if h == nil {
+	s.events.notify(id)
+	if j == nil {
 		return
 	}
-	defer s.unregister(id)
-	s.cfg.Logger.Info("run finished", "harness", h.harness, "run_id", id, "status", status, "steps", res.Steps)
-	s.publishEnd(ctx, h, store.Run{ID: id, Status: status, Output: redact.String(res.Output), Steps: res.Steps, Error: errMsg})
+	s.unregister(id)
+	s.cfg.Logger.Info("run finished", "harness", j.harness, "run_id", id, "status", status, "steps", res.Steps)
 }
 
-// publishEnd publishes the run as stored as the last event of its hub, or
-// fallback if it cannot be read.
-func (s *Server) publishEnd(ctx context.Context, h *hub, fallback store.Run) {
-	finished, err := s.cfg.Store.Run(ctx, h.workspace, fallback.ID)
-	if err != nil {
-		s.cfg.Logger.Error("cannot read a finished run", "run_id", fallback.ID, "error", err)
-		finished = fallback
-	}
-	h.publish(event{api.EventFinished, apiRun(finished)})
-}
-
-// hub returns the hub of the unfinished run id in workspace, or nil if there
+// job returns the job of the unfinished run id in workspace, or nil if there
 // is none.
-func (s *Server) hub(workspace, id string) *hub {
+func (s *Server) job(workspace, id string) *job {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if h := s.runs[id]; h != nil && h.workspace == workspace {
-		return h
+	if j := s.runs[id]; j != nil && j.workspace == workspace {
+		return j
 	}
 	return nil
 }
@@ -690,11 +696,11 @@ func duration(d time.Duration) string {
 	return s
 }
 
-// runAudit records to the store and, once a record is stored, publishes it
-// to the run's subscribers.
+// runAudit records to the store and, once a record is stored, wakes the
+// readers of the run's events.
 type runAudit struct {
-	store *store.Store
-	hub   *hub
+	store  *store.Store
+	events *notifier
 }
 
 var _ toolgateway.Audit = runAudit{}
@@ -702,11 +708,10 @@ var _ toolgateway.Audit = runAudit{}
 // Record stores rec even if the run is being cancelled: a result is recorded
 // after its call ran, and must not be lost to a shutdown.
 func (a runAudit) Record(ctx context.Context, rec toolgateway.Record) error {
-	at, err := a.store.RecordAt(context.WithoutCancel(ctx), rec)
-	if err != nil {
+	if err := a.store.Record(context.WithoutCancel(ctx), rec); err != nil {
 		return err
 	}
-	a.hub.publish(event{api.EventAudit, api.FromRecord(rec, at)})
+	a.events.notify(rec.RunID)
 	return nil
 }
 

@@ -417,11 +417,13 @@ export interface paths {
         };
         /**
          * A run's events, as server-sent events
-         * @description The events from the run's start. The stream of a run that has not
-         *     finished, queued, waiting or running, replays what it recorded so
-         *     far, a waiting run's approval request included, then follows it
-         *     until it finishes; a finished run's stream replays its audit records
-         *     and its end. Each event's data is JSON:
+         * @description The events from the run's start, or after the one Last-Event-ID
+         *     names, read from the audit log: its audit records, the approval
+         *     requests it made, as they are now, and its end. The stream of a run
+         *     that has not finished, queued, waiting or running, replays them,
+         *     then follows the run until it finishes, or until the server stops,
+         *     which leaves queued and waiting runs to the next. Each event has
+         *     its id in the audit log as its SSE id, and its data is JSON:
          *
          *     - `audit`: an AuditRecord
          *     - `approval`: an ApprovalRequest
@@ -1286,7 +1288,10 @@ export interface operations {
     streamRunEvents: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of the last event the reader saw; the stream goes on after it. */
+                "Last-Event-ID"?: number;
+            };
             path: {
                 workspace: components["parameters"]["Workspace"];
                 /**

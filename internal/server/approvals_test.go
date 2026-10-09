@@ -171,10 +171,16 @@ func TestApprovals_CancelAWaitingRun(t *testing.T) {
 	f := newFixture(t, options{policy: writesNeedApproval})
 	f.putNotes(t)
 	run, req := f.waitForApproval(t)
+	events := f.events(t, run.ID)
 
 	require.Equal(t, http.StatusAccepted, f.do(t, http.MethodPost, home+"/runs/"+run.ID+"/cancel", nil, nil))
 
+	streamed := events.rest()
+	require.GreaterOrEqual(t, len(streamed), 2)
+	failure := decodeAs[api.AuditRecord](t, streamed[len(streamed)-2])
+	assert.Equal(t, api.AuditEventApproval, failure.Event, "the stream tells what became of the call before the run's end")
 	cancelled := f.finish(t, run.ID)
+	assert.Equal(t, decodeAs[api.Run](t, streamed[len(streamed)-1]), cancelled)
 	assert.Equal(t, api.RunStatusCancelled, cancelled.Status)
 	assert.Equal(t, "cancelled by alice", cancelled.Error)
 	var pending []api.ApprovalRequest

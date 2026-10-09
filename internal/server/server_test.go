@@ -713,7 +713,7 @@ func TestInvariant_WorkspacesAreSeparate(t *testing.T) {
 	require.NoError(t, err)
 	_, err = f.store.CreateRun(ctx, store.NewRun{ID: "carols", HarnessVersionID: v.ID, Input: "x", StartedBy: "carol"})
 	require.NoError(t, err)
-	cancelled, err := f.store.CancelIdleRun(ctx, "carols", "seeded")
+	cancelled, err := f.store.CancelIdleRun(ctx, "carols", "seeded", nil)
 	require.NoError(t, err)
 	require.True(t, cancelled)
 	// alice's conversation in a workspace the config no longer has.
@@ -721,7 +721,7 @@ func TestInvariant_WorkspacesAreSeparate(t *testing.T) {
 	require.NoError(t, err)
 	_, err = f.store.CreateRun(ctx, store.NewRun{ID: "alices-gone", HarnessVersionID: gone.ID, Input: "x", StartedBy: "alice"})
 	require.NoError(t, err)
-	cancelled, err = f.store.CancelIdleRun(ctx, "alices-gone", "seeded")
+	cancelled, err = f.store.CancelIdleRun(ctx, "alices-gone", "seeded", nil)
 	require.NoError(t, err)
 	require.True(t, cancelled)
 	f.script(modeltest.CallTools(call("c1", "files_write", `{}`)))

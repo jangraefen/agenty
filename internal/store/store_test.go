@@ -539,7 +539,7 @@ func TestCancelIdleRun(t *testing.T) {
 	newRun(t, s, "running")
 	createRun(t, s, store.NewRun{ID: "queued", HarnessVersionID: 1, Input: "x", StartedBy: "alice"})
 
-	cancelled, err := s.CancelIdleRun(ctx, "queued", "cancelled by bob")
+	cancelled, err := s.CancelIdleRun(ctx, "queued", "cancelled by bob", nil)
 	require.NoError(t, err)
 	assert.True(t, cancelled)
 	r, err := s.Run(ctx, ws, "queued")
@@ -552,7 +552,7 @@ func TestCancelIdleRun(t *testing.T) {
 	assert.False(t, ok, "a cancelled run is not claimed")
 
 	for _, id := range []string{"queued", "running", "ghost"} {
-		cancelled, err := s.CancelIdleRun(ctx, id, "again")
+		cancelled, err := s.CancelIdleRun(ctx, id, "again", nil)
 		require.NoError(t, err)
 		assert.False(t, cancelled, "only a queued run is cancelled in the store: %s", id)
 	}
@@ -701,7 +701,7 @@ func TestRecord_FailsClosed(t *testing.T) {
 	require.Error(t, err)
 	_, err = s.IdleRuns(ctx)
 	require.Error(t, err)
-	_, err = s.CancelIdleRun(ctx, "r1", "x")
+	_, err = s.CancelIdleRun(ctx, "r1", "x", nil)
 	require.Error(t, err)
 	require.Error(t, s.SuspendRun(ctx, store.NewApproval{ID: "a1", RunID: "r1"}))
 	_, err = s.PendingApprovals(ctx, ws, "alice")

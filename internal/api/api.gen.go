@@ -494,6 +494,12 @@ type ListWorkspaceAuditEventsParams struct {
 	Before BeforeEvent `form:"before,omitempty" json:"before,omitempty"`
 }
 
+// StreamRunEventsParams defines parameters for StreamRunEvents.
+type StreamRunEventsParams struct {
+	// LastEventID The id of the last event the reader saw; the stream goes on after it.
+	LastEventID int64 `json:"Last-Event-ID,omitempty"`
+}
+
 // PutHarnessJSONRequestBody defines body for PutHarness for application/json ContentType.
 type PutHarnessJSONRequestBody = Harness
 

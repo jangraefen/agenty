@@ -75,6 +75,38 @@ test("lists every event, filtered, with links to runs", async () => {
   expect(history.location.search).toBe("?actor=ana&action=harness.changed");
 });
 
+test("names an approval request by the tool it asks for", async () => {
+  server.use(
+    http.get(`${apiUrl}/v1/audit/events`, () =>
+      HttpResponse.json<Schemas["AuditLogEventList"]>({
+        events: [
+          logEvent({
+            id: 3,
+            actor: "alice",
+            action: "approval.requested",
+            run_id: "run-1",
+            target: "",
+            details: {
+              approval: "a1",
+              call_id: "c1",
+              tool: "files_write",
+              args: { path: "notes.md" },
+              reasons: ["writes need a human"],
+              expires_at: "2026-10-09T13:00:00Z",
+            },
+          }),
+        ],
+      }),
+    ),
+  );
+  renderApp("/audit/events", TOKEN);
+
+  const table = await screen.findByRole("table", { name: "Events" });
+  const [, requested] = within(table).getAllByRole("row");
+  expect(requested).toHaveTextContent("Approval requested");
+  expect(requested).toHaveTextContent("files_write");
+});
+
 test("is a view of the audit log beside its runs", async () => {
   server.use(
     http.get(`${apiUrl}/v1/audit/runs`, () =>

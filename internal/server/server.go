@@ -72,12 +72,17 @@ type Server struct {
 	// request is added.
 	expiry chan struct{}
 
+	// events wakes the readers of runs' events.
+	events notifier
+	// stopped is closed once Close has stopped every run it stops.
+	stopped chan struct{}
+
 	mu sync.Mutex
 	// closed is set by Close; no run is queued after it.
 	closed bool
-	// runs holds the hubs of the runs of this server that have not finished:
+	// runs holds the jobs of the runs of this server that have not finished:
 	// queued, running and waiting.
-	runs map[string]*hub
+	runs map[string]*job
 }
 
 // errClosed is returned when a run is started on a closed server.
@@ -143,31 +148,28 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	workers := cfg.Operator.Runs.WorkersOrDefault()
 	s := &Server{
-		cfg: cfg, ctx: runCtx, cancel: cancel, runs: map[string]*hub{}, tokens: hashTokens(cfg.Resolved.UserTokens),
-		pool:   toolgateway.NewPool(idleTimeout, cfg.Logger),
-		wake:   make(chan struct{}, workers),
-		expiry: make(chan struct{}, 1),
+		cfg: cfg, ctx: runCtx, cancel: cancel, runs: map[string]*job{}, tokens: hashTokens(cfg.Resolved.UserTokens),
+		pool:    toolgateway.NewPool(idleTimeout, cfg.Logger),
+		wake:    make(chan struct{}, workers),
+		expiry:  make(chan struct{}, 1),
+		stopped: make(chan struct{}),
 	}
-	// The runs an earlier server left queued or waiting get their event
-	// streams, with what they recorded so far, before any worker may claim
-	// them. Those of a user who left the run's workspace are cancelled
-	// instead: no agent acts for someone who left.
+	// The runs an earlier server left queued or waiting become this
+	// server's jobs, before any worker may claim them. Those of a user who
+	// left the run's workspace are cancelled instead: no agent acts for
+	// someone who left.
 	queued := 0
 	for _, r := range idle {
-		h, err := s.register(r.ID, r.Workspace, r.Harness)
+		j, err := s.register(r.ID, r.Workspace, r.Harness)
 		if err != nil {
 			panic(err) // The server is not closed yet.
 		}
 		if !s.isMember(r.Owner, r.Workspace) {
-			if err := s.cancelLeft(ctx, h, r); err != nil {
+			if err := s.cancelLeft(ctx, j, r); err != nil {
 				s.Close()
 				return nil, fmt.Errorf("server: %w", err)
 			}
 			continue
-		}
-		if err := s.replay(ctx, h, r.Status); err != nil {
-			s.Close()
-			return nil, fmt.Errorf("server: %w", err)
 		}
 		if r.Status == store.RunQueued {
 			queued++
@@ -195,17 +197,14 @@ func (s *Server) Handler() http.Handler {
 // runs, which the next server takes up, end without the run's end.
 func (s *Server) Close() {
 	s.mu.Lock()
+	closed := s.closed
 	s.closed = true
 	s.mu.Unlock()
 	s.cancel()
 	s.wg.Wait()
-	// What is left are queued and waiting runs, which the next server takes
-	// up: their event streams end without an end.
-	s.mu.Lock()
-	for _, h := range s.runs {
-		h.stop()
+	if !closed {
+		close(s.stopped)
 	}
-	s.mu.Unlock()
 	if err := s.pool.Close(); err != nil {
 		s.cfg.Logger.Error("cannot stop the MCP servers of conversations", "error", err)
 	}

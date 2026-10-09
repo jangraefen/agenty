@@ -211,9 +211,18 @@ func TestQueue_ARunFinishingAsItIsReadIsThisServers(t *testing.T) {
 // status and body, read to the end.
 func (f *fixture) raw(t *testing.T, method, path string) (int, string) {
 	t.Helper()
+	return f.rawWith(t, method, path, nil)
+}
+
+// rawWith is raw with the given request headers.
+func (f *fixture) rawWith(t *testing.T, method, path string, header map[string]string) (int, string) {
+	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), method, f.http.URL+path, nil)
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+aliceToken)
+	for k, v := range header {
+		req.Header.Set(k, v)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	body, err := io.ReadAll(resp.Body)

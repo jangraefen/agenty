@@ -61,3 +61,13 @@ WHERE workspace = sqlc.arg(workspace) AND action = sqlc.arg(action)
   AND (sqlc.arg(before)::bigint = 0 OR id < sqlc.arg(before))
 ORDER BY id DESC
 LIMIT sqlc.arg(max_rows);
+
+-- name: RunEventsAfter :many
+-- A run's event stream after the event with the given id, in order, a page
+-- at a time: the tool gateway's records, its approval requests and its end.
+SELECT id, action, details, recorded_at FROM audit_events
+WHERE run_id = sqlc.arg(run_id)
+  AND action IN ('tool.decision', 'tool.approval', 'tool.result', 'approval.requested', 'run.finished')
+  AND id > sqlc.arg(after)
+ORDER BY id
+LIMIT sqlc.arg(max_rows);

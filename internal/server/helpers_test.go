@@ -270,6 +270,7 @@ func (f *fixture) startRun(t *testing.T, input string) api.Run {
 
 // sse is one server-sent event.
 type sse struct {
+	id   string
 	name string
 	data string
 }
@@ -290,9 +291,19 @@ func (f *fixture) events(t *testing.T, runID string) *stream {
 // eventsAs reads a run of home's events as the user with the given token.
 func (f *fixture) eventsAs(t *testing.T, bearer, runID string) *stream {
 	t.Helper()
+	return f.eventsAfter(t, bearer, runID, "")
+}
+
+// eventsAfter reads a run of home's events as the user with the given token,
+// after the event with the id lastID, if set.
+func (f *fixture) eventsAfter(t *testing.T, bearer, runID, lastID string) *stream {
+	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, f.http.URL+home+"/runs/"+runID+"/events", nil)
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+bearer)
+	if lastID != "" {
+		req.Header.Set("Last-Event-ID", lastID)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -310,6 +321,8 @@ func (s *stream) read() {
 	for s.lines.Scan() {
 		line := s.lines.Text()
 		switch {
+		case strings.HasPrefix(line, "id:"):
+			e.id = strings.TrimSpace(strings.TrimPrefix(line, "id:"))
 		case strings.HasPrefix(line, "event:"):
 			e.name = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
 		case strings.HasPrefix(line, "data:"):

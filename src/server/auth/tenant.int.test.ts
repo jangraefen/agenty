@@ -81,6 +81,15 @@ describe("tenant context", () => {
     await expect(getTenantContext({ auth, db, headers })).rejects.toThrow(ForbiddenError);
   });
 
+  it("refuses a member whose role is unknown (member.role is plain text)", async () => {
+    const { email, headers } = await signedInMember();
+    await db
+      .update(member)
+      .set({ role: "owner" })
+      .where(eq(member.userId, await userId(email)));
+    await expect(getTenantContext({ auth, db, headers })).rejects.toThrow(ForbiddenError);
+  });
+
   it("refuses a member whose organization lost its identity provider", async () => {
     const id = `tmp-${random()}`;
     providerIds.push(id);
@@ -102,5 +111,12 @@ describe("listMembers", () => {
     const ctxB = await getTenantContext({ auth, db, headers: b.headers });
     expect((await listMembers(ctxA, db)).map((m) => m.email)).toEqual([a.email]);
     expect((await listMembers(ctxB, db)).map((m) => m.email)).toEqual([b.email]);
+  });
+
+  it("fails instead of returning a member with an unknown role", async () => {
+    const a = await signedInMember();
+    const ctx = await getTenantContext({ auth, db, headers: a.headers });
+    await db.update(member).set({ role: "owner" }).where(eq(member.userId, ctx.userId));
+    await expect(listMembers(ctx, db)).rejects.toThrow();
   });
 });

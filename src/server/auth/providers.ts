@@ -5,7 +5,9 @@ import { isPublicRoutableHost } from "@better-auth/core/utils/host";
 import { z } from "zod";
 import type { ssoProvider } from "@/server/db/auth-schema";
 
-export type Role = "admin" | "member";
+/** member.role is plain text in the database: every read goes through this (fail closed). */
+export const roleSchema = z.enum(["admin", "member"]);
+export type Role = z.infer<typeof roleSchema>;
 export type ProviderRow = typeof ssoProvider.$inferSelect;
 
 const httpUrl = z.url({ protocol: /^https?$/ });

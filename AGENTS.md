@@ -40,7 +40,7 @@ All commands go through `Taskfile.yml` (go-task), identically locally and in CI.
 | `task db:generate` | New migration from `src/server/db/schema.ts`; `-- --custom --name x` for hand-written SQL |
 | `task db:migrate` | Apply migrations without starting the app, for tests and CI (`scripts/migrate.ts`) |
 | `task db:seed` | Register the mock IdP's providers `corp` and `partner` (insert-if-absent, never modifies a row) |
-| `task auth:generate` | Write Better Auth's reference schema to `build/auth-schema.generated.ts` for diffing after upgrades |
+| `task auth:generate` | Generate `src/server/db/auth-schema.ts` from the Better Auth config (never edit it by hand); then `task db:generate` |
 | `task db:studio` | Drizzle Studio |
 | `task policy:test` / `policy:build` | `opa test`; compile `policies/` to `build/policy/policy.wasm` |
 | `task lint` / `task format` | Biome check; apply Biome fixes incl. Tailwind class sorting |
@@ -89,7 +89,8 @@ docs/specs, docs/plans  per-milestone design and implementation plan
 Folders `src/server/{agents,tools,workflows,crypto}` are created by the milestones that need them.
 
 Every server module imports `"server-only"` except the ones plain Node or drizzle-kit load:
-`src/server/db/{migrate,schema,auth-schema,tenant-table,seed}.ts`. These use relative imports with
+`src/server/db/{migrate,schema,auth-schema,tenant-table,seed}.ts` and
+`src/server/auth/schema-options.ts`. These use relative imports with
 `.ts` extensions (no `@/` alias) so `node scripts/*.ts` and drizzle-kit can load them.
 
 ### Database
@@ -112,7 +113,11 @@ Every server module imports `"server-only"` except the ones plain Node or drizzl
   `auth-schema` (Biome `noRestrictedImports`; the import name `createTenantContext` is restricted
   the same way, `import type { TenantContext }` is allowed everywhere). Accepted risks: session
   tokens and provider client secrets (plain text, see Auth) are readable by `agenty_app`.
-  Hand-maintained `auth-schema.ts`: diff it against `task auth:generate` after Better Auth upgrades.
+  `auth-schema.ts` is generated, never edited by hand: `task auth:generate` runs the Better Auth CLI
+  on `scripts/auth-generate.config.ts`, which takes its schema options (uuid ids, sso
+  `additionalFields`, our `agenty-organizations` plugin) from `src/server/auth/schema-options.ts`,
+  shared with `createAuth`. Rerun it after Better Auth upgrades or option changes, then
+  `task db:generate`. `member.role` is plain text: read it through `roleSchema` (fail closed).
 - Domain tables (schema `app`) use `tenantId()` and `tenantIsolation()` from
   `src/server/db/tenant-table.ts`; the catalog guard test fails any table without them.
 - Integration tests run against the dev database. Provider-dependent files seed in `beforeAll`

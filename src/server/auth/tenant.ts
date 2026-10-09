@@ -5,6 +5,7 @@ import { cache } from "react";
 import { member, organization, ssoProvider } from "@/server/db/auth-schema";
 import { type Db, getDb } from "@/server/db/client";
 import { type Auth, getAuth } from "./auth";
+import { roleSchema } from "./providers";
 import { createTenantContext, type TenantContext } from "./tenant-context";
 
 export type { TenantContext } from "./tenant-context";
@@ -35,10 +36,12 @@ export async function getSignedIn(deps: Deps = {}) {
     .where(eq(member.userId, session.user.id));
   if (!row) throw new ForbiddenError("No organization membership");
   if (!row.providerId) throw new ForbiddenError("The organization has no identity provider");
+  const role = roleSchema.safeParse(row.role);
+  if (!role.success) throw new ForbiddenError("Unknown member role");
   const ctx = createTenantContext({
     userId: session.user.id,
     organizationId: row.organizationId,
-    role: row.role,
+    role: role.data,
   });
   return { ctx, user: { name: session.user.name, email: session.user.email } };
 }

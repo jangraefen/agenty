@@ -1,6 +1,6 @@
 import "server-only";
 import { computeDiscoveryUrl, DiscoveryError, discoverOIDCConfig, sso } from "@better-auth/sso";
-import { type BetterAuthPlugin, betterAuth, getCurrentAdapter } from "better-auth";
+import { betterAuth, getCurrentAdapter } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { and, eq } from "drizzle-orm";
@@ -24,6 +24,7 @@ import {
   selectProvider,
 } from "./providers";
 import { provisionMembership, resolveSignIn, takeDecision } from "./provisioning";
+import { databaseOptions, organizationsPlugin, ssoSchema } from "./schema-options";
 
 /** The only Better Auth endpoints reachable at all; every other path answers 404. */
 export const ALLOWED_ENDPOINTS: ReadonlySet<string> = new Set([
@@ -42,30 +43,6 @@ const signInBodySchema = z.strictObject({
   callbackURL: relativePath,
   errorCallbackURL: relativePath.optional(),
 });
-
-/** Declares our tables so Better Auth's adapter can read and write them. */
-const organizationsPlugin = {
-  id: "agenty-organizations",
-  schema: {
-    organization: {
-      fields: {
-        slug: { type: "string", required: true, unique: true },
-        providerId: { type: "string", required: false },
-        createdAt: { type: "date", required: true },
-        updatedAt: { type: "date", required: true },
-      },
-    },
-    member: {
-      fields: {
-        userId: { type: "string", required: true, unique: true },
-        organizationId: { type: "string", required: true },
-        role: { type: "string", required: true },
-        createdAt: { type: "date", required: true },
-        updatedAt: { type: "date", required: true },
-      },
-    },
-  },
-} satisfies BetterAuthPlugin;
 
 const idpUnavailable = () => new APIError("SERVICE_UNAVAILABLE", { code: "idp_unavailable" });
 
@@ -94,7 +71,7 @@ export function createAuth(
     basePath: "/api/auth",
     trustedOrigins: [baseURL, ...trustedOrigins],
     advanced: {
-      database: { generateId: "uuid" },
+      database: databaseOptions,
       useSecureCookies: baseURL.startsWith("https://"),
     },
     session: {
@@ -127,18 +104,11 @@ export function createAuth(
     plugins: [
       sso({
         providersLimit: 0,
-        schema: {
-          ssoProvider: {
-            additionalFields: {
-              organizationClaim: { type: "string", required: true },
-              roleClaim: { type: "string", required: false },
-              adminValues: { type: "string", required: false },
-            },
-          },
-        },
+        schema: ssoSchema,
         // Decides organization and role; session.create.before writes them in the same transaction.
         resolveUser: (input, { database }) => resolveSignIn(input, database),
       }),
+      // After sso(): it overrides the plugin's sso_provider.user_id (see schema-options.ts).
       organizationsPlugin,
     ],
     hooks: {

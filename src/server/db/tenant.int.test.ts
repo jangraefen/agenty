@@ -53,7 +53,12 @@ beforeAll(async () => {
   orgB = orgs.find((o) => (o as unknown as { slug: string }).slug.startsWith("rls-b"))?.id ?? "";
   ctxA = createTenantContext({ userId: randomUUID(), organizationId: orgA, role: "member" });
 
-  const setting = new PgDialect().sqlToQuery(tenantIdSetting).sql;
+  // The policy comes from the helper itself, so the behaviour tests exercise its exact expressions.
+  const policy = getTableConfig(notes).policies[0];
+  if (!policy?.using || !policy.withCheck) throw new Error("policy expression missing");
+  const dialect = new PgDialect();
+  const using = dialect.sqlToQuery(policy.using).sql;
+  const withCheck = dialect.sqlToQuery(policy.withCheck).sql;
   const table = `${fixtureSchemaName}.notes`;
   await ownerSql.unsafe(`create schema ${fixtureSchemaName}`);
   await ownerSql.unsafe(`grant usage on schema ${fixtureSchemaName} to agenty_app`);
@@ -62,7 +67,7 @@ beforeAll(async () => {
   );
   await ownerSql.unsafe(`alter table ${table} enable row level security`);
   await ownerSql.unsafe(
-    `create policy tenant_isolation on ${table} as permissive for all to agenty_app using (tenant_id = ${setting}) with check (tenant_id = ${setting})`,
+    `create policy tenant_isolation on ${table} as permissive for all to agenty_app using (${using}) with check (${withCheck})`,
   );
   await ownerSql.unsafe(
     `grant select, insert, update, delete on all tables in schema ${fixtureSchemaName} to agenty_app`,
@@ -89,9 +94,14 @@ describe("tenantIsolation helper", () => {
     expect(policy?.for).toBe("all");
     expect((policy?.to as { name: string } | undefined)?.name).toBe("agenty_app");
     const dialect = new PgDialect();
+    expect(dialect.sqlToQuery(tenantIdSetting).sql).toBe(
+      "nullif(current_setting('app.tenant_id', true), '')::uuid",
+    );
     for (const expr of [policy?.using, policy?.withCheck]) {
       if (!expr) throw new Error("policy expression missing");
-      expect(dialect.sqlToQuery(expr).sql).toContain("app.tenant_id");
+      expect(dialect.sqlToQuery(expr).sql).toBe(
+        `"${fixtureSchemaName}"."notes"."tenant_id" = ${dialect.sqlToQuery(tenantIdSetting).sql}`,
+      );
     }
   });
 });

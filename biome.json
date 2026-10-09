@@ -73,6 +73,11 @@
                   {
                     "group": ["**/db/auth-schema", "**/db/auth-schema.ts"],
                     "message": "Only src/server/auth may use the auth tables"
+                  },
+                  {
+                    "group": ["**/auth/tenant-context", "**/auth/tenant-context.ts"],
+                    "importNamePattern": "createTenantContext",
+                    "message": "Only src/server/auth may create a tenant context"
                   }
                 ]
               }
@@ -94,7 +99,14 @@
                     "importNames": ["createTenantContext"],
                     "message": "Only src/server/auth may create a tenant context"
                   }
-                }
+                },
+                "patterns": [
+                  {
+                    "group": ["**/auth/tenant-context", "**/auth/tenant-context.ts"],
+                    "importNamePattern": "createTenantContext",
+                    "message": "Only src/server/auth may create a tenant context"
+                  }
+                ]
               }
             }
           }

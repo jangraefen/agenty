@@ -92,9 +92,9 @@ with hardcoded names — `workflow` (its tables), `workflow_drizzle` (its
 migrations) and `graphile_worker` (its job queue). Its bootstrap connects via
 `WORKFLOW_POSTGRES_URL`, falling back to `DATABASE_URL`, which would be the
 app role. Roles, grants and `WORKFLOW_POSTGRES_URL` are designed in M3; M0
-documents the three reserved names in `CLAUDE.md`.
+documents the three reserved names in `AGENTS.md`.
 
-**Better Auth tables (M1 note for `CLAUDE.md`):** user, session, account,
+**Better Auth tables (M1 note for `AGENTS.md`):** user, session, account,
 verification, organization, member and invitation are read before any tenant
 context exists and across organizations. They live in `app` but are not
 tenant tables; M1 decides their RLS treatment explicitly.
@@ -241,7 +241,11 @@ All commands run through `Taskfile.yml`, identically locally and in CI.
   start the image against the empty database (`docker run --network host`) and
   poll `/api/health`, which proves the image migrates itself on start.
 
-## CLAUDE.md
+## AGENTS.md
+
+(Amended 2026-10-09: the agent instructions live in `AGENTS.md`, which `next dev` also
+maintains a managed block in; `CLAUDE.md` only imports it with `@AGENTS.md`.)
+
 
 Describes the architecture (layers, folder layout, the two DB roles, who
 creates schemas and grants, the three schemas reserved for the workflow
@@ -256,7 +260,7 @@ the key `task` commands. It is updated by every milestone.
 
 - **Vitest 5 / Next 16 / Tailwind 4 / Biome 2 compatibility:** verified while
   scaffolding; incompatibilities are resolved by following the official docs
-  rather than pinning old versions, and noted in `CLAUDE.md` if a workaround
+  rather than pinning old versions, and noted in `AGENTS.md` if a workaround
   is needed.
 - **`@open-policy-agent/opa-wasm`** was last published in 2024; it is the
   mandated library and the WASM ABI is stable, and M0's unit test is what

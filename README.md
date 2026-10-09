@@ -11,7 +11,7 @@ Node 24, pnpm, [go-task](https://taskfile.dev), Docker, and [opa](https://www.op
     task setup     # tool check, dependencies, Playwright browser, .env
     task dev       # Postgres + dev server on http://localhost:3000 (migrates on start)
 
-`task --list` shows all commands; `CLAUDE.md` describes the architecture and conventions.
+`task --list` shows all commands; `AGENTS.md` describes the architecture and conventions.
 
 ## Production image
 

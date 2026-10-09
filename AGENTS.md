@@ -14,11 +14,12 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 <!-- END:nextjs-agent-rules -->
 
-Self-hosted, multi-tenant AI agent builder with chat. Tenants (Better Auth organizations)
-configure agents (model, system prompt, tools) and chat with them. Every tool call is checked by
-an OPA policy; agent runs are durable (Workflow SDK, Postgres world).
+Self-hosted AI agent builder with chat. Users sign in through one OIDC identity provider
+(single-tenant for now), configure agents (model, system prompt, tools) and chat with them. Every
+tool call is checked by an OPA policy; agent runs are durable (Workflow SDK, Postgres world).
 
-Runtime components: the Next.js app (standalone Node server) and Postgres. Nothing else.
+Runtime components: the Next.js app (standalone Node server), Postgres, and the operator's OIDC
+identity provider (development and CI: a mock IdP container).
 
 ## Commands
 
@@ -30,8 +31,9 @@ All commands go through `Taskfile.yml` (go-task), identically locally and in CI.
 | `task tools:check` | Check node, pnpm, docker and opa are installed; warn if the opa version differs from `OPA_VERSION` |
 | `task playwright:install` | Install Playwright's Chromium (with OS dependencies when `CI=true`) |
 | `task dev` | Postgres up, policy build, `next dev` (the server applies migrations on start) |
-| `task db:up` / `db:down` / `db:reset` | Local Postgres (compose); `db:reset` deletes data (needed after editing `docker/postgres/init.sql`) |
+| `task db:up` / `db:down` / `db:reset` | Local Postgres and the mock IdP (compose; the IdP listens on port 8080); `db:reset` deletes data (needed after editing `docker/postgres/init.sql`) |
 | `task db:check` | Fail fast if `DATABASE_URL` is unreachable (prints the error code, never the URL) |
+| `task auth:generate` | Regenerate `src/server/db/auth-schema.ts` from the Better Auth config (never edit it by hand) |
 | `task db:generate` | New migration from `src/server/db/schema.ts`; `-- --custom --name x` for hand-written SQL |
 | `task db:migrate` | Apply migrations without starting the app, for tests and CI (`scripts/migrate.ts`) |
 | `task db:studio` | Drizzle Studio |
@@ -50,22 +52,26 @@ Run tests through `task` (it loads `.env`); plain `pnpm exec vitest` lacks `DATA
 
 ```
 src/app/            routes, pages, route handlers (thin: parse, call src/server, respond)
+  layout.tsx        root layout: header (user menu when signed in) and the shared `<main>`
+  sign-in/          sign-in page, button, fixed error messages
 src/components/ui/  shadcn/ui components (Base UI preset `base-nova`)
 src/lib/            shared client/server utilities (utils.ts re-exports `cn` from the `cn` package)
 src/instrumentation.ts  server start: validates env, applies migrations
 src/server/         server-only code (every module imports "server-only")
   env.ts            lazily Zod-parsed configuration (getEnv)
-  db/               Drizzle schema, client (getDb), migrations
+  auth/             Better Auth instance (auth.ts) and the server API for the rest of the app (session.ts)
+  db/               Drizzle schema, generated auth-schema.ts, client (getDb), migrations
   health.ts         health check
   policy/           OPA WASM loading and evaluation
 policies/           Rego sources and tests
 scripts/            build, policy build, migration, DB check (shared by Taskfile and Dockerfile)
 docker/postgres/    init.sql: database roles
 tests/e2e/          Playwright specs
+tests/support/      test helpers (oidc.ts drives an OIDC sign-in against the mock IdP over HTTP)
 docs/specs, docs/plans  per-milestone design and implementation plan
 ```
 
-Folders `src/server/{auth,agents,tools,workflows,crypto}` are created by the milestones that need them.
+Folders `src/server/{agents,tools,workflows,crypto}` are created by the milestones that need them.
 
 ### Database
 
@@ -80,11 +86,43 @@ Folders `src/server/{auth,agents,tools,workflows,crypto}` are created by the mil
 - Reserved for the workflow world (M3), names hardcoded by `@workflow/world-postgres`: `workflow`,
   `workflow_drizzle`, `graphile_worker`. Its bootstrap falls back to `DATABASE_URL`, i.e. the app
   role, so M3 must set `WORKFLOW_POSTGRES_URL` and design roles/grants for it.
-- Better Auth tables (M1: user, session, account, verification, organization, member, invitation)
-  will live in `app` but are read before a tenant context exists and across organizations; M1 must
-  decide their RLS treatment explicitly.
-- Integration tests run against the dev database for now; M1's isolation tests may need a
-  separate test database.
+- Better Auth tables (`user`, `session`, `account`, `verification`) live in `app` like everything
+  else; there is no RLS (see rule 1). Timestamps are `timestamp` without time zone (the generator's
+  default).
+- Integration tests run against the dev database for now. The E2E sign-ins create users there that
+  are never removed; `task db:reset` clears them.
+
+### Auth
+
+Better Auth 1.7.7 with its built-in `genericOAuth` plugin: one OIDC connector, provider id `oidc`,
+no organizations, roles, email/password or rate limiting. Defined in `src/server/auth/auth.ts`.
+
+- **Env:** `BETTER_AUTH_SECRET` (at least 32 chars), `BETTER_AUTH_URL`, `OIDC_DISCOVERY_URL`,
+  `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`; all via `getEnv()`. Scopes `openid email profile`; the ID
+  token is verified (`requireIdTokenVerification`). Callback: `<BETTER_AUTH_URL>/api/auth/callback/oidc`.
+- **Discovery** happens when the auth instance is created, at the first request (`getAuth()`, so
+  `next build` needs no env). Better Auth skips a provider whose discovery failed, so `getAuth()`
+  keeps such an instance for 30 seconds and then recreates it (`memoizeUntil`): an IdP outage heals
+  itself, and an unreachable IdP does not stall every request (discovery has no timeout). Meanwhile
+  sign-in answers `PROVIDER_NOT_FOUND`, which the sign-in page shows as "unavailable".
+- **Sessions:** database sessions, 12 hours absolute, no refresh, so a user removed at the IdP
+  loses access within 12 hours. Sign-out is local only (`disableProviderLogout`): it ends the
+  Agenty session, not the IdP session. Default account linking is kept.
+- **ID-token hook:** `hooks.before` rejects `/sign-in/social` and `/link-social` requests carrying
+  `idToken`. Better Auth would accept such a bare ID token (with a client-chosen nonce) as a
+  sign-in, so a leaked or replayed token could start a session. Only the code flow signs in.
+- **Tokens:** `account.encryptOAuthTokens` encrypts access and refresh tokens; the ID token stays
+  plain text (Better Auth limitation; replay is blocked by the hook).
+- **Errors:** `onAPIError.errorURL` is `/sign-in`, so state errors land on the sign-in page. The page
+  maps `?error=` to fixed messages and never shows IdP text.
+- **Use in code:** `getCurrentUser()` (`{ id, name, email }` or null, once per request) and
+  `requireUser()` (redirects to `/sign-in`) from `src/server/auth/session.ts`. Code that can run
+  during prerender must read `headers()` before `getAuth()`; `getCurrentUser()` does.
+- **Tables:** `src/server/db/auth-schema.ts` is generated by `task auth:generate` (config in
+  `scripts/auth-generate.config.ts`); never edit it. After a Better Auth upgrade, rerun it, then
+  `task db:generate`.
+- **Dev/CI IdP:** `mock-oauth2-server` on `http://localhost:8080`, issuer `/agenty`. Always use
+  `localhost` (its issuer follows the Host header).
 
 ### Policy
 
@@ -116,9 +154,8 @@ has no `server-only` import because `scripts/migrate.ts` (`task db:migrate`) run
 
 ## Non-negotiable rules
 
-1. **Tenant isolation:** every domain table has `tenant_id` and an RLS policy. The tenant is set
-   per transaction with `set_config('app.tenant_id', …, true)` and always comes from the session,
-   never from the request body. Cross-tenant access is ruled out by explicit tests.
+1. **Single-tenant for now (maintainer decision):** no `tenant_id`/RLS. Adding tenancy later means
+   `tenant_id` + RLS on every domain table.
 2. **Policy before every tool call:** tools are never registered directly; always
    `withPolicy(tool, ctx)`. Every decision is logged to `policy_decisions`. Creating/modifying
    tools is policy-checked too.
@@ -160,5 +197,7 @@ has no `server-only` import because `scripts/migrate.ts` (`task db:migrate`) run
   `OPA_VERSION` in `Taskfile.yml` is checked by `task tools:check`, passed to the Docker build
   (which downloads the binary with a checksum check), and mirrored in `.github/workflows/ci.yml`
   (`open-policy-agent/setup-opa`).
+- `better-auth` is pinned to exactly 1.7.7 (also the `auth` CLI version in `task auth:generate`).
+- Mock IdP: `ghcr.io/navikt/mock-oauth2-server:6.0.5` (docker-compose and the `ci` job).
 - shadcn/ui uses the Base UI preset (`base-nova`); `buttonVariants` is exported from
   `src/components/ui/button.tsx`.

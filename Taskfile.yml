@@ -15,6 +15,7 @@ tasks:
     cmds:
       - task: tools:check
       - pnpm install --frozen-lockfile
+      - cmd: test -f .env || cp .env.example .env
 
   tools:check:
     desc: Check that required CLIs are installed (prints install hints)
@@ -26,8 +27,10 @@ tasks:
           opa version | head -n 1 | grep -qx "Version: {{trimPrefix "v" .OPA_VERSION}}" || echo "warning - opa {{.OPA_VERSION}} expected, found $(opa version | head -n 1)" >&2
 
   dev:
-    desc: Run the app in development mode
+    desc: Run the app in development mode (starts Postgres, applies migrations)
     cmds:
+      - task: db:up
+      - task: db:migrate
       - pnpm exec next dev
 
   lint:
@@ -56,3 +59,38 @@ tasks:
     desc: Run unit and integration tests (integration needs `task db:up`)
     cmds:
       - pnpm exec vitest run {{.CLI_ARGS}}
+
+  db:up:
+    desc: Start local Postgres and wait until healthy
+    cmds:
+      - docker compose up --detach --wait
+
+  db:down:
+    desc: Stop local Postgres (keeps data)
+    cmds:
+      - docker compose down
+
+  db:reset:
+    desc: Stop local Postgres and delete its data (needed after changing docker/postgres/init.sql)
+    cmds:
+      - docker compose down --volumes
+
+  db:check:
+    desc: Fail fast if DATABASE_URL is unreachable
+    cmds:
+      - node scripts/check-db.mjs
+
+  db:generate:
+    desc: Generate a migration from src/server/db/schema.ts (pass `-- --custom --name x` for SQL)
+    cmds:
+      - pnpm exec drizzle-kit generate {{.CLI_ARGS}}
+
+  db:migrate:
+    desc: Apply migrations as agenty_owner
+    cmds:
+      - node scripts/migrate.mjs
+
+  db:studio:
+    desc: Open Drizzle Studio (as agenty_owner)
+    cmds:
+      - pnpm exec drizzle-kit studio

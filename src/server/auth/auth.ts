@@ -1,5 +1,5 @@
 import "server-only";
-import { DiscoveryError, discoverOIDCConfig, sso } from "@better-auth/sso";
+import { computeDiscoveryUrl, DiscoveryError, discoverOIDCConfig, sso } from "@better-auth/sso";
 import { type BetterAuthPlugin, betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError, createAuthMiddleware } from "better-auth/api";
@@ -16,7 +16,13 @@ import {
 } from "@/server/db/auth-schema";
 import { type Db, getDb } from "@/server/db/client";
 import { getEnv } from "@/server/env";
-import { emailDomain, isAllowedIdpUrl, parseProvider, selectProvider } from "./providers";
+import {
+  emailDomain,
+  idpHostResolvesPublic,
+  isAllowedIdpUrl,
+  parseProvider,
+  selectProvider,
+} from "./providers";
 
 /** The only Better Auth endpoints reachable at all; every other path answers 404. */
 export const ALLOWED_ENDPOINTS: ReadonlySet<string> = new Set([
@@ -142,16 +148,9 @@ export function createAuth(
           throw new APIError("BAD_REQUEST", { code: "invalid_request" });
         }
 
-        const rows = await ctx.context.adapter.findMany<Record<string, unknown>>({
-          model: "ssoProvider",
-        });
-        const row = selectProvider(
-          rows.filter(
-            (r): r is Record<string, unknown> & { providerId: string; domain: string } =>
-              typeof r.providerId === "string" && typeof r.domain === "string",
-          ),
-          body.data.email,
-        );
+        // All rows, ordered: the adapter's findMany stops at 100 rows in no defined order.
+        const rows = await db.select().from(ssoProvider).orderBy(ssoProvider.providerId);
+        const row = selectProvider(rows, body.data.email);
         if (!row) throw new APIError("BAD_REQUEST", { code: "unknown_domain" });
 
         const parsed = parseProvider(row);
@@ -164,11 +163,22 @@ export function createAuth(
         const { provider } = parsed;
 
         if (!provider.hasEndpoints) {
+          // The plugin checks DNS only for URLs its isTrustedOrigin rejects, and ours accepts
+          // every public name: resolve the discovery host here, unless its origin is trusted.
+          const discoveryUrl =
+            provider.oidc.discoveryEndpoint ?? computeDiscoveryUrl(provider.issuer);
+          const trusted = (u: string) => ctx.context.isTrustedOrigin(u);
+          if (!(await idpHostResolvesPublic(discoveryUrl, trusted))) {
+            console.error(
+              `Identity provider "${provider.providerId}" discovery refused: private_host`,
+            );
+            throw idpUnavailable();
+          }
           try {
             const discovered = await discoverOIDCConfig({
               issuer: provider.issuer,
               discoveryEndpoint: provider.oidc.discoveryEndpoint,
-              isTrustedOrigin: (url) => isAllowedIdpUrl(url, (u) => ctx.context.isTrustedOrigin(u)),
+              isTrustedOrigin: (url) => isAllowedIdpUrl(url, trusted),
             });
             const written = JSON.stringify({
               ...provider.oidc,
@@ -183,7 +193,7 @@ export function createAuth(
               .where(
                 and(
                   eq(ssoProvider.providerId, provider.providerId),
-                  eq(ssoProvider.oidcConfig, String(row.oidcConfig)),
+                  eq(ssoProvider.oidcConfig, row.oidcConfig ?? ""),
                 ),
               );
           } catch (error) {

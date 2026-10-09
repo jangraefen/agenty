@@ -1,4 +1,6 @@
 import "server-only";
+import { lookup as dnsLookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import { isPublicRoutableHost } from "@better-auth/core/utils/host";
 import { z } from "zod";
 import type { ssoProvider } from "@/server/db/auth-schema";
@@ -109,6 +111,37 @@ export function isAllowedIdpUrl(url: string, isTrustedOrigin: (url: string) => b
     return false;
   }
   return isPublicRoutableHost(hostname) || isTrustedOrigin(url);
+}
+
+export type HostLookup = (host: string) => Promise<{ address: string }[]>;
+
+const lookupAll: HostLookup = (host) => dnsLookup(host, { all: true });
+
+/**
+ * Whether an IdP URL's host resolves to public addresses only (or its origin is trusted, which
+ * skips the lookup). The SSO plugin skips its own DNS check for every URL its `isTrustedOrigin`
+ * accepts, and `isAllowedIdpUrl` accepts every public name, so discovery checks DNS here first.
+ * A host that does not resolve is rejected.
+ */
+export async function idpHostResolvesPublic(
+  url: string,
+  isTrustedOrigin: (url: string) => boolean,
+  lookup: HostLookup = lookupAll,
+): Promise<boolean> {
+  if (isTrustedOrigin(url)) return true;
+  let host: string;
+  try {
+    host = new URL(url).hostname.replace(/^\[(.*)\]$/, "$1");
+  } catch {
+    return false;
+  }
+  if (isIP(host)) return isPublicRoutableHost(host);
+  try {
+    const addresses = await lookup(host);
+    return addresses.length > 0 && addresses.every(({ address }) => isPublicRoutableHost(address));
+  } catch {
+    return false;
+  }
 }
 
 /** The lower-cased domain of an email address with exactly one "@", else undefined. */

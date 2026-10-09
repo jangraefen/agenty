@@ -159,6 +159,28 @@ describe("sign-in request", () => {
   });
 });
 
+describe("provider selection", () => {
+  it("considers every provider row, beyond the adapter's 100-row default", async () => {
+    const tag = `many-${randomBytes(4).toString("hex")}`;
+    const fillers = Array.from({ length: 100 }, (_, i) => `${tag}-a${String(i).padStart(3, "0")}`);
+    const target = `${tag}-z`;
+    created.push(...fillers, target);
+    await db.insert(ssoProvider).values(
+      [...fillers, target].map((providerId) => ({
+        providerId,
+        issuer: `http://localhost:8080/${providerId}`,
+        domain: `${providerId}.test`,
+        oidcConfig: oidcConfig(),
+        organizationClaim: "org",
+      })),
+    );
+    const response = await signIn({ ...valid, email: `alice@${target}.test` });
+    expect(response.status).toBe(200);
+    const { url } = (await response.json()) as { url: string };
+    expect(url.startsWith(`http://localhost:8080/${target}/authorize`)).toBe(true);
+  });
+});
+
 describe("one-off discovery", () => {
   it("writes the discovered endpoints once and never again", async () => {
     const { providerId, email } = await createProvider();

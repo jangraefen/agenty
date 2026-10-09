@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   emailDomain,
+  idpHostResolvesPublic,
   isAllowedIdpUrl,
   type ProviderRow,
   parseProvider,
@@ -147,5 +148,51 @@ describe("isAllowedIdpUrl", () => {
   it("allows a private-network IdP only when its origin is trusted", () => {
     expect(isAllowedIdpUrl("http://10.0.0.5/x", none)).toBe(false);
     expect(isAllowedIdpUrl("http://10.0.0.5/x", trusting("http://10.0.0.5"))).toBe(true);
+  });
+});
+
+describe("idpHostResolvesPublic", () => {
+  const none = () => false;
+  const resolvingTo = (...addresses: string[]) =>
+    vi.fn(async (_host: string) => addresses.map((address) => ({ address })));
+
+  it("accepts a host that resolves to public addresses only", async () => {
+    const lookup = resolvingTo("93.184.215.14", "2606:2800:21f:cb07:6820:80da:af6b:8b2c");
+    expect(await idpHostResolvesPublic("https://idp.example.com/x", none, lookup)).toBe(true);
+    expect(lookup).toHaveBeenCalledWith("idp.example.com");
+  });
+
+  it.each([
+    ["private", "10.0.0.5"],
+    ["loopback", "127.0.0.1"],
+    ["link-local (cloud metadata)", "169.254.169.254"],
+    ["IPv6 unique local", "fd00::1"],
+    ["IPv6 loopback", "::1"],
+  ])("rejects a public name that resolves to a %s address", async (_name, address) => {
+    const lookup = resolvingTo("93.184.215.14", address);
+    expect(await idpHostResolvesPublic("https://idp.example.com/x", none, lookup)).toBe(false);
+  });
+
+  it.each([
+    ["IPv4", "http://10.0.0.5/x"],
+    ["IPv6", "http://[fd00::1]/x"],
+  ])("rejects a private %s literal without a lookup", async (_name, url) => {
+    const lookup = resolvingTo("93.184.215.14");
+    expect(await idpHostResolvesPublic(url, none, lookup)).toBe(false);
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it("rejects a host that does not resolve", async () => {
+    const lookup = vi.fn(async () => {
+      throw new Error("ENOTFOUND");
+    });
+    expect(await idpHostResolvesPublic("https://idp.example.com/x", none, lookup)).toBe(false);
+  });
+
+  it("skips the lookup for a trusted origin", async () => {
+    const lookup = resolvingTo("10.0.0.5");
+    const trusted = (url: string) => new URL(url).origin === "http://localhost:8080";
+    expect(await idpHostResolvesPublic("http://localhost:8080/corp", trusted, lookup)).toBe(true);
+    expect(lookup).not.toHaveBeenCalled();
   });
 });

@@ -60,11 +60,13 @@ values (
 );
 ```
 
-`domain` lists the email domains served by this provider. Keep domains of different providers
-non-overlapping, and without commas. `oidc_config` accepts exactly the keys shown plus an optional
-`discoveryEndpoint`; anything else makes the provider fail with a readable error. `role_claim` and
-`admin_values` are optional: users whose claim contains one of the values (comma-separated) become
-admins, all others members. The client secret is stored in plain text.
+`domain` lists the email domains served by this provider (matched case-insensitively, subdomains
+included). Keep domains of different providers non-overlapping, and without commas. `oidc_config`
+accepts exactly the keys shown plus an optional `discoveryEndpoint`; anything else makes the
+provider fail with a readable error. `role_claim` and `admin_values` are optional: users whose
+claim contains one of the values (comma-separated) become admins, all others members. The client
+secret is stored in plain text. `user_id` must stay null: the SSO plugin's provider endpoints give
+the user named there access to the row.
 
 The first sign-in discovers the IdP's endpoints and stores them in `oidc_config`. To discover again
 (for example after the IdP changed its endpoints), remove the three endpoint keys:
@@ -97,23 +99,33 @@ user ids change. Their memberships, sessions and accounts are deleted with them.
 
 1. Add the new provider with a **new** provider id (see above). Never change the old row's issuer
    and never re-use an id.
-2. Hand the organizations over (use `where provider_id is null` after a removal):
-
-   ```sql
-   update auth.organization set provider_id = 'new-id' where provider_id = 'old-id';
-   ```
-
-3. Delete the old provider's users, which cascades to their accounts, sessions and memberships:
+2. Before handing anything over, delete the users of the organizations that move, which cascades
+   to their accounts, sessions and memberships:
 
    ```sql
    delete from auth."user"
-   where id in (select user_id from auth.account where provider_id = 'old-id');
+   where id in (
+     select m.user_id from auth.member m
+     join auth.organization o on o.id = m.organization_id
+     where o.provider_id = 'old-id'
+   );
    ```
 
-4. Delete the old provider row (and any leftover accounts) as described under "Remove a provider".
+   If the old provider was already removed, its organizations have no provider any more and its
+   accounts are gone: replace `o.provider_id = 'old-id'` with `o.slug in ('acme', ...)`, listing
+   that provider's organizations explicitly (not `o.provider_id is null`, which also matches
+   organizations orphaned by other removed providers).
+3. Hand the organizations over, named explicitly:
+
+   ```sql
+   update auth.organization set provider_id = 'new-id' where slug in ('acme', ...);
+   ```
+
+4. Delete the old provider row (and any leftover accounts) as described under "Remove a provider",
+   unless that already happened.
 
 Domain data is keyed by organization, so it stays; whatever references a user id (later
-milestones) must be dealt with before step 3. Users then sign in through the new provider, which
+milestones) must be dealt with before step 2. Users then sign in through the new provider, which
 must assert the same organization claim; they are added to the existing organization.
 
 ### Rules

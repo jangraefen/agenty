@@ -1,6 +1,6 @@
 # M1 – SSO and organizations: design
 
-Status: draft, reviewed by subagent (findings applied); awaiting maintainer approval · Date: 2026-10-09 · Branch: `feat/m1-sso-organizations`
+Status: approved by maintainer; amended during implementation (members page not-found status, see UI and routes) · Date: 2026-10-09 · Branch: `feat/m1-sso-organizations`
 
 ## Goal
 

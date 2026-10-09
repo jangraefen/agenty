@@ -178,6 +178,12 @@ has no `server-only` import because `scripts/migrate.ts` (`task db:migrate`) run
 - **`getTenantContext()`** (`src/server/auth/tenant.ts`) returns the branded `TenantContext`
   (`userId`, `organizationId`, `role`) from the session and a fresh `member` read; the
   organization's provider must still exist. The organization never comes from the request.
+- **Known limitation (plugin logging)**: in the SSO callback the plugin logs raw token-exchange
+  and ID-token/JWKS verification errors with its own logger (`@better-auth/sso` dist `index.mjs`,
+  "Error validating authorization code" and the `validateOIDCIdToken` catch), and puts an
+  IdP-derived `error_description` into the `/sign-in` redirect URL, where it can land in access
+  logs and browser history. The sign-in page never renders it; we cannot change either without
+  patching the plugin.
 
 ## Non-negotiable rules
 

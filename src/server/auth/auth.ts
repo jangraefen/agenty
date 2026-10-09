@@ -1,6 +1,6 @@
 import "server-only";
 import { computeDiscoveryUrl, DiscoveryError, discoverOIDCConfig, sso } from "@better-auth/sso";
-import { type BetterAuthPlugin, betterAuth } from "better-auth";
+import { type BetterAuthPlugin, betterAuth, getCurrentAdapter } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { and, eq } from "drizzle-orm";
@@ -23,6 +23,7 @@ import {
   parseProvider,
   selectProvider,
 } from "./providers";
+import { provisionMembership, resolveSignIn, takeDecision } from "./provisioning";
 
 /** The only Better Auth endpoints reachable at all; every other path answers 404. */
 export const ALLOWED_ENDPOINTS: ReadonlySet<string> = new Set([
@@ -106,6 +107,22 @@ export function createAuth(
       accountLinking: { disableImplicitLinking: true },
     },
     rateLimit: { enabled: false },
+    databaseHooks: {
+      session: {
+        create: {
+          // Every session comes from an SSO sign-in whose resolveUser left a decision; anything
+          // else fails closed. A throw here rolls back the user, account and session.
+          before: async (session, ctx) => {
+            const decision = takeDecision(ctx);
+            if (!ctx || !decision) {
+              throw new APIError("FORBIDDEN", { code: "provisioning_missing" });
+            }
+            const adapter = await getCurrentAdapter(ctx.context.adapter);
+            await provisionMembership(adapter, session.userId, decision);
+          },
+        },
+      },
+    },
     onAPIError: { errorURL: "/sign-in" },
     plugins: [
       sso({
@@ -119,8 +136,8 @@ export function createAuth(
             },
           },
         },
-        // Placeholder until organizations are provisioned at sign-in: nobody gets in yet.
-        resolveUser: () => ({ action: "reject", code: "not_ready" }),
+        // Decides organization and role; session.create.before writes them in the same transaction.
+        resolveUser: (input, { database }) => resolveSignIn(input, database),
       }),
       organizationsPlugin,
     ],

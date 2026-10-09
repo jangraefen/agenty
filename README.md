@@ -9,15 +9,17 @@ Node 24, pnpm, [go-task](https://taskfile.dev), Docker, and [opa](https://www.op
 ## Quick start
 
     task setup     # tool check, dependencies, Playwright browser, .env
-    task dev       # Postgres + migrations + dev server on http://localhost:3000
+    task dev       # Postgres + dev server on http://localhost:3000 (migrates on start)
 
 `task --list` shows all commands; `CLAUDE.md` describes the architecture and conventions.
 
 ## Production image
 
     task docker:build
-    docker run --rm -e DATABASE_MIGRATION_URL=... agenty:local node scripts/migrate.mjs
-    docker run -p 3000:3000 -e DATABASE_URL=... agenty:local
+    docker run -p 3000:3000 -e DATABASE_URL=... -e DATABASE_MIGRATION_URL=... agenty:local
+
+The server applies pending database migrations on start (as the role in `DATABASE_MIGRATION_URL`)
+and refuses to start if they fail. Several instances may start at once; they migrate one after another.
 
 The database needs the roles from `docker/postgres/init.sql`. Create them with your own passwords: the values in that file are local-development defaults only.
 

@@ -15,11 +15,11 @@ All commands go through `Taskfile.yml` (go-task), identically locally and in CI.
 | `task setup` | Check tools, `pnpm install`, Playwright Chromium, `.env` from `.env.example` |
 | `task tools:check` | Check node, pnpm, docker and opa are installed; warn if the opa version differs from `OPA_VERSION` |
 | `task playwright:install` | Install Playwright's Chromium (with OS dependencies when `CI=true`) |
-| `task dev` | Postgres up, migrations, policy build, `next dev` |
+| `task dev` | Postgres up, policy build, `next dev` (the server applies migrations on start) |
 | `task db:up` / `db:down` / `db:reset` | Local Postgres (compose); `db:reset` deletes data (needed after editing `docker/postgres/init.sql`) |
 | `task db:check` | Fail fast if `DATABASE_URL` is unreachable (prints the error code, never the URL) |
 | `task db:generate` | New migration from `src/server/db/schema.ts`; `-- --custom --name x` for hand-written SQL |
-| `task db:migrate` | Apply migrations as `agenty_owner` (`scripts/migrate.mjs`) |
+| `task db:migrate` | Apply migrations without starting the app, for tests and CI (`scripts/migrate.ts`) |
 | `task db:studio` | Drizzle Studio |
 | `task policy:test` / `policy:build` | `opa test`; compile `policies/` to `build/policy/policy.wasm` |
 | `task lint` / `task format` | Biome check; apply Biome fixes incl. Tailwind class sorting |
@@ -28,7 +28,7 @@ All commands go through `Taskfile.yml` (go-task), identically locally and in CI.
 | `task test:e2e` | Playwright against the standalone build on port 3100 |
 | `task build` | `scripts/build.sh`: self-contained `.next/standalone` |
 | `task docker:build` | Production image `agenty:local` |
-| `task ci` | Everything the `ci` job checks (the `docker` job additionally builds the image, migrates from it and smoke-tests it); locally run `task db:up` first |
+| `task ci` | Everything the `ci` job checks (the `docker` job additionally builds the image and starts it against an empty database, which it migrates); locally run `task db:up` first |
 
 Run tests through `task` (it loads `.env`); plain `pnpm exec vitest` lacks `DATABASE_URL`.
 
@@ -38,7 +38,7 @@ Run tests through `task` (it loads `.env`); plain `pnpm exec vitest` lacks `DATA
 src/app/            routes, pages, route handlers (thin: parse, call src/server, respond)
 src/components/ui/  shadcn/ui components (Base UI preset `base-nova`)
 src/lib/            shared client/server utilities (utils.ts re-exports `cn` from the `cn` package)
-src/instrumentation.ts  validates env at server start
+src/instrumentation.ts  server start: validates env, applies migrations
 src/server/         server-only code (every module imports "server-only")
   env.ts            lazily Zod-parsed configuration (getEnv)
   db/               Drizzle schema, client (getDb), migrations
@@ -85,9 +85,20 @@ treat a thrown error as a denial. A Rego test asserts the policy only produces k
 ### Build
 
 `scripts/build.sh` (used by `task build` and the Dockerfile) builds the policy, runs `next build`,
-copies static assets into `.next/standalone`, and bundles `scripts/migrate.mjs` with esbuild
-(file tracing does not include drizzle's migrator) next to the SQL migrations. The runtime image
-only contains `.next/standalone`; run migrations with `node scripts/migrate.mjs`.
+copies static assets and the SQL migrations into `.next/standalone`, and removes any `.env` files
+Next copied there (configuration must come from the real environment). The runtime image only
+contains `.next/standalone`.
+
+### Migrations on start
+
+`register()` in `src/instrumentation.ts` runs once at server start: it validates the env, takes
+`DATABASE_MIGRATION_URL` out of `process.env` (`takeMigrationUrl()`), and applies the migrations as
+`agenty_owner` via `migrateDatabase()` (`src/server/db/migrate.ts`), under a Postgres advisory lock
+so concurrent instances migrate one after another. The owner connection is closed afterwards; any
+failure stops the server. Accepted trade-off: the app receives owner credentials at start, and the
+container configuration and initial process environment still hold them. `src/server/db/migrate.ts`
+has no `server-only` import because `scripts/migrate.ts` (`task db:migrate`) runs it in plain Node
+(type stripping; `package.json` is `"type": "module"`).
 
 ## Non-negotiable rules
 
@@ -109,9 +120,9 @@ only contains `.next/standalone`; run migrations with `node scripts/migrate.mjs`
 
 - TypeScript strict + `noUncheckedIndexedAccess`; Biome for lint/format (no ESLint/Prettier).
 - Zod at every boundary: env, request bodies, route responses, policy results, external data.
-- Configuration is read only via `getEnv()` (lazy, so `next build` needs no runtime env).
-  `src/instrumentation.ts` validates it at server start and calls `process.exit(1)` when invalid,
-  because Next only logs `register()` failures. This also stops `next dev`.
+- Configuration is read only via `getEnv()` (lazy, so `next build` needs no runtime env); the
+  owner URL only via `takeMigrationUrl()`. `src/instrumentation.ts` calls `process.exit(1)` when
+  startup fails, because Next only logs `register()` failures. This also stops `next dev`.
 - Route handlers that touch the database call `await connection()` first (Cache Components is on;
   without it Next may try to prerender them at build time).
 - Error bodies never contain internal details; log them server-side. Never echo connection strings

@@ -76,15 +76,12 @@ jobs:
       - name: Create database roles
         run: psql "$POSTGRES_URL_SUPERUSER" -v ON_ERROR_STOP=1 -f docker/postgres/init.sql
       - run: task docker:build
-      - name: Apply migrations from the image
-        run: >-
-          docker run --rm --network host
-          -e DATABASE_MIGRATION_URL=postgres://agenty_owner:agenty_owner@localhost:5432/agenty
-          agenty:local node scripts/migrate.mjs
-      - name: Smoke-test the image
+      - name: Smoke-test the image (migrates the empty database on start)
         run: |
           docker run -d --name agenty --network host \
-            -e DATABASE_URL=postgres://agenty_app:agenty_app@localhost:5432/agenty agenty:local
+            -e DATABASE_URL=postgres://agenty_app:agenty_app@localhost:5432/agenty \
+            -e DATABASE_MIGRATION_URL=postgres://agenty_owner:agenty_owner@localhost:5432/agenty \
+            agenty:local
           for _ in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:3000/api/health; then exit 0; fi
             sleep 1

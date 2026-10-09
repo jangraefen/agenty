@@ -75,14 +75,17 @@ default `drizzle` schema, owned by `agenty_owner`, with no grants to
 `agenty_app`. All tables are referenced schema-qualified via `pgSchema`, so no
 `search_path` configuration is needed.
 
-**Applying migrations:** `scripts/migrate.mjs` calls drizzle-orm's
-`migrate()` with `DATABASE_MIGRATION_URL`. `task db:migrate` runs it. The
-Docker build stage bundles it with esbuild into one self-contained
-`migrate.mjs` (Next's file tracing would not include drizzle's migrator), and
-the image ships it with the migrations folder, so a self-hoster runs
-`node migrate.mjs` in the container; the CI `docker` job runs exactly that
-against a Postgres service. One code path everywhere; migrations
-are not applied automatically on server start.
+**Applying migrations (amended 2026-10-09, maintainer's choice):** the server
+migrates itself on start. `register()` in `src/instrumentation.ts` validates
+the environment, takes `DATABASE_MIGRATION_URL` out of `process.env`, and runs
+`migrateDatabase()` (`src/server/db/migrate.ts`: drizzle-orm `migrate()` under a
+Postgres advisory lock, so several instances starting at once migrate one after
+another) before serving; then the owner connection is closed. A failure stops
+the server. `task db:migrate` (`node scripts/migrate.ts`, same function) remains
+for tests and CI only. Trade-off accepted by the maintainer: the app process
+receives owner credentials at start; Node's `process.env` drops them, but the
+container configuration and the process's initial environment still hold
+them.
 
 **Schemas reserved for M3:** `@workflow/world-postgres` uses three schemas
 with hardcoded names — `workflow` (its tables), `workflow_drizzle` (its
@@ -121,7 +124,7 @@ policies/
   agenty/main.rego      # package agenty.authz; default decision = deny
   agenty/main_test.rego
 scripts/
-  migrate.mjs           # drizzle-orm migrate() as agenty_owner
+  migrate.ts            # `task db:migrate` (tests/CI); the server migrates itself
   check-db.mjs          # fail fast with a hint if DATABASE_URL is unreachable
 docker/postgres/init.sql
 tests/e2e/              # Playwright specs
@@ -200,10 +203,10 @@ All commands run through `Taskfile.yml`, identically locally and in CI.
 | Task | Does |
 |---|---|
 | `setup` | Check Node/pnpm/`opa` are installed (with install hints), `pnpm install --frozen-lockfile`, `pnpm exec playwright install chromium` (CI adds `--with-deps`), copy `.env.example` to `.env` if missing. |
-| `dev` | `db:up`, `db:migrate`, `policy:build`, `next dev`. |
+| `dev` | `db:up`, `policy:build`, `next dev` (the server migrates on start). |
 | `db:up` / `db:down` / `db:reset` | `docker compose up -d --wait` / `docker compose down` / `docker compose down -v`. |
 | `db:generate` | `drizzle-kit generate`. |
-| `db:migrate` | `node scripts/migrate.mjs` as `agenty_owner`. |
+| `db:migrate` | `node scripts/migrate.ts` as `agenty_owner` (tests/CI). |
 | `db:studio` | `drizzle-kit studio`. |
 | `policy:build` / `policy:test` | See *Policy toolchain* / `opa test policies -v`. |
 | `lint` | `biome ci .` |
@@ -223,7 +226,7 @@ All commands run through `Taskfile.yml`, identically locally and in CI.
 - **`Dockerfile`:** multi-stage on `node:24-*-slim`: deps (pnpm via
   corepack) → build (downloads the same pinned `opa` for `policy:build`; no
   runtime env needed thanks to lazy env parsing) → runtime with the
-  standalone output, `migrate.mjs` and the migrations folder, non-root user,
+  standalone output and the migrations folder, non-root user,
   `HOSTNAME=0.0.0.0`, `PORT=3000`.
 - **`.env.example`:** `POSTGRES_USER`/`POSTGRES_PASSWORD` (superuser for
   compose and the init script), `POSTGRES_PORT`, `DATABASE_URL`,
@@ -235,9 +238,8 @@ All commands run through `Taskfile.yml`, identically locally and in CI.
   `docker/postgres/init.sql` with `psql`; `task setup` (Playwright with
   `--with-deps`); `task ci`; upload the Playwright report on failure. Job
   `docker`: Postgres 18 service plus `init.sql`, `task docker:build`, then
-  run the image's `node migrate.mjs` against the service
-  (`docker run --network host`; the script resolves the migrations folder
-  relative to its own location, not the working directory).
+  start the image against the empty database (`docker run --network host`) and
+  poll `/api/health`, which proves the image migrates itself on start.
 
 ## CLAUDE.md
 

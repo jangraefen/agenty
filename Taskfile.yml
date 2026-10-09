@@ -28,10 +28,9 @@ tasks:
           opa version | head -n 1 | grep -qx "Version: {{trimPrefix "v" .OPA_VERSION}}" || echo "warning - opa {{.OPA_VERSION}} expected, found $(opa version | head -n 1)" >&2
 
   dev:
-    desc: Run the app in development mode (starts Postgres, applies migrations)
+    desc: Run the app in development mode (starts Postgres; the app applies migrations on start)
     cmds:
       - task: db:up
-      - task: db:migrate
       - task: policy:build
       - pnpm exec next dev
 
@@ -105,9 +104,9 @@ tasks:
       - pnpm exec drizzle-kit generate {{.CLI_ARGS}}
 
   db:migrate:
-    desc: Apply migrations as agenty_owner
+    desc: Apply migrations as agenty_owner without starting the app (tests, CI)
     cmds:
-      - node scripts/migrate.mjs
+      - node scripts/migrate.ts
 
   db:studio:
     desc: Open Drizzle Studio (as agenty_owner)

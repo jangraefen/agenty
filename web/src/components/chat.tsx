@@ -8,14 +8,7 @@ import {
 import { Link, useLocation, useRouteContext } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, type Schemas, unwrap } from "@/api/client";
-import {
-  approvalsQuery,
-  cacheStartedRun,
-  conversationQuery,
-  conversationsKey,
-  runQuery,
-  unfinished,
-} from "@/api/queries";
+import { approvalsQuery, cacheStartedRun, conversationQuery, unfinished } from "@/api/queries";
 import { runEventsQuery } from "@/api/run-events";
 import { AnswerNotice, type AnswerOutcome } from "@/components/answer-notice";
 import { Turn } from "@/components/conversation";
@@ -24,79 +17,60 @@ import { Button } from "@/components/ui/button";
 
 type Run = Schemas["Run"];
 
-// ConversationChat shows a conversation, named by its first run, as a chat:
-// every run of it, oldest first, each a message from its user and the
+// ConversationChat shows the conversation named by its first run, id, as a
+// chat: every run of it, oldest first, each a message from its user and the
 // agent's replies. The latest run is followed live, and a reply follows it up
-// with a new run. The page scrolls to the run focus names, if any, once the
-// conversation is known.
-export function ConversationChat({
-  conversation: summary,
-  focus,
-}: {
-  conversation: Schemas["ConversationSummary"];
-  focus?: string | undefined;
-}) {
+// with a new run. The page scrolls to the run focus names, if any.
+export function ConversationChat({ id, focus }: { id: string; focus?: string | undefined }) {
   const { api, me } = useRouteContext({ from: "/_authed" });
-  const { workspace } = summary;
+  // The latest run's events keep the conversation current.
+  const conversation = useSuspenseQuery(conversationQuery(api, id));
+  const { workspace, runs } = conversation.data;
   // The chat of a workspace the user left is read-only.
   const readOnly = !me.workspaces.includes(workspace);
-  const run = useSuspenseQuery(runQuery(api, workspace, summary.id));
-  const conversation = useQuery(conversationQuery(api, workspace, summary.id));
-  const listed = conversation.data ?? [run.data];
-  const last = listed.at(-1) ?? run.data;
-  // The latest run as its own query, which its events keep current.
-  const latest = useQuery({ ...runQuery(api, workspace, last.id), placeholderData: last });
-  const current = latest.data ?? last;
-  const runs = listed.map((r) => (r.id === current.id ? current : r));
-  // Until the conversation is known, its latest run is not: following the
-  // first run before then could follow the wrong one.
-  const events = useQuery({
-    ...runEventsQuery(api, workspace, current.id),
-    enabled: !conversation.isPending,
-  });
+  const latest = latestRun(conversation.data);
+  const events = useQuery(runEventsQuery(api, workspace, id, latest.id));
 
-  const known = conversation.isSuccess;
   useEffect(() => {
-    if (focus !== undefined && known) {
+    if (focus !== undefined) {
       // jsdom does not scroll.
       document.getElementById(`run-${focus}`)?.scrollIntoView?.({ block: "start" });
     }
-  }, [focus, known]);
+  }, [focus]);
 
   return (
     <article className="mx-auto grid max-w-3xl gap-4">
-      {run.isError && (
-        <p role="alert" className="text-sm text-destructive">
-          The first run could not be refreshed: {run.error.message}
-        </p>
-      )}
       {conversation.isError && (
         <p role="alert" className="text-sm text-destructive">
-          The rest of the conversation could not be loaded: {conversation.error.message}
+          The conversation could not be refreshed: {conversation.error.message}
         </p>
       )}
       <Header
         workspace={workspace}
-        conversation={summary}
-        latest={current}
+        conversation={conversation.data}
+        latest={latest}
         readOnly={readOnly}
-        key={current.id}
+        key={latest.id}
       />
-      <Chat workspace={workspace} runs={runs} latest={current} events={events} />
+      <Chat workspace={workspace} runs={runs} latest={latest} events={events} />
       {readOnly ? (
         <p className="border-t pt-3 text-sm text-muted-foreground">
           You are no longer a member of {workspace}: this chat is read-only.
         </p>
       ) : (
-        <Composer
-          workspace={workspace}
-          runs={runs}
-          latest={current}
-          ready={!conversation.isPending}
-        />
+        <Composer workspace={workspace} conversation={conversation.data} latest={latest} />
       )}
     </article>
   );
+}
+
+// latestRun is the conversation's latest run; a conversation always has one.
+function latestRun(conversation: Schemas["Conversation"]): Run {
+  const latest = conversation.runs.at(-1);
+  if (latest === undefined) {
+    throw new Error(`conversation ${conversation.id} has no runs`);
+  }
+  return latest;
 }
 
 function Header({
@@ -219,19 +193,16 @@ function Chat({
 }
 
 // Composer replies to the conversation by following up its latest run, once
-// that run has finished and the conversation is known, so it is the latest.
-// A run that failed or was cancelled is continued from where it stopped.
-// Enter sends, Shift+Enter starts a new line.
+// that run has finished. A run that failed or was cancelled is continued from
+// where it stopped. Enter sends, Shift+Enter starts a new line.
 function Composer({
   workspace,
-  runs,
+  conversation,
   latest,
-  ready,
 }: {
   workspace: string;
-  runs: Run[];
+  conversation: Schemas["Conversation"];
   latest: Run;
-  ready: boolean;
 }) {
   const { api } = useRouteContext({ from: "/_authed" });
   const queryClient = useQueryClient();
@@ -255,13 +226,15 @@ function Composer({
       ),
     onSuccess: (run) => {
       setText("");
-      cacheStartedRun(queryClient, api, workspace, run, runs);
+      cacheStartedRun(queryClient, api, workspace, run, conversation);
       box.current?.focus();
     },
     onError: (error) => {
       // Someone replied first: show their run, which is now the latest.
       if (error instanceof ApiError && error.status === 409) {
-        void queryClient.invalidateQueries({ queryKey: conversationsKey(workspace) });
+        void queryClient.invalidateQueries({
+          queryKey: conversationQuery(api, conversation.id).queryKey,
+        });
       }
     },
   });
@@ -291,7 +264,7 @@ function Composer({
       value={text}
       onChange={setText}
       onSend={(message) => reply.mutate(message)}
-      blocked={waiting || !ready || reply.isPending}
+      blocked={waiting || reply.isPending}
       invalid={reply.isError}
       placeholder="Write a reply…"
       notes={notes}

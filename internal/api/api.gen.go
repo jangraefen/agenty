@@ -197,6 +197,24 @@ type AuditRunList struct {
 	Runs []AuditRun `json:"runs"`
 }
 
+// Conversation defines model for Conversation.
+type Conversation struct {
+	Harness string `json:"harness"`
+
+	// ID The ID of the conversation's first run, which names it.
+	ID string `json:"id"`
+
+	// Runs The conversation's runs, oldest first.
+	Runs []Run `json:"runs"`
+
+	// Status The status of the conversation's latest run.
+	Status RunStatus `json:"status"`
+
+	// Title The first run's input, cut to its first 100 characters.
+	Title     string `json:"title"`
+	Workspace string `json:"workspace"`
+}
+
 // ConversationList defines model for ConversationList.
 type ConversationList struct {
 	Conversations []ConversationSummary `json:"conversations"`

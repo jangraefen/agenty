@@ -54,10 +54,14 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * A conversation the user started
+         * A conversation the user started, with its runs
          * @description Only the user who started the conversation finds it, in any
-         *     workspace; one of a workspace they left is read-only. Only the ID
-         *     of its first run names it.
+         *     workspace, those they left or the config no longer has included;
+         *     anyone else, other members and auditors too, finds no such
+         *     conversation. One of a workspace the user left is read-only. Only
+         *     the ID of its first run names it. Its runs come oldest first; its
+         *     latest is followed, continued, cancelled and answered through its
+         *     workspace.
          */
         get: operations["getConversation"];
         put?: never;
@@ -337,30 +341,6 @@ export interface paths {
          *     was not recorded may or may not have run. No call is run again.
          */
         post: operations["followUpRun"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/workspaces/{workspace}/runs/{id}/conversation": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                workspace: components["parameters"]["Workspace"];
-                /**
-                 * @description A run of a conversation the user started. Any other run, also one of
-                 *     another member's conversation, is not found.
-                 */
-                id: components["parameters"]["RunID"];
-            };
-            cookie?: never;
-        };
-        /** The runs of the conversation a run belongs to, oldest first */
-        get: operations["getRunConversation"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -699,6 +679,10 @@ export interface components {
             /** @description The status of the conversation's latest run. */
             status: components["schemas"]["RunStatus"];
         };
+        Conversation: components["schemas"]["ConversationSummary"] & {
+            /** @description The conversation's runs, oldest first. */
+            runs: components["schemas"]["Run"][];
+        };
         ConversationList: {
             conversations: components["schemas"]["ConversationSummary"][];
             /** @description The before parameter of the next page, which may be empty. */
@@ -867,13 +851,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The conversation. */
+            /** @description The conversation and its runs. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ConversationSummary"];
+                    "application/json": components["schemas"]["Conversation"];
                 };
             };
             default: components["responses"]["Error"];
@@ -1240,34 +1224,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Run"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    getRunConversation: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                workspace: components["parameters"]["Workspace"];
-                /**
-                 * @description A run of a conversation the user started. Any other run, also one of
-                 *     another member's conversation, is not found.
-                 */
-                id: components["parameters"]["RunID"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The runs. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Run"][];
                 };
             };
             default: components["responses"]["Error"];

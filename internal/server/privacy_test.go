@@ -59,6 +59,10 @@ func TestInvariant_RunsArePrivate(t *testing.T) {
 			var e api.Error
 			assert.Equal(t, http.StatusNotFound, f.doAs(t, bearer, http.MethodGet, "/v1/conversations/"+run.ID, nil, &e))
 		}
+		var own api.Conversation
+		require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, "/v1/conversations/"+run.ID, nil, &own), "its starter finds the conversation")
+		require.Len(t, own.Runs, 1)
+		assert.Equal(t, run.ID, own.Runs[0].ID)
 	}
 	var theirs []api.ApprovalRequest
 	require.Equal(t, http.StatusOK, f.doAs(t, bobToken, http.MethodGet, home+"/approvals", nil, &theirs))

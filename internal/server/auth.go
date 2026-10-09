@@ -84,10 +84,9 @@ func (s *Server) member(c *gin.Context) {
 // ownRunReads are the routes that read a run, which a run's owner may use
 // in a workspace they left.
 var ownRunReads = map[string]bool{
-	"/v1/workspaces/:workspace/runs/:id":              true,
-	"/v1/workspaces/:workspace/runs/:id/conversation": true,
-	"/v1/workspaces/:workspace/runs/:id/transcript":   true,
-	"/v1/workspaces/:workspace/runs/:id/events":       true,
+	"/v1/workspaces/:workspace/runs/:id":            true,
+	"/v1/workspaces/:workspace/runs/:id/transcript": true,
+	"/v1/workspaces/:workspace/runs/:id/events":     true,
 }
 
 // isMember reports whether user is a member of the workspace.

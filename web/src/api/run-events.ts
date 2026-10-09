@@ -4,19 +4,19 @@ import { parseEventStream } from "@/lib/sse";
 import { type Api, type Schemas, unwrap } from "./client";
 import {
   approvalsQuery,
-  conversationsKey,
+  conversationQuery,
   recentChatsKey,
-  runQuery,
   transcriptQuery,
+  withRun,
 } from "./queries";
 
-// A run's event stream, as its audit records so far, oldest first. The other
-// events update the queries they change: an approval request the waiting
-// approvals, an audit record the transcript, and the run's end the run and
-// its conversation. A stream that stops before the run ends fails the query,
-// keeping the records read; a refetch reads the stream again from the run's
-// start.
-export function runEventsQuery(api: Api, workspace: string, id: string) {
+// The event stream of run id of conversation, as its audit records so far,
+// oldest first. The other events update the queries they change: an approval
+// request the waiting approvals, an audit record the transcript, and the
+// run's end its conversation. A stream that stops before the run ends fails
+// the query, keeping the records read; a refetch reads the stream again from
+// the run's start.
+export function runEventsQuery(api: Api, workspace: string, conversation: string, id: string) {
   return queryOptions({
     // Not under the run's key, whose cancelling and invalidating would stop
     // or replay the stream.
@@ -57,14 +57,18 @@ export function runEventsQuery(api: Api, workspace: string, id: string) {
               invalidate(recentChatsKey());
               break;
             case "finished": {
-              const { queryKey } = runQuery(api, workspace, id);
-              // A fetch of the run under way may answer from before its end.
+              const run: Schemas["Run"] = JSON.parse(data);
+              // Not the run's own conversation_id: a server that could not
+              // read the run back sends what it knows of it, without one.
+              const { queryKey } = conversationQuery(api, conversation);
+              // A fetch of the conversation under way may answer from before
+              // the run's end.
               await client.cancelQueries({ queryKey });
-              client.setQueryData(queryKey, JSON.parse(data));
+              client.setQueryData(queryKey, (cached) => cached && withRun(cached, run));
+              invalidate(queryKey);
               invalidate(transcript);
               invalidate(approvals);
               invalidate(recentChatsKey());
-              invalidate(conversationsKey(workspace));
               return;
             }
           }

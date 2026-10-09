@@ -137,16 +137,30 @@ func TestConversations(t *testing.T) {
 	_, err = s.Conversations(ctx, store.ConversationFilter{User: "alice"})
 	require.Error(t, err, "a limit is required")
 
-	found, err := s.FindConversation(ctx, "alice", "a1")
+	found, runs, err := s.OwnConversation(ctx, "alice", "a1")
 	require.NoError(t, err)
 	assert.Equal(t, store.ConversationSummary{ID: "a1", Workspace: ws, Harness: "notes", Title: "tidy", Status: store.RunQueued}, found)
-	_, err = s.FindConversation(ctx, "alice", "a2")
+	runIDs := make([]string, len(runs))
+	for i, r := range runs {
+		runIDs[i] = r.ID
+	}
+	assert.Equal(t, []string{"a1", "a2", "a3"}, runIDs, "a conversation comes with its runs, oldest first")
+	assert.Equal(t, a3, runs[2])
+	_, _, err = s.OwnConversation(ctx, "alice", "a2")
 	require.ErrorIs(t, err, store.ErrNotFound, "a later run does not name a conversation")
-	inWork, err := s.FindConversation(ctx, "alice", "w1")
+	inWork, inWorkRuns, err := s.OwnConversation(ctx, "alice", "w1")
 	require.NoError(t, err, "a conversation of any workspace is found for its starter")
 	assert.Equal(t, "work", inWork.Workspace)
-	_, err = s.FindConversation(ctx, "bob", "a1")
-	require.ErrorIs(t, err, store.ErrNotFound, "another user's conversation is not found")
+	require.Len(t, inWorkRuns, 1)
+	assert.Equal(t, "w1", inWorkRuns[0].ID)
+	for _, id := range []string{"a1", "a2", "a3", "c1", "w1", "ghost"} {
+		_, _, err = s.OwnConversation(ctx, "bob", id)
+		require.ErrorIs(t, err, store.ErrNotFound, "another user's conversation is not found: %s", id)
+	}
+	_, theirs, err := s.OwnConversation(ctx, "bob", "b1")
+	require.NoError(t, err)
+	require.Len(t, theirs, 1, "bob's conversation holds his run alone")
+	assert.Equal(t, "b1", theirs[0].ID)
 }
 
 func TestConversations_PagesStayStableAcrossFollowUps(t *testing.T) {

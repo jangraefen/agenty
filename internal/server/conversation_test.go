@@ -85,13 +85,15 @@ func TestFollowUp_ContinuesTheConversation(t *testing.T) {
 	require.Len(t, audit, 2, "a run's audit log holds its own calls")
 	assert.Equal(t, "files_write", audit[0].Tool)
 
-	for _, id := range []string{first.ID, second.ID} {
-		var conversation []api.Run
-		require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+id+"/conversation", nil, &conversation))
-		require.Len(t, conversation, 2)
-		assert.Equal(t, first.ID, conversation[0].ID)
-		assert.Equal(t, finished, conversation[1])
-	}
+	var conversation api.Conversation
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, "/v1/conversations/"+first.ID, nil, &conversation))
+	require.Len(t, conversation.Runs, 2)
+	assert.Equal(t, first.ID, conversation.Runs[0].ID)
+	assert.Equal(t, finished, conversation.Runs[1])
+	assert.Equal(t, api.RunStatusSucceeded, conversation.Status)
+	assert.Equal(t, "tidy my notes", conversation.Title)
+	var e api.Error
+	assert.Equal(t, http.StatusNotFound, f.do(t, http.MethodGet, "/v1/conversations/"+second.ID, nil, &e), "a follow-up does not name the conversation")
 }
 
 func TestFollowUp_RunsTheConversationsVersion(t *testing.T) {
@@ -193,11 +195,9 @@ func TestFollowUp_Rejects(t *testing.T) {
 			assert.Contains(t, resp.Error, tt.wantErr)
 		})
 	}
-	var conversation []api.Run
-	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+done.ID+"/conversation", nil, &conversation))
-	assert.Len(t, conversation, 2, "no refused follow-up started a run")
-	var ghost api.Error
-	assert.Equal(t, http.StatusNotFound, f.do(t, http.MethodGet, home+"/runs/ghost/conversation", nil, &ghost))
+	var conversation api.Conversation
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, "/v1/conversations/"+done.ConversationID, nil, &conversation))
+	assert.Len(t, conversation.Runs, 2, "no refused follow-up started a run")
 }
 
 // TestInvariant_FollowUpsNeverShowTheModelACredential guards trust-model
@@ -299,9 +299,9 @@ func TestFollowUp_RacingFollowUpsDoNotBranch(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, started)
-	var conversation []api.Run
-	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, home+"/runs/"+first.ID+"/conversation", nil, &conversation))
-	assert.Len(t, conversation, 2)
+	var conversation api.Conversation
+	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, "/v1/conversations/"+first.ID, nil, &conversation))
+	assert.Len(t, conversation.Runs, 2)
 }
 
 // thought is a reply with a provider form, as Anthropic's thinking blocks are
@@ -580,7 +580,7 @@ func TestListConversations(t *testing.T) {
 	f.putNotes(t)
 	f.script(modeltest.Reply("tidied"))
 	first := f.startRun(t, "tidy my notes")
-	f.finish(t, first.ID)
+	finishedFirst := f.finish(t, first.ID)
 	f.script(modeltest.Reply("listed"))
 	second := f.startRun(t, "and the shopping list")
 	f.finish(t, second.ID)
@@ -599,9 +599,9 @@ func TestListConversations(t *testing.T) {
 	require.Equal(t, http.StatusOK, f.doAs(t, bobToken, http.MethodGet, "/v1/conversations", nil, &theirs))
 	assert.Empty(t, theirs.Conversations, "another member's conversations are not listed")
 
-	var found api.ConversationSummary
+	var found api.Conversation
 	require.Equal(t, http.StatusOK, f.do(t, http.MethodGet, "/v1/conversations/"+first.ID, nil, &found))
-	assert.Equal(t, rest.Conversations[0], found)
+	assert.Equal(t, api.Conversation{ID: first.ID, Workspace: "home", Harness: "notes", Title: "tidy my notes", Status: api.RunStatusSucceeded, Runs: []api.Run{finishedFirst}}, found)
 	var e api.Error
 	assert.Equal(t, http.StatusNotFound, f.doAs(t, bobToken, http.MethodGet, "/v1/conversations/"+first.ID, nil, &e), "another member does not find it")
 

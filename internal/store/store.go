@@ -554,14 +554,27 @@ func (s *Store) Conversations(ctx context.Context, f ConversationFilter) ([]Conv
 	return out, nil
 }
 
-// FindConversation returns the conversation named by id, if user started it,
-// in any workspace. A later run of a conversation does not name it.
-func (s *Store) FindConversation(ctx context.Context, user, id string) (ConversationSummary, error) {
+// OwnConversation returns the conversation named by id, if user started it,
+// in any workspace, with its runs, oldest first. A later run of a
+// conversation does not name it, and anyone else's conversation is not
+// found. Its status is that of the last run returned, so the two agree
+// though a run changes between the reads.
+func (s *Store) OwnConversation(ctx context.Context, user, id string) (ConversationSummary, []Run, error) {
 	row, err := s.queries.FindConversation(ctx, db.FindConversationParams{ID: id, StartedBy: user})
 	if err != nil {
-		return ConversationSummary{}, notFound("conversation "+id, err)
+		return ConversationSummary{}, nil, notFound("conversation "+id, err)
 	}
-	return ConversationSummary{ID: row.ID, Workspace: row.Workspace, Harness: row.Harness, Title: row.Title, Status: RunStatus(row.Status)}, nil
+	runs, err := s.Conversation(ctx, row.Workspace, row.ID)
+	if err != nil {
+		return ConversationSummary{}, nil, err
+	}
+	return ConversationSummary{
+		ID:        row.ID,
+		Workspace: row.Workspace,
+		Harness:   row.Harness,
+		Title:     row.Title,
+		Status:    runs[len(runs)-1].Status,
+	}, runs, nil
 }
 
 // optional is s as a nullable query argument: empty is NULL.

@@ -82,14 +82,20 @@ func (s handlers) ListConversations(c *gin.Context, params api.ListConversations
 	c.JSON(http.StatusOK, out)
 }
 
-// GetConversation finds a conversation the user started, in any workspace.
+// GetConversation finds a conversation the user started, in any workspace,
+// those they left included, with its runs, oldest first. Anyone else's is
+// not found.
 func (s handlers) GetConversation(c *gin.Context, id string) {
-	cv, err := s.cfg.Store.FindConversation(c.Request.Context(), c.GetString(userKey), id)
+	cv, runs, err := s.cfg.Store.OwnConversation(c.Request.Context(), c.GetString(userKey), id)
 	if err != nil {
 		s.failStore(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, apiConversation(cv))
+	out := api.Conversation{ID: cv.ID, Workspace: cv.Workspace, Harness: cv.Harness, Title: cv.Title, Status: api.RunStatus(cv.Status), Runs: make([]api.Run, len(runs))}
+	for i, r := range runs {
+		out.Runs[i] = apiRun(r)
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 func apiConversation(cv store.ConversationSummary) api.ConversationSummary {
@@ -268,24 +274,6 @@ func (s handlers) FollowUpRun(c *gin.Context, workspace, id string) {
 		return
 	}
 	s.startRun(c, newRun{version: v, input: req.Input, user: c.GetString(userKey), follows: last.ID})
-}
-
-// GetRunConversation lists the runs of the conversation a run belongs to,
-// oldest first.
-func (s handlers) GetRunConversation(c *gin.Context, workspace, id string) {
-	if _, ok := s.ownRun(c, workspace, id); !ok {
-		return
-	}
-	runs, err := s.cfg.Store.Conversation(c.Request.Context(), workspace, id)
-	if err != nil {
-		s.failStore(c, err)
-		return
-	}
-	out := make([]api.Run, len(runs))
-	for i, r := range runs {
-		out[i] = apiRun(r)
-	}
-	c.JSON(http.StatusOK, out)
 }
 
 func (s handlers) GetRun(c *gin.Context, workspace, id string) {

@@ -80,6 +80,15 @@ export function conversation(
   };
 }
 
+// A conversation with its runs, by default the run fixture alone, whose
+// status is its latest run's.
+export function conversationOf(
+  runs: Schemas["Run"][] = [run()],
+  overrides: Partial<Schemas["ConversationSummary"]> = {},
+): Schemas["Conversation"] {
+  return { ...conversation({ status: runs.at(-1)?.status ?? "succeeded", ...overrides }), runs };
+}
+
 export function auditRun(overrides: Partial<Schemas["AuditRun"]> = {}): Schemas["AuditRun"] {
   return {
     id: "run-1",

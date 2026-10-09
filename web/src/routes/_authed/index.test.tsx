@@ -2,7 +2,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { beforeEach, expect, test } from "vitest";
 import { apiUrl } from "@/config";
-import { conversation, run, storedHarness } from "@/test/fixtures";
+import { conversation, conversationOf, run, storedHarness } from "@/test/fixtures";
 import { renderApp } from "@/test/render";
 import {
   conversationsHandler,
@@ -107,18 +107,8 @@ test("starts the chat in the picked harness's workspace", async () => {
       body = await request.json();
       return HttpResponse.json(first, { status: 201 });
     }),
-    http.get(`${apiUrl}/v1/conversations/run-9`, () =>
-      HttpResponse.json(
-        conversation({
-          id: "run-9",
-          workspace: "work",
-          harness: "triage",
-          title: "sort the inbox",
-        }),
-      ),
-    ),
-    http.get(`${work}/runs/run-9`, () => HttpResponse.json(first)),
-    http.get(`${work}/runs/run-9/conversation`, () => HttpResponse.json([first])),
+    // The chat opens on the started run, without waiting for its conversation.
+    http.get(`${apiUrl}/v1/conversations/run-9`, () => new Promise<never>(() => undefined)),
     http.get(`${work}/runs/run-9/transcript`, () => HttpResponse.json([])),
     http.get(`${work}/runs/run-9/events`, () => liveEventStream().response()),
   );
@@ -180,10 +170,8 @@ function startsWith(input: string, bodies: unknown[], answer?: Promise<void>) {
       return HttpResponse.json(first, { status: 201 });
     }),
     http.get(`${apiUrl}/v1/conversations/run-9`, () =>
-      HttpResponse.json(conversation({ id: "run-9", title: input })),
+      HttpResponse.json(conversationOf([first], { id: "run-9", title: input })),
     ),
-    http.get(`${base}/runs/run-9`, () => HttpResponse.json(first)),
-    http.get(`${base}/runs/run-9/conversation`, () => HttpResponse.json([first])),
     http.get(`${base}/runs/run-9/transcript`, () => HttpResponse.json([])),
     http.get(`${base}/runs/run-9/events`, () => liveEventStream().response()),
   );

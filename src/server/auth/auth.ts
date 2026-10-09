@@ -84,12 +84,15 @@ export async function hasOidcProvider(auth: Auth): Promise<boolean> {
  * Memoizes `create()`. Concurrent callers share the pending promise. A value that is not
  * `isUsable` is still returned, but recreated by the first call after `retryAfterMs`; a rejection
  * is recreated by the next call.
+ *
+ * The default clock is `performance.now()`: getAuth() runs while pages render, and Cache
+ * Components reports `Date.now()` there as an unstable value, but not `performance.now()`.
  */
 export function memoizeUntil<T>(
   create: () => Promise<T>,
   isUsable: (value: T) => Promise<boolean>,
   retryAfterMs: number,
-  now: () => number = Date.now,
+  now: () => number = () => performance.now(),
 ): () => Promise<T> {
   type Entry = { promise: Promise<T>; retryAt?: number };
   let cached: Entry | undefined;

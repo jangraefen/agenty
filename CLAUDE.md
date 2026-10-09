@@ -75,13 +75,12 @@ Folders `src/server/{auth,agents,tools,workflows,crypto}` are created by the mil
 ### Policy
 
 `policies/agenty/main.rego` (package `agenty.authz`) defines `decision`:
-`{ allow, reason, require_approval }`, default deny. Built to WASM with entrypoint
-`agenty/authz/decision`, traced into the standalone output via `outputFileTracingIncludes`, and
-evaluated in-process by `evaluatePolicy()`, which returns a `PolicyOutcome`:
-`{ kind: "allow" | "require_approval" | "deny", reason }`. Callers `switch` over `kind` and handle
-every case. Any result other than exactly one well-formed decision throws (fail closed), and so does
-the contradictory `allow: false, require_approval: true`; callers treat a thrown error as a denial.
-A Rego test asserts the policy never produces that contradiction.
+`{ outcome: "allow" | "require_approval" | "deny", reason }`, default deny. Built to WASM with
+entrypoint `agenty/authz/decision`, traced into the standalone output via
+`outputFileTracingIncludes`, and evaluated in-process by `evaluatePolicy()`, which returns that
+decision as a `PolicyDecision`. Callers `switch` over `outcome` and handle every case. Any result
+other than exactly one well-formed decision (e.g. an unknown outcome) throws (fail closed); callers
+treat a thrown error as a denial. A Rego test asserts the policy only produces known outcomes.
 
 ### Build
 

@@ -140,10 +140,12 @@ server-side).
 
 ## Policy toolchain
 
-`policies/agenty/main.rego` defines `decision` with the shape agreed for M4,
-`{ allow, reason, require_approval }`, and denies everything by default
-(`allow: false, reason: "no policy matches", require_approval: false`). The
-entrypoint is `agenty/authz/decision`.
+`policies/agenty/main.rego` defines `decision` as a tri-state,
+`{ outcome: "allow" | "require_approval" | "deny", reason }`, and denies everything
+by default (`outcome: "deny", reason: "no policy matches"`). The entrypoint is
+`agenty/authz/decision`. (The project brief named `{ allow, reason,
+require_approval }`; the maintainer chose the tri-state on 2026-10-09 because two
+booleans allow the meaningless "denied but requires approval".)
 
 `task policy:build` runs
 `opa build -t wasm -e agenty/authz/decision --ignore '*_test.rego' -o build/policy/bundle.tar.gz policies`

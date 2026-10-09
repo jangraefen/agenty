@@ -4,35 +4,21 @@ import { evaluatePolicy, parseResultSet } from "./evaluate";
 describe("evaluatePolicy (built policy.wasm)", () => {
   it("denies by default", async () => {
     await expect(evaluatePolicy({})).resolves.toEqual({
-      kind: "deny",
+      outcome: "deny",
       reason: "no policy matches",
     });
   });
 
   it("denies a tool call", async () => {
-    const outcome = await evaluatePolicy({ tool: { name: "http.get" }, args: { url: "x" } });
-    expect(outcome.kind).toBe("deny");
+    const decision = await evaluatePolicy({ tool: { name: "http.get" }, args: { url: "x" } });
+    expect(decision.outcome).toBe("deny");
   });
 });
 
 describe("parseResultSet", () => {
-  const decision = (allow: boolean, require_approval: boolean) => [
-    { result: { allow, reason: "because", require_approval } },
-  ];
-
-  it("maps allow without approval to allow", () => {
-    expect(parseResultSet(decision(true, false))).toEqual({ kind: "allow", reason: "because" });
-  });
-
-  it("maps allow with approval to require_approval", () => {
-    expect(parseResultSet(decision(true, true))).toEqual({
-      kind: "require_approval",
-      reason: "because",
-    });
-  });
-
-  it("maps a denial to deny", () => {
-    expect(parseResultSet(decision(false, false))).toEqual({ kind: "deny", reason: "because" });
+  it.each(["allow", "require_approval", "deny"] as const)("accepts outcome %s", (outcome) => {
+    const result = { outcome, reason: "because" };
+    expect(parseResultSet([{ result }])).toEqual(result);
   });
 });
 
@@ -41,20 +27,22 @@ describe("parseResultSet (fail closed)", () => {
     expect(() => parseResultSet([])).toThrow();
   });
 
-  it("rejects a result with wrong types", () => {
+  it("rejects an unknown outcome", () => {
+    expect(() => parseResultSet([{ result: { outcome: "maybe", reason: "x" } }])).toThrow();
+  });
+
+  it("rejects a decision without a reason", () => {
+    expect(() => parseResultSet([{ result: { outcome: "allow" } }])).toThrow();
+  });
+
+  it("rejects the old boolean shape", () => {
     expect(() =>
-      parseResultSet([{ result: { allow: "yes", reason: "x", require_approval: false } }]),
+      parseResultSet([{ result: { allow: true, reason: "x", require_approval: false } }]),
     ).toThrow();
   });
 
   it("rejects more than one result", () => {
-    const result = { allow: true, reason: "ok", require_approval: false };
+    const result = { outcome: "allow", reason: "ok" };
     expect(() => parseResultSet([{ result }, { result }])).toThrow();
-  });
-
-  it("rejects the contradictory decision: denied but requiring approval", () => {
-    expect(() =>
-      parseResultSet([{ result: { allow: false, reason: "x", require_approval: true } }]),
-    ).toThrow(/require_approval/);
   });
 });

@@ -346,12 +346,15 @@ func apiRun(r store.Run) api.Run {
 // stops; either is recorded as cancelled by the user. The response may come
 // before that, so the run's events tell when it ended.
 func (s handlers) CancelRun(c *gin.Context, workspace, id string) {
-	h := s.hub(workspace, id) // before the run: see StreamRunEvents
+	// The job is looked up before the run is read: a run's end is stored
+	// before its job is unregistered, so a run without a job is read as
+	// finished.
+	j := s.job(workspace, id)
 	run, ok := s.ownRun(c, workspace, id)
 	if !ok {
 		return
 	}
-	if h != nil && !run.Finished() {
+	if j != nil && !run.Finished() {
 		// A cancel stops an agent: it goes ahead even when the log cannot
 		// record the request. How the run ended, and by whom, is recorded
 		// as it ends.
@@ -361,12 +364,8 @@ func (s handlers) CancelRun(c *gin.Context, workspace, id string) {
 		}
 		by := cancelledBy(c.GetString(userKey))
 		// A worker that claims the run from now on finds it cancelled.
-		// Cancelling the hub's context also stops a running run's agent;
-		// cancelIdle then ends a queued or waiting one in the store, which
-		// no worker holds. A run claimed in between is left to its worker,
-		// which finds its context cancelled with this cause.
-		h.cancel(by)
-		s.cancelIdle(c.Request.Context(), h, id, by)
+		j.cancel(by)
+		s.cancelIdle(c.Request.Context(), id, by)
 		c.Status(http.StatusAccepted)
 		return
 	}
@@ -423,76 +422,6 @@ func (s handlers) GetRunTranscript(c *gin.Context, workspace, id string) {
 		out[i] = api.FromMessage(m.Position, m.Message)
 	}
 	c.JSON(http.StatusOK, out)
-}
-
-// StreamRunEvents sends a run's events from the start. A running run's
-// stream follows it until it finishes; a finished run's stream replays its
-// audit records and its end from the store.
-func (s handlers) StreamRunEvents(c *gin.Context, workspace, id string) {
-	// The hub is looked up before the run is read: a run's end is stored
-	// before its hub is unregistered, so a run without a hub is read as
-	// finished.
-	h := s.hub(workspace, id)
-	run, ok := s.ownRun(c, workspace, id)
-	if !ok {
-		return
-	}
-	if h == nil {
-		s.replayEvents(c, run)
-		return
-	}
-	// Every event from the first, then each as it is published: the hub
-	// keeps them all, so the client misses nothing whenever it connects.
-	// Each round flushes, so an event reaches the client as it happens.
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
-	sent := 0
-	for {
-		events, changed, finished := h.since(sent)
-		for _, e := range events {
-			c.SSEvent(e.name, e.data)
-		}
-		sent += len(events)
-		c.Writer.Flush()
-		if finished {
-			return
-		}
-		select {
-		case <-changed:
-		case <-c.Request.Context().Done():
-			return
-		case <-s.ctx.Done():
-			// The run ends too, promptly; wait for its last event rather
-			// than the client.
-			<-changed
-		}
-	}
-}
-
-// replayEvents sends the stream of a run without a hub from the store: its
-// audit records, then its end. A run without a hub that has not finished is
-// one this server does not run, which is a conflict, not an empty stream.
-// A finished run's approval requests are not replayed: they were answered,
-// and its audit records hold the answers.
-func (s handlers) replayEvents(c *gin.Context, run store.Run) {
-	ctx := c.Request.Context()
-	id := run.ID
-	if !run.Finished() {
-		s.fail(c, http.StatusConflict, errNotRunHere(id))
-		return
-	}
-	records, err := s.cfg.Store.AuditRecords(ctx, id)
-	if err != nil {
-		s.failStore(c, err)
-		return
-	}
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
-	for _, r := range records {
-		c.SSEvent(api.EventAudit, api.FromRecord(r.Record, r.RecordedAt))
-	}
-	c.SSEvent(api.EventFinished, apiRun(run))
-	c.Writer.Flush()
 }
 
 // AnswerApproval answers a request the user's own run waits for, which

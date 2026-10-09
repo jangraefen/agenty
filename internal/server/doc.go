@@ -33,12 +33,13 @@
 //   - run.go: the run lifecycle: queueing, the workers, preparing and
 //     executing a run, suspending it for approval, expiring requests,
 //     cancelling, and recording its end; and the agent's audit and transcript
-//     sinks, which store before they publish.
+//     sinks, which store, then wake the run's stream readers.
 //   - history.go: what a follow-up sends the model of the conversation so
 //     far: redacted again, provider forms kept only where still valid, runs
 //     that failed or were cancelled completed, and a note on tool servers
 //     whose state was lost.
-//   - hub.go: the in-memory event hub of an unfinished run.
+//   - stream.go: a run's event stream, read from the audit log, and the
+//     notifier that wakes its readers when the run records more.
 //   - generate.go, api.gen.go: the oapi-codegen directive and its output,
 //     ServerInterface with its gin registration. Never edited by hand.
 //
@@ -69,7 +70,7 @@
 //	waiting --answered, or expired-->     queued    (resumes at the call)
 //	queued, waiting, running --owner cancels--> cancelled
 //
-// CreateRun and FollowUpRun call enqueue, which gives the run its hub, stores
+// CreateRun and FollowUpRun call enqueue, which gives the run its job, stores
 // it as queued and signals the wake channel. Workers, runs.workers
 // goroutines started by New, block on that channel, then claim queued runs
 // oldest first (store.ClaimRun, FOR NO KEY UPDATE SKIP LOCKED) until none is
@@ -78,13 +79,13 @@
 // leased from the pool, and, for a run that waited, the answered request and
 // the call counts restored from its audit log. execute then runs the agent.
 // A call that needs approval returns agent.Suspended: suspend stores the
-// request, publishes it and lets the worker go. Answering the request
+// request, recording approval.requested with it, and lets the worker go. Answering the request
 // (AnswerApproval) or its expiry (the expire goroutine) queues the run, and
 // a worker resumes it at the call, which the gateway decides again under
-// central policy as it is then. finish stores how a run ended, publishes
-// that as its last event and drops its hub. A restart fails runs left
-// running, gives queued and waiting runs their hubs again with what they
-// recorded, and cancels those of users who left the run's workspace.
+// central policy as it is then. finish stores how a run ended, recording
+// run.finished, and drops its job. A restart fails runs left running, gives
+// queued and waiting runs their jobs again, and cancels those of users who
+// left the run's workspace.
 //
 // # Goroutines
 //
@@ -94,17 +95,18 @@
 // The pool runs a timer per kept MCP server that stops it once idle. Close
 // cancels the context they all share and waits for the workers and expire.
 //
-// # Event hubs and server-sent events
+// # Server-sent events
 //
-// Every unfinished run of this server has a hub in Server.runs: an
-// append-only list of events with a channel that is closed and replaced on
-// each publish. runAudit publishes each audit record once it is stored,
-// suspend publishes the approval request, and finish or cancelIdle the
-// finished event, after which the hub publishes nothing. StreamRunEvents
-// sends a hub's events from the first and waits on its channel for more, so
-// any number of clients follow a run from its start, whenever they connect.
-// A run without a hub has finished, as its end is stored before its hub is
-// dropped, and its stream is replayed from the store.
+// A run's events are not held in memory: the audit log is the stream. Its
+// tool gateway records, its approval.requested and its run.finished events
+// are read from audit_events after a cursor, each sent with its audit log
+// id as its SSE id, so a client that reconnects with Last-Event-ID resumes
+// after the last event it saw, and one that connects late reads everything
+// from the start. A stream waits on the notifier, which the run's writers
+// call once what they recorded has committed; it takes the notifier's
+// channel before it reads, so nothing committed after the read goes
+// unnoticed. The stream ends with run.finished. Because the events are
+// stored, a restart loses none of them.
 //
 // # MCP servers per conversation
 //

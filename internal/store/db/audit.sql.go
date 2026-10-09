@@ -286,6 +286,55 @@ func (q *Queries) LockAuditLog(ctx context.Context) error {
 	return err
 }
 
+const runEventsAfter = `-- name: RunEventsAfter :many
+SELECT id, action, details, recorded_at FROM audit_events
+WHERE run_id = $1
+  AND action IN ('tool.decision', 'tool.approval', 'tool.result', 'approval.requested', 'run.finished')
+  AND id > $2
+ORDER BY id
+LIMIT $3
+`
+
+type RunEventsAfterParams struct {
+	RunID   pgtype.Text
+	After   int64
+	MaxRows int32
+}
+
+type RunEventsAfterRow struct {
+	ID         int64
+	Action     string
+	Details    []byte
+	RecordedAt time.Time
+}
+
+// A run's event stream after the event with the given id, in order, a page
+// at a time: the tool gateway's records, its approval requests and its end.
+func (q *Queries) RunEventsAfter(ctx context.Context, arg RunEventsAfterParams) ([]RunEventsAfterRow, error) {
+	rows, err := q.db.Query(ctx, runEventsAfter, arg.RunID, arg.After, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RunEventsAfterRow
+	for rows.Next() {
+		var i RunEventsAfterRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Action,
+			&i.Details,
+			&i.RecordedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const runOwner = `-- name: RunOwner :one
 SELECT runs.started_by, harness_versions.workspace
 FROM runs

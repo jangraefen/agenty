@@ -186,3 +186,11 @@ FROM runs first
 JOIN harness_versions ON harness_versions.id = first.harness_version_id
 WHERE first.id = sqlc.arg(id) AND first.id = first.conversation_id
   AND first.started_by = sqlc.arg(started_by);
+
+-- name: SavepointClosing :exec
+-- What a cancelled run did not do is stored after this savepoint, so the
+-- cancel can go ahead without it.
+SAVEPOINT closing;
+
+-- name: RollbackToClosing :exec
+ROLLBACK TO SAVEPOINT closing;

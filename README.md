@@ -72,7 +72,7 @@ flowchart TB
     cli["internal/cli<br/>serve · apply · run · audit"] --> config & server & harness
     cli --> auditlog & store
 
-    server["internal/server<br/>HTTP API · job queue · approvals · SSE hubs"]
+    server["internal/server<br/>HTTP API · job queue · approvals · SSE from the audit log"]
     server --> api["internal/api<br/>JSON types from the spec"]
     server --> store["internal/store<br/>sqlc on pgx · goose migrations"]
     server --> agent
@@ -179,12 +179,12 @@ flowchart LR
     exp["expiry goroutine<br/>one timer, next due request"] -- "reject, requeue" --> q
     wt -.-> exp
 
-    ag -- "audit · approval · finished" --> hub["hub per unfinished run<br/>append-only event list"]
-    hub -- "SSE from event 0" --> sse["GET …/runs/{id}/events"]
+    ag -- "records, approval.requested, run.finished" --> log[("audit_events")]
+    log -- "read after Last-Event-ID,<br/>woken by the notifier" --> sse["GET …/runs/{id}/events"]
     w -- "lease / keep / close" --> pool["MCP pool<br/>(conversation, server)"]
 ```
 
-Each unfinished run has a hub, an append-only list of its events, so a client that subscribes late still sees everything from the start; a finished run's stream is replayed from the database. The run's audit sink stores each record before it publishes it, so a client never sees an event the database does not hold.
+A run's events are not held in memory: its stream reads the run's tool gateway records, approval requests and end from `audit_events`, each sent with its audit log id as its SSE id. A client that reconnects with `Last-Event-ID` resumes where it left off, one that connects late reads everything from the start, and a restart loses no event. An in-process notifier wakes the stream's readers once what a run recorded has committed, so a client never sees an event the database does not hold.
 
 ### Data model
 

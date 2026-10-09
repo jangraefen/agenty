@@ -172,18 +172,7 @@ func appendEvent(ctx context.Context, q *db.Queries, e auditlog.Event) (auditlog
 // Record is what the tool gateway calls before and after each call; it
 // keeps no state of its own and appends through RecordAt.
 func (s *Store) Record(ctx context.Context, rec toolgateway.Record) error {
-	_, err := s.RecordAt(ctx, rec)
-	return err
-}
-
-// RecordAt is Record, and returns when the record was recorded, which the
-// server publishes with the record on the run's event stream.
-//
-// It reads the run's starter and workspace in the same transaction as the
-// append, so each event names who the run acted for and where, and a record
-// of a run that is not stored fails rather than being kept unattributed.
-func (s *Store) RecordAt(ctx context.Context, rec toolgateway.Record) (time.Time, error) {
-	appended, err := s.withEvents(ctx, func(q *db.Queries) ([]auditlog.Event, error) {
+	_, err := s.withEvents(ctx, func(q *db.Queries) ([]auditlog.Event, error) {
 		owner, err := q.RunOwner(ctx, rec.RunID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			err = fmt.Errorf("run %s: %w", rec.RunID, ErrNotFound)
@@ -194,10 +183,7 @@ func (s *Store) RecordAt(ctx context.Context, rec toolgateway.Record) (time.Time
 		e, err := toolEvent(rec, owner.StartedBy, owner.Workspace)
 		return []auditlog.Event{e}, err
 	})
-	if err != nil {
-		return time.Time{}, err
-	}
-	return appended[0].RecordedAt, nil
+	return err
 }
 
 // AuditRecord is a stored audit record: a tool gateway record read back
@@ -218,24 +204,82 @@ func (s *Store) AuditRecords(ctx context.Context, runID string) ([]AuditRecord, 
 	}
 	out := make([]AuditRecord, len(rows))
 	for i, row := range rows {
-		var d toolDetails
-		if err := json.Unmarshal(row.Details, &d); err != nil {
-			return nil, fmt.Errorf("store: audit: %w", err)
+		if out[i], err = toolRecord(runID, row.Action, row.Details, row.RecordedAt); err != nil {
+			return nil, err
 		}
-		out[i] = AuditRecord{
-			Record: toolgateway.Record{
-				RunID:    runID,
-				CallID:   d.CallID,
-				Event:    toolEvents[row.Action],
-				Tool:     d.Tool,
-				Args:     d.Args,
-				Decision: d.Decision,
-				Reason:   d.Reason,
-				Approver: d.Approver,
-				Result:   d.Result,
-				Err:      d.Err,
-			},
-			RecordedAt: row.RecordedAt.UTC(),
+	}
+	return out, nil
+}
+
+// toolRecord is the tool gateway record of the run's event with action and
+// details.
+func toolRecord(runID, action string, details []byte, at time.Time) (AuditRecord, error) {
+	var d toolDetails
+	if err := json.Unmarshal(details, &d); err != nil {
+		return AuditRecord{}, fmt.Errorf("store: audit: %w", err)
+	}
+	return AuditRecord{
+		Record: toolgateway.Record{
+			RunID:    runID,
+			CallID:   d.CallID,
+			Event:    toolEvents[action],
+			Tool:     d.Tool,
+			Args:     d.Args,
+			Decision: d.Decision,
+			Reason:   d.Reason,
+			Approver: d.Approver,
+			Result:   d.Result,
+			Err:      d.Err,
+		},
+		RecordedAt: at.UTC(),
+	}, nil
+}
+
+// RunEvent is an event of a run's event stream, read from the audit log:
+// one of a record of the tool gateway, a request the run waited for, or the
+// run's end.
+type RunEvent struct {
+	// ID is the event's id in the audit log: the events after it follow.
+	ID       int64
+	Record   *AuditRecord
+	Approval *Approval
+	Finished bool
+}
+
+// RunEvents returns up to limit events of the run's event stream after the
+// one with id after, in order.
+func (s *Store) RunEvents(ctx context.Context, runID string, after int64, limit int) ([]RunEvent, error) {
+	if limit <= 0 || limit > math.MaxInt32 {
+		return nil, fmt.Errorf("store: audit: limit %d is out of range", limit)
+	}
+	rows, err := s.queries.RunEventsAfter(ctx, db.RunEventsAfterParams{RunID: pgtype.Text{String: runID, Valid: true}, After: after, MaxRows: int32(limit)})
+	if err != nil {
+		return nil, fmt.Errorf("store: audit: %w", err)
+	}
+	out := make([]RunEvent, len(rows))
+	for i, row := range rows {
+		out[i].ID = row.ID
+		switch row.Action {
+		case "run.finished":
+			out[i].Finished = true
+		case "approval.requested":
+			var d struct {
+				Approval string `json:"approval"`
+			}
+			if err := json.Unmarshal(row.Details, &d); err != nil {
+				return nil, fmt.Errorf("store: audit: %w", err)
+			}
+			a, err := s.approval(ctx, runID, d.Approval)
+			if err != nil {
+				return nil, err
+			}
+			out[i].Approval = &a
+		default:
+			rec, err := toolRecord(runID, row.Action, row.Details, row.RecordedAt)
+			if err != nil {
+				return nil, err
+			}
+			out[i].Record = &rec
 		}
 	}
 	return out, nil
@@ -431,6 +475,27 @@ func runFinished(workspace, id string, status RunStatus, steps int32, runErr str
 			Steps  int32     `json:"steps"`
 			Error  string    `json:"error,omitempty"`
 		}{status, steps, runErr}),
+	}
+}
+
+// approvalRequested is the event of a request the run of workspace, which
+// starter started, makes as it suspends: which call waits, with what
+// arguments, redacted, why, and until when. The results of the calls before
+// it are not part of it; their own records are.
+func approvalRequested(a NewApproval, starter, workspace string) auditlog.Event {
+	return auditlog.Event{
+		Actor:     starter,
+		Action:    "approval.requested",
+		Workspace: workspace,
+		RunID:     a.RunID,
+		Details: details(struct {
+			Approval  string          `json:"approval"`
+			CallID    string          `json:"call_id"`
+			Tool      string          `json:"tool"`
+			Args      json.RawMessage `json:"args,omitempty"`
+			Reasons   []string        `json:"reasons"`
+			ExpiresAt time.Time       `json:"expires_at"`
+		}{a.ID, text(a.CallID), text(a.Tool), jsonText(a.Args), nonNil(a.Reasons), a.ExpiresAt.UTC()}),
 	}
 }
 

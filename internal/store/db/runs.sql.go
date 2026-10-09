@@ -684,6 +684,26 @@ func (q *Queries) ListConversations(ctx context.Context, arg ListConversationsPa
 	return items, nil
 }
 
+const rollbackToClosing = `-- name: RollbackToClosing :exec
+ROLLBACK TO SAVEPOINT closing
+`
+
+func (q *Queries) RollbackToClosing(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, rollbackToClosing)
+	return err
+}
+
+const savepointClosing = `-- name: SavepointClosing :exec
+SAVEPOINT closing
+`
+
+// What a cancelled run did not do is stored after this savepoint, so the
+// cancel can go ahead without it.
+func (q *Queries) SavepointClosing(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, savepointClosing)
+	return err
+}
+
 const setRunDigests = `-- name: SetRunDigests :execrows
 UPDATE runs
 SET prompt_digest = $2, history_digest = $3

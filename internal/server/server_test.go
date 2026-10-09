@@ -427,6 +427,24 @@ func TestClose_LeavesRunsWaitingForApproval(t *testing.T) {
 	assert.Equal(t, store.RunWaiting, stored.Status, "the run still waits, for the next server")
 }
 
+// TestClose_EndsTheStreamsOfRunningRunsWithTheirEnd: a run the server stops
+// as it stops ends as failed, and its stream ends with that end.
+func TestClose_EndsTheStreamsOfRunningRunsWithTheirEnd(t *testing.T) {
+	f := newFixture(t, options{workers: 1})
+	f.putNotes(t)
+	run, _ := f.busy(t)
+	events := f.events(t, run.ID)
+
+	f.server.Close()
+
+	rest := events.rest()
+	require.NotEmpty(t, rest)
+	end := rest[len(rest)-1]
+	require.Equal(t, api.EventFinished, end.name)
+	finished := decodeAs[api.Run](t, end)
+	assert.Equal(t, api.RunStatusFailed, finished.Status)
+}
+
 func TestNew_FailsRunsOfAnEarlierServer(t *testing.T) {
 	f := newFixture(t, options{})
 	ctx := context.Background()
@@ -714,7 +732,7 @@ func TestInvariant_WorkspacesAreSeparate(t *testing.T) {
 	require.NoError(t, err)
 	_, err = f.store.CreateRun(ctx, store.NewRun{ID: "carols", HarnessVersionID: v.ID, Input: "x", StartedBy: "carol"})
 	require.NoError(t, err)
-	cancelled, err := f.store.CancelIdleRun(ctx, "carols", "seeded")
+	cancelled, err := f.store.CancelIdleRun(ctx, "carols", "seeded", nil)
 	require.NoError(t, err)
 	require.True(t, cancelled)
 	// alice's conversation in a workspace the config no longer has.
@@ -722,7 +740,7 @@ func TestInvariant_WorkspacesAreSeparate(t *testing.T) {
 	require.NoError(t, err)
 	_, err = f.store.CreateRun(ctx, store.NewRun{ID: "alices-gone", HarnessVersionID: gone.ID, Input: "x", StartedBy: "alice"})
 	require.NoError(t, err)
-	cancelled, err = f.store.CancelIdleRun(ctx, "alices-gone", "seeded")
+	cancelled, err = f.store.CancelIdleRun(ctx, "alices-gone", "seeded", nil)
 	require.NoError(t, err)
 	require.True(t, cancelled)
 	f.script(modeltest.CallTools(call("c1", "files_write", `{}`)))

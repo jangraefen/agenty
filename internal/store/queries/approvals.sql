@@ -76,3 +76,11 @@ UPDATE approvals
 SET status = 'withdrawn', reason = $2, answered_at = now()
 WHERE run_id = $1 AND status = 'pending'
   AND run_id IN (SELECT id FROM runs WHERE id = $1 AND status IN ('queued', 'waiting'));
+
+-- name: GetApproval :one
+-- An approval request of a run, with its harness.
+SELECT sqlc.embed(approvals), harness_versions.name AS harness
+FROM approvals
+JOIN runs ON runs.id = approvals.run_id
+JOIN harness_versions ON harness_versions.id = runs.harness_version_id
+WHERE approvals.run_id = sqlc.arg(run_id) AND approvals.id = sqlc.arg(id);

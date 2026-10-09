@@ -59,8 +59,8 @@ type Record struct {
 // the error.
 //
 // The server's implementation stores records in PostgreSQL, where they are
-// append-only and hash-chained (guarantee 9), and publishes each one to the
-// run's subscribers. It must not return until the record is durable, as the
+// append-only and hash-chained (guarantee 9), and wakes the readers of the
+// run's event stream, which reads them back from there. It must not return until the record is durable, as the
 // gateway executes the call as soon as it returns.
 type Audit interface {
 	Record(ctx context.Context, rec Record) error

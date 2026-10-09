@@ -78,6 +78,48 @@ func (q *Queries) ExpireApprovals(ctx context.Context, reason string) ([]string,
 	return items, nil
 }
 
+const getApproval = `-- name: GetApproval :one
+SELECT approvals.id, approvals.run_id, approvals.call_id, approvals.call_index, approvals.tool, approvals.args, approvals.reasons, approvals.results, approvals.status, approvals.approver, approvals.reason, approvals.created_at, approvals.expires_at, approvals.answered_at, harness_versions.name AS harness
+FROM approvals
+JOIN runs ON runs.id = approvals.run_id
+JOIN harness_versions ON harness_versions.id = runs.harness_version_id
+WHERE approvals.run_id = $1 AND approvals.id = $2
+`
+
+type GetApprovalParams struct {
+	RunID string
+	ID    string
+}
+
+type GetApprovalRow struct {
+	Approval Approval
+	Harness  string
+}
+
+// An approval request of a run, with its harness.
+func (q *Queries) GetApproval(ctx context.Context, arg GetApprovalParams) (GetApprovalRow, error) {
+	row := q.db.QueryRow(ctx, getApproval, arg.RunID, arg.ID)
+	var i GetApprovalRow
+	err := row.Scan(
+		&i.Approval.ID,
+		&i.Approval.RunID,
+		&i.Approval.CallID,
+		&i.Approval.CallIndex,
+		&i.Approval.Tool,
+		&i.Approval.Args,
+		&i.Approval.Reasons,
+		&i.Approval.Results,
+		&i.Approval.Status,
+		&i.Approval.Approver,
+		&i.Approval.Reason,
+		&i.Approval.CreatedAt,
+		&i.Approval.ExpiresAt,
+		&i.Approval.AnsweredAt,
+		&i.Harness,
+	)
+	return i, err
+}
+
 const insertApproval = `-- name: InsertApproval :exec
 INSERT INTO approvals (id, run_id, call_id, call_index, tool, args, reasons, results, created_at, expires_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)

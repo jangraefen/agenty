@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/jangraefen/agenty/internal/auditlog"
 	"github.com/jangraefen/agenty/internal/model"
 	"github.com/jangraefen/agenty/internal/must"
 	"github.com/jangraefen/agenty/internal/store/db"
@@ -79,15 +80,11 @@ type Answer struct {
 	Reason   string
 }
 
-// SuspendRun stores a's request and marks its running run as waiting for
-// it. A run that is not running returns ErrNotFound.
-//
-// Both happen in one transaction, so there is never a waiting run without
-// its request, nor a request whose run still runs. The run is marked first:
-// if it is not running, such as one that has already ended, no request is
-// stored.
+// SuspendRun stores a's request, marks its running run as waiting for it,
+// and records the request in the audit log. A run that is not running
+// returns ErrNotFound.
 func (s *Store) SuspendRun(ctx context.Context, a NewApproval) error {
-	return s.inTx(ctx, func(q *db.Queries) error {
+	_, err := s.withEvents(ctx, func(q *db.Queries) ([]auditlog.Event, error) {
 		n, err := q.SuspendRun(ctx, a.RunID)
 		switch {
 		case err == nil && n == 0:
@@ -107,11 +104,16 @@ func (s *Store) SuspendRun(ctx context.Context, a NewApproval) error {
 				ExpiresAt: a.ExpiresAt,
 			})
 		}
-		if err != nil {
-			return fmt.Errorf("store: suspend: %w", err)
+		var owner db.RunOwnerRow
+		if err == nil {
+			owner, err = q.RunOwner(ctx, a.RunID)
 		}
-		return nil
+		if err != nil {
+			return nil, fmt.Errorf("store: suspend: %w", err)
+		}
+		return []auditlog.Event{approvalRequested(a, owner.StartedBy, owner.Workspace)}, nil
 	})
+	return err
 }
 
 // nonNil returns s, or an empty slice for nil, which marshals as []. The
@@ -227,8 +229,18 @@ func (s *Store) NextApprovalExpiry(ctx context.Context) (time.Time, bool, error)
 	return at, true, nil
 }
 
-// approval maps a stored request and its run's harness name to an
-// Approval, decoding its reasons and results.
+// approval returns the request id of the run.
+func (s *Store) approval(ctx context.Context, runID, id string) (Approval, error) {
+	row, err := s.queries.GetApproval(ctx, db.GetApprovalParams{RunID: runID, ID: id})
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = ErrNotFound
+	}
+	if err != nil {
+		return Approval{}, fmt.Errorf("store: approval %s of run %s: %w", id, runID, err)
+	}
+	return approval(row.Approval, row.Harness)
+}
+
 func approval(row db.Approval, harness string) (Approval, error) {
 	a := Approval{
 		NewApproval: NewApproval{

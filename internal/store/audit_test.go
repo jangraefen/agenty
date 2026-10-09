@@ -8,6 +8,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	_ "github.com/jackc/pgx/v5/stdlib" // registers the pgx driver for database/sql
@@ -164,7 +165,7 @@ func TestRecord_ConcurrentAppendsStayLinear(t *testing.T) {
 	errs := make(chan error, n)
 	for i := range n {
 		go func() {
-			_, err := s.RecordAt(context.Background(), toolgateway.Record{RunID: "r1", CallID: fmt.Sprint("c", i), Event: toolgateway.EventDecision, Tool: "files_read", Decision: toolgateway.Allow})
+			err := s.Record(context.Background(), toolgateway.Record{RunID: "r1", CallID: fmt.Sprint("c", i), Event: toolgateway.EventDecision, Tool: "files_read", Decision: toolgateway.Allow})
 			errs <- err
 		}()
 	}
@@ -207,7 +208,7 @@ func TestAuditEvents_RunsAndHarnesses(t *testing.T) {
 	claim(t, s, "r1")
 	require.NoError(t, s.FinishRun(ctx, "r1", store.RunSucceeded, "a private answer", 2, ""))
 	createRun(t, s, store.NewRun{ID: "r2", HarnessVersionID: v.ID, Input: "x", StartedBy: "alice", Follows: "r1"})
-	cancelled, err := s.CancelIdleRun(ctx, "r2", "cancelled by alice")
+	cancelled, err := s.CancelIdleRun(ctx, "r2", "cancelled by alice", nil)
 	require.NoError(t, err)
 	require.True(t, cancelled)
 	createRun(t, s, store.NewRun{ID: "r3", HarnessVersionID: v.ID, Input: "x", StartedBy: "bob"})
@@ -323,5 +324,57 @@ func TestListAuditEvents(t *testing.T) {
 	_, err = s.ActorEvents(ctx, "alice", 0, 0)
 	require.Error(t, err)
 	_, err = s.WorkspaceEvents(ctx, ws, "harness.changed", 0, 0)
+	require.Error(t, err)
+}
+
+// TestRunEvents_FollowARunAfterACursor: a run's event stream is read from
+// the audit log: the tool gateway's records, its approval requests and its
+// end, in order, after the event a reader saw last, a page at a time. The
+// other events of the run, and those of other runs, are not part of it.
+func TestRunEvents_FollowARunAfterACursor(t *testing.T) {
+	ctx := context.Background()
+	s := storetest.New(t)
+	newRun(t, s, "r1")
+	record(t, s, toolgateway.Record{RunID: "r1", CallID: "c1", Event: toolgateway.EventDecision, Tool: "files_write", Decision: toolgateway.RequireApproval})
+	want := store.NewApproval{
+		ID: "a1", RunID: "r1", CallID: "c1", Tool: "files_write", Args: json.RawMessage(`{"path":"notes.md"}`),
+		Reasons: []string{"writes need a human"}, CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
+	}
+	require.NoError(t, s.SuspendRun(ctx, want))
+	newRun(t, s, "r2")
+	record(t, s, toolgateway.Record{RunID: "r2", CallID: "c2", Event: toolgateway.EventDecision, Tool: "files_read", Decision: toolgateway.Allow})
+	cancelled, err := s.CancelIdleRun(ctx, "r1", "cancelled by alice", nil)
+	require.NoError(t, err)
+	require.True(t, cancelled)
+
+	all, err := s.RunEvents(ctx, "r1", 0, 100)
+	require.NoError(t, err)
+	require.Len(t, all, 3)
+	require.NotNil(t, all[0].Record)
+	assert.Equal(t, toolgateway.EventDecision, all[0].Record.Event)
+	assert.Equal(t, "c1", all[0].Record.CallID)
+	assert.Nil(t, all[0].Approval)
+	assert.False(t, all[0].Finished)
+	require.NotNil(t, all[1].Approval)
+	assert.Nil(t, all[1].Record)
+	assert.Equal(t, "a1", all[1].Approval.ID)
+	assert.Equal(t, "notes", all[1].Approval.Harness)
+	assert.Equal(t, store.ApprovalWithdrawn, all[1].Approval.Status, "a request comes as it is now")
+	assert.True(t, all[2].Finished)
+	assert.Nil(t, all[2].Record)
+	assert.Nil(t, all[2].Approval)
+	assert.Less(t, all[0].ID, all[1].ID)
+	assert.Less(t, all[1].ID, all[2].ID)
+
+	rest, err := s.RunEvents(ctx, "r1", all[0].ID, 100)
+	require.NoError(t, err)
+	assert.Equal(t, all[1:], rest)
+	page, err := s.RunEvents(ctx, "r1", 0, 1)
+	require.NoError(t, err)
+	assert.Equal(t, all[:1], page)
+	none, err := s.RunEvents(ctx, "ghost", 0, 100)
+	require.NoError(t, err)
+	assert.Empty(t, none)
+	_, err = s.RunEvents(ctx, "r1", 0, 0)
 	require.Error(t, err)
 }

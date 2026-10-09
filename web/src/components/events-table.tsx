@@ -28,6 +28,7 @@ const labels: Record<string, string> = {
   "tool.decision": "Policy decision",
   "tool.approval": "Approval",
   "tool.result": "Tool result",
+  "approval.requested": "Approval requested",
   "run.started": "Run started",
   "run.cancel_requested": "Cancel requested",
   "run.finished": "Run finished",
@@ -56,6 +57,8 @@ function summary({ action, details: d }: Event): string {
       return `${text(d.harness)} v${text(d.version)}`;
     case "run.finished":
       return text(d.error) === "" ? text(d.status) : `${text(d.status)}: ${text(d.error)}`;
+    case "approval.requested":
+      return text(d.tool);
     case "tool.decision":
     case "tool.approval":
     case "tool.result":

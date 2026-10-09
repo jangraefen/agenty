@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/jangraefen/agenty/internal/model"
 	"github.com/jangraefen/agenty/internal/store"
 	"github.com/jangraefen/agenty/internal/store/storetest"
+	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
 // suspendRun stores a running run r1 and suspends it at a call that waits
@@ -76,6 +78,45 @@ func TestSuspendRun_StoresTheRequestAndWaits(t *testing.T) {
 	_, ok, err = s.LatestApproval(ctx, "ghost")
 	require.NoError(t, err)
 	assert.False(t, ok)
+}
+
+// TestSuspendRun_RecordsTheRequest: the audit log records a request as the
+// run asks, in the same transaction, the run acting for its starter: which
+// call waits, with what, why and until when.
+func TestSuspendRun_RecordsTheRequest(t *testing.T) {
+	ctx := context.Background()
+	s := storetest.New(t)
+	want := suspendRun(t, s, time.Hour)
+
+	requested, err := s.ListAuditEvents(ctx, store.EventFilter{Action: "approval.requested", Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, requested, 1)
+	e := requested[0]
+	assert.Equal(t, "alice", e.Actor)
+	assert.Equal(t, ws, e.Workspace)
+	assert.Equal(t, "r1", e.RunID)
+	var details struct {
+		Approval  string          `json:"approval"`
+		CallID    string          `json:"call_id"`
+		Tool      string          `json:"tool"`
+		Args      json.RawMessage `json:"args"`
+		Reasons   []string        `json:"reasons"`
+		ExpiresAt time.Time       `json:"expires_at"`
+	}
+	require.NoError(t, json.Unmarshal(e.Details, &details))
+	assert.Equal(t, want.ID, details.Approval)
+	assert.Equal(t, want.CallID, details.CallID)
+	assert.Equal(t, want.Tool, details.Tool)
+	assert.JSONEq(t, string(want.Args), string(details.Args))
+	assert.Equal(t, want.Reasons, details.Reasons)
+	assert.WithinDuration(t, want.ExpiresAt, details.ExpiresAt, time.Millisecond)
+	assert.NotContains(t, string(e.Details), "milk", "the results of the calls before it are not part of the request")
+
+	err = s.SuspendRun(ctx, store.NewApproval{ID: "a2", RunID: "r1", CallID: "call-2", Tool: "files_write", CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour)})
+	require.ErrorIs(t, err, store.ErrNotFound)
+	requested, err = s.ListAuditEvents(ctx, store.EventFilter{Action: "approval.requested", Limit: 10})
+	require.NoError(t, err)
+	assert.Len(t, requested, 1, "a request that is not stored is not recorded")
 }
 
 func TestAnswerApproval_QueuesTheRunOnce(t *testing.T) {
@@ -171,7 +212,7 @@ func TestCancelIdleRun_WithdrawsItsRequest(t *testing.T) {
 	s := storetest.New(t)
 	suspendRun(t, s, time.Hour)
 
-	cancelled, err := s.CancelIdleRun(ctx, "r1", "cancelled by bob")
+	cancelled, err := s.CancelIdleRun(ctx, "r1", "cancelled by bob", nil)
 
 	require.NoError(t, err)
 	assert.True(t, cancelled, "a waiting run is cancelled in the store")
@@ -184,6 +225,70 @@ func TestCancelIdleRun_WithdrawsItsRequest(t *testing.T) {
 	answered, err := s.AnswerApproval(ctx, ws, "r1", "a1", store.Answer{Approved: true})
 	require.NoError(t, err)
 	assert.False(t, answered, "a withdrawn request is not answered")
+}
+
+// TestCancelIdleRun_RecordsWhatDidNotRunBeforeItsEnd: what a cancelled run
+// did not do is recorded in the cancel's own transaction, before the run's
+// end, so its event stream, which ends with its end, holds it. What is
+// recorded is read within that transaction, which sees the request
+// withdrawn.
+func TestCancelIdleRun_RecordsWhatDidNotRunBeforeItsEnd(t *testing.T) {
+	ctx := context.Background()
+	s := storetest.New(t)
+	suspendRun(t, s, time.Hour)
+	failed := toolgateway.Record{RunID: "r1", CallID: "call-1", Event: toolgateway.EventApproval, Tool: "files_write", Decision: toolgateway.Deny, Reason: "approval failed: cancelled by bob"}
+	results := store.NewMessage{Position: 0, Message: model.Message{Role: model.RoleUser, ToolResults: []model.ToolResult{{CallID: "call-1", Content: "not run", IsError: true}}}}
+
+	cancelled, err := s.CancelIdleRun(ctx, "r1", "cancelled by bob", func(ctx context.Context, tx store.ClosingReader) (store.Closing, error) {
+		a, ok, err := tx.LatestApproval(ctx, "r1")
+		require.NoError(t, err)
+		require.True(t, ok)
+		assert.Equal(t, store.ApprovalWithdrawn, a.Status)
+		return store.Closing{Records: []toolgateway.Record{failed}, Messages: []store.NewMessage{results}}, nil
+	})
+
+	require.NoError(t, err)
+	assert.True(t, cancelled)
+	all, err := s.RunEvents(ctx, "r1", 0, 100)
+	require.NoError(t, err)
+	require.Len(t, all, 3)
+	require.NotNil(t, all[1].Record)
+	assert.Equal(t, failed, all[1].Record.Record)
+	assert.True(t, all[2].Finished, "the run's end comes last")
+	transcript, err := s.Transcript(ctx, "r1")
+	require.NoError(t, err)
+	require.Len(t, transcript, 1)
+	assert.Equal(t, results.Message, transcript[0].Message)
+}
+
+// TestCancelIdleRun_GoesAheadWhenWhatDidNotRunCannotBeRead: stopping an
+// agent comes first, so a run is cancelled even when what it did not do
+// cannot be recorded; the error says so.
+func TestCancelIdleRun_GoesAheadWhenWhatDidNotRunCannotBeRead(t *testing.T) {
+	ctx := context.Background()
+	s := storetest.New(t)
+	suspendRun(t, s, time.Hour)
+
+	cancelled, err := s.CancelIdleRun(ctx, "r1", "cancelled by bob", func(context.Context, store.ClosingReader) (store.Closing, error) {
+		return store.Closing{Records: []toolgateway.Record{{RunID: "r1", CallID: "x", Event: toolgateway.EventApproval, Decision: toolgateway.Deny}}}, errors.New("unreadable")
+	})
+
+	require.ErrorContains(t, err, "unreadable")
+	assert.True(t, cancelled)
+	run, err := s.Run(ctx, ws, "r1")
+	require.NoError(t, err)
+	assert.Equal(t, store.RunCancelled, run.Status)
+	all, err := s.RunEvents(ctx, "r1", 0, 100)
+	require.NoError(t, err)
+	require.Len(t, all, 2, "the approval request and the run's end, nothing of what failed")
+	assert.True(t, all[1].Finished)
+
+	again, err := s.CancelIdleRun(ctx, "r1", "again", func(context.Context, store.ClosingReader) (store.Closing, error) {
+		t.Error("a run that is not idle has nothing to close out")
+		return store.Closing{}, nil
+	})
+	require.NoError(t, err)
+	assert.False(t, again)
 }
 
 func TestIdleRuns_ListsQueuedAndWaitingRuns(t *testing.T) {

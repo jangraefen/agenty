@@ -8,8 +8,8 @@
 // the model asks for to Gateway.Call. The API server (internal/server) wires
 // the pieces together: it builds the tool servers from operator configuration
 // (internal/mcptool), leases them from a Pool for the run's conversation, and
-// passes an Audit that stores each record in the database and publishes it to
-// the run's subscribers. The gateway itself depends only on internal/secret,
+// passes an Audit that stores each record in the database, where the run's
+// event stream reads it, and wakes that stream's readers. The gateway itself depends only on internal/secret,
 // for redaction, and on the interfaces it declares: Tool, ToolServer,
 // ToolSession, Policy and Audit. It knows nothing of MCP, OPA or PostgreSQL,
 // so every implementation of those sits behind the same checks, and tests

@@ -163,7 +163,7 @@ func TestRecord_ConcurrentAppendsStayLinear(t *testing.T) {
 	errs := make(chan error, n)
 	for i := range n {
 		go func() {
-			_, err := s.RecordAt(context.Background(), toolgateway.Record{RunID: "r1", CallID: fmt.Sprint("c", i), Event: toolgateway.EventDecision, Tool: "files_read", Decision: toolgateway.Allow})
+			err := s.Record(context.Background(), toolgateway.Record{RunID: "r1", CallID: fmt.Sprint("c", i), Event: toolgateway.EventDecision, Tool: "files_read", Decision: toolgateway.Allow})
 			errs <- err
 		}()
 	}

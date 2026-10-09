@@ -18,7 +18,8 @@ import (
 type notifier struct {
 	mu sync.Mutex
 	// waiting holds, for each run that readers wait for, the channel that
-	// notify closes.
+	// notify closes. A run that records nothing more, such as one left
+	// waiting as the server stops, keeps its entry: one per such run.
 	waiting map[string]chan struct{}
 }
 

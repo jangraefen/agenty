@@ -239,7 +239,7 @@ func TestCancelIdleRun_RecordsWhatDidNotRunBeforeItsEnd(t *testing.T) {
 	failed := toolgateway.Record{RunID: "r1", CallID: "call-1", Event: toolgateway.EventApproval, Tool: "files_write", Decision: toolgateway.Deny, Reason: "approval failed: cancelled by bob"}
 	results := store.NewMessage{Position: 0, Message: model.Message{Role: model.RoleUser, ToolResults: []model.ToolResult{{CallID: "call-1", Content: "not run", IsError: true}}}}
 
-	cancelled, err := s.CancelIdleRun(ctx, "r1", "cancelled by bob", func(ctx context.Context, tx *store.Store) (store.Closing, error) {
+	cancelled, err := s.CancelIdleRun(ctx, "r1", "cancelled by bob", func(ctx context.Context, tx store.ClosingReader) (store.Closing, error) {
 		a, ok, err := tx.LatestApproval(ctx, "r1")
 		require.NoError(t, err)
 		require.True(t, ok)
@@ -269,7 +269,7 @@ func TestCancelIdleRun_GoesAheadWhenWhatDidNotRunCannotBeRead(t *testing.T) {
 	s := storetest.New(t)
 	suspendRun(t, s, time.Hour)
 
-	cancelled, err := s.CancelIdleRun(ctx, "r1", "cancelled by bob", func(context.Context, *store.Store) (store.Closing, error) {
+	cancelled, err := s.CancelIdleRun(ctx, "r1", "cancelled by bob", func(context.Context, store.ClosingReader) (store.Closing, error) {
 		return store.Closing{Records: []toolgateway.Record{{RunID: "r1", CallID: "x", Event: toolgateway.EventApproval, Decision: toolgateway.Deny}}}, errors.New("unreadable")
 	})
 
@@ -283,7 +283,7 @@ func TestCancelIdleRun_GoesAheadWhenWhatDidNotRunCannotBeRead(t *testing.T) {
 	require.Len(t, all, 2, "the approval request and the run's end, nothing of what failed")
 	assert.True(t, all[1].Finished)
 
-	again, err := s.CancelIdleRun(ctx, "r1", "again", func(context.Context, *store.Store) (store.Closing, error) {
+	again, err := s.CancelIdleRun(ctx, "r1", "again", func(context.Context, store.ClosingReader) (store.Closing, error) {
 		t.Error("a run that is not idle has nothing to close out")
 		return store.Closing{}, nil
 	})

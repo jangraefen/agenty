@@ -419,7 +419,7 @@ export interface paths {
          * A run's events, as server-sent events
          * @description The events from the run's start, or after the one Last-Event-ID
          *     names, read from the audit log: its audit records, the approval
-         *     requests it made, as they are now, and its end. The stream of a run
+         *     requests it made, and its end. The stream of a run
          *     that has not finished, queued, waiting or running, replays them,
          *     then follows the run until it finishes, or until the server stops,
          *     which leaves queued and waiting runs to the next. Each event has

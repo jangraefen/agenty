@@ -357,9 +357,16 @@ type Closing struct {
 	Messages []NewMessage
 }
 
+// ClosingReader reads what a Closer needs of a run.
+type ClosingReader interface {
+	LatestApproval(ctx context.Context, runID string) (Approval, bool, error)
+	Transcript(ctx context.Context, runID string) ([]TranscriptMessage, error)
+	AuditRecords(ctx context.Context, runID string) ([]AuditRecord, error)
+}
+
 // Closer returns the Closing of the run being cancelled, read from tx, the
-// store within the cancel's transaction, which it may only read.
-type Closer func(ctx context.Context, tx *Store) (Closing, error)
+// run as the cancel's transaction sees it.
+type Closer func(ctx context.Context, tx ClosingReader) (Closing, error)
 
 // CancelIdleRun records a queued or waiting run as cancelled, giving why, and
 // withdraws the approval request it waits for. It reports false if the run
@@ -403,6 +410,7 @@ func (s *Store) CancelIdleRun(ctx context.Context, id, why string, closing Close
 // its records. It stores nothing if it fails: the transaction rolls back to
 // a savepoint.
 func (s *Store) closeOut(ctx context.Context, q *db.Queries, id string, closing Closer) ([]auditlog.Event, error) {
+	// Only the reads the closer is given, and AppendMessage below, use it.
 	tx := &Store{queries: q}
 	if err := q.SavepointClosing(ctx); err != nil {
 		return nil, err

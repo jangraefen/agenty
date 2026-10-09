@@ -426,6 +426,24 @@ func TestClose_LeavesRunsWaitingForApproval(t *testing.T) {
 	assert.Equal(t, store.RunWaiting, stored.Status, "the run still waits, for the next server")
 }
 
+// TestClose_EndsTheStreamsOfRunningRunsWithTheirEnd: a run the server stops
+// as it stops ends as failed, and its stream ends with that end.
+func TestClose_EndsTheStreamsOfRunningRunsWithTheirEnd(t *testing.T) {
+	f := newFixture(t, options{workers: 1})
+	f.putNotes(t)
+	run, _ := f.busy(t)
+	events := f.events(t, run.ID)
+
+	f.server.Close()
+
+	rest := events.rest()
+	require.NotEmpty(t, rest)
+	end := rest[len(rest)-1]
+	require.Equal(t, api.EventFinished, end.name)
+	finished := decodeAs[api.Run](t, end)
+	assert.Equal(t, api.RunStatusFailed, finished.Status)
+}
+
 func TestNew_FailsRunsOfAnEarlierServer(t *testing.T) {
 	f := newFixture(t, options{})
 	ctx := context.Background()

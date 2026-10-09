@@ -17,10 +17,10 @@ import (
 	"github.com/jangraefen/agenty/internal/store/storetest"
 )
 
-// TestCancelRun_AFinishedRunWithAHubIsNotCancelled: a run that finished
-// before its cancel read it, though its hub is not let go of yet, is not
+// TestCancelRun_AFinishedRunWithAJobIsNotCancelled: a run that finished
+// before its cancel read it, though its job is not let go of yet, is not
 // cancelled: the cancel is refused, and no request is recorded for it.
-func TestCancelRun_AFinishedRunWithAHubIsNotCancelled(t *testing.T) {
+func TestCancelRun_AFinishedRunWithAJobIsNotCancelled(t *testing.T) {
 	const token = "alice-token-0123456789abcdef0123456789"
 	ctx := context.Background()
 	st := storetest.New(t)

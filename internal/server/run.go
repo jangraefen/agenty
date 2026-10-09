@@ -556,7 +556,7 @@ func (s *Server) closeOut(ctx context.Context, id string, by cancelledBy) error 
 // the reply's calls, so the conversation can continue from it. A run that
 // has no such call, as its waiting call was answered in the gateway, has
 // nothing to record.
-func notRun(ctx context.Context, st *store.Store, id string, by cancelledBy) (store.Closing, error) {
+func notRun(ctx context.Context, st store.ClosingReader, id string, by cancelledBy) (store.Closing, error) {
 	a, ok, err := st.LatestApproval(ctx, id)
 	if err != nil || !ok {
 		return store.Closing{}, err
@@ -592,14 +592,14 @@ func notRun(ctx context.Context, st *store.Store, id string, by cancelledBy) (st
 // closing is the store.Closer of the run id, cancelled by by while it was
 // queued or waiting.
 func closing(id string, by cancelledBy) store.Closer {
-	return func(ctx context.Context, tx *store.Store) (store.Closing, error) {
+	return func(ctx context.Context, tx store.ClosingReader) (store.Closing, error) {
 		return notRun(ctx, tx, id, by)
 	}
 }
 
 // ownMessages returns the run's messages as stored, and whether redaction
 // altered any of them from what the model saw.
-func ownMessages(ctx context.Context, st *store.Store, id string) (own []model.Message, altered bool, err error) {
+func ownMessages(ctx context.Context, st store.ClosingReader, id string) (own []model.Message, altered bool, err error) {
 	transcript, err := st.Transcript(ctx, id)
 	if err != nil {
 		return nil, false, err
@@ -662,6 +662,8 @@ func (s *Server) finish(ctx context.Context, j *job, id string, status store.Run
 	// regardless.
 	ctx = context.WithoutCancel(ctx)
 	if err := s.cfg.Store.FinishRun(ctx, id, status, redact.String(res.Output), res.Steps, errMsg); err != nil {
+		// Its streams then wait on, as the store, which they read, has no
+		// end for it, until their readers leave or the server stops.
 		s.cfg.Logger.Error("cannot record the end of a run", "run_id", id, "error", err)
 	}
 	s.events.notify(id)

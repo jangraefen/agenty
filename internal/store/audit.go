@@ -137,13 +137,7 @@ func appendEvent(ctx context.Context, q *db.Queries, e auditlog.Event) (auditlog
 // valid JSON, such as malformed arguments from a model, is stored as a JSON
 // string.
 func (s *Store) Record(ctx context.Context, rec toolgateway.Record) error {
-	_, err := s.RecordAt(ctx, rec)
-	return err
-}
-
-// RecordAt is Record, and returns when the record was recorded.
-func (s *Store) RecordAt(ctx context.Context, rec toolgateway.Record) (time.Time, error) {
-	appended, err := s.withEvents(ctx, func(q *db.Queries) ([]auditlog.Event, error) {
+	_, err := s.withEvents(ctx, func(q *db.Queries) ([]auditlog.Event, error) {
 		owner, err := q.RunOwner(ctx, rec.RunID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			err = fmt.Errorf("run %s: %w", rec.RunID, ErrNotFound)
@@ -154,10 +148,7 @@ func (s *Store) RecordAt(ctx context.Context, rec toolgateway.Record) (time.Time
 		e, err := toolEvent(rec, owner.StartedBy, owner.Workspace)
 		return []auditlog.Event{e}, err
 	})
-	if err != nil {
-		return time.Time{}, err
-	}
-	return appended[0].RecordedAt, nil
+	return err
 }
 
 // AuditRecord is a stored audit record.
@@ -206,8 +197,8 @@ func toolRecord(runID, action string, details []byte, at time.Time) (AuditRecord
 }
 
 // RunEvent is an event of a run's event stream, read from the audit log:
-// one of a record of the tool gateway, a request the run waited for, as it
-// is now, or the run's end.
+// one of a record of the tool gateway, a request the run waited for, or the
+// run's end.
 type RunEvent struct {
 	// ID is the event's id in the audit log: the events after it follow.
 	ID       int64

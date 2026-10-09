@@ -1,15 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { parseEnv, takeMigrationUrl } from "./env";
 
-const valid = { DATABASE_URL: "postgres://agenty_app:s3cret@localhost:5432/agenty" };
+const base = {
+  DATABASE_URL: "postgres://agenty_app:s3cret@localhost:5432/agenty",
+  BETTER_AUTH_SECRET: "x".repeat(32),
+  BETTER_AUTH_URL: "http://localhost:3000",
+};
+const valid = base;
 
 describe("parseEnv", () => {
   it("accepts a postgres URL and defaults NODE_ENV", () => {
-    expect(parseEnv(valid)).toEqual({ ...valid, NODE_ENV: "development" });
+    expect(parseEnv(valid)).toMatchObject({ ...valid, NODE_ENV: "development" });
   });
 
   it("accepts the postgresql:// scheme", () => {
-    const env = { DATABASE_URL: "postgresql://u:p@db:5432/agenty" };
+    const env = { ...base, DATABASE_URL: "postgresql://u:p@db:5432/agenty" };
     expect(parseEnv(env).DATABASE_URL).toBe(env.DATABASE_URL);
   });
 
@@ -18,14 +23,16 @@ describe("parseEnv", () => {
   });
 
   it("rejects a non-postgres URL", () => {
-    expect(() => parseEnv({ DATABASE_URL: "mysql://u:p@db/agenty" })).toThrow(/DATABASE_URL/);
+    expect(() => parseEnv({ ...base, DATABASE_URL: "mysql://u:p@db/agenty" })).toThrow(
+      /DATABASE_URL/,
+    );
   });
 
   it("never echoes the value (it contains a password) in the error", () => {
     const secret = "mysql://agenty_app:hunter2-very-secret@db/agenty";
     let message = "";
     try {
-      parseEnv({ DATABASE_URL: secret });
+      parseEnv({ ...base, DATABASE_URL: secret });
     } catch (error) {
       message = (error as Error).message;
     }
@@ -36,6 +43,39 @@ describe("parseEnv", () => {
 
   it("rejects an unknown NODE_ENV", () => {
     expect(() => parseEnv({ ...valid, NODE_ENV: "staging" })).toThrow(/NODE_ENV/);
+  });
+});
+
+describe("parseEnv auth settings", () => {
+  it("accepts the auth settings, trusted origins default to none", () => {
+    expect(parseEnv(base)).toMatchObject({ BETTER_AUTH_TRUSTED_ORIGINS: [] });
+  });
+
+  it("parses comma-separated trusted origins", () => {
+    expect(
+      parseEnv({
+        ...base,
+        BETTER_AUTH_TRUSTED_ORIGINS: "http://localhost:8080, https://idp.internal",
+      }),
+    ).toMatchObject({
+      BETTER_AUTH_TRUSTED_ORIGINS: ["http://localhost:8080", "https://idp.internal"],
+    });
+  });
+
+  it("rejects a trusted origin with a path", () => {
+    expect(() =>
+      parseEnv({ ...base, BETTER_AUTH_TRUSTED_ORIGINS: "http://localhost:8080/corp" }),
+    ).toThrow(/BETTER_AUTH_TRUSTED_ORIGINS/);
+  });
+
+  it("rejects a short BETTER_AUTH_SECRET without echoing it", () => {
+    const secret = "short-secret-value";
+    expect(() => parseEnv({ ...base, BETTER_AUTH_SECRET: secret })).toThrow(/BETTER_AUTH_SECRET/);
+    expect(() => parseEnv({ ...base, BETTER_AUTH_SECRET: secret })).not.toThrow(new RegExp(secret));
+  });
+
+  it("rejects a non-http BETTER_AUTH_URL", () => {
+    expect(() => parseEnv({ ...base, BETTER_AUTH_URL: "ftp://x" })).toThrow(/BETTER_AUTH_URL/);
   });
 });
 

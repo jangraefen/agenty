@@ -41,30 +41,38 @@ describe("runtime role (DATABASE_URL)", () => {
   });
 });
 
-describe("schema app ownership", () => {
-  it("schema app is owned by agenty_owner", async () => {
+describe.each(["app", "auth"])("schema %s ownership and grants", (schema) => {
+  it("the schema is owned by agenty_owner", async () => {
     const [row] = await appSql`
-      select nspowner::regrole::text as owner from pg_namespace where nspname = 'app'`;
+      select nspowner::regrole::text as owner from pg_namespace where nspname = ${schema}`;
     expect(row?.owner).toBe("agenty_owner");
   });
 
-  it("every table in app is owned by agenty_owner", async () => {
+  it("every table is owned by agenty_owner", async () => {
     const foreign = await appSql`
       select tablename, tableowner from pg_tables
-      where schemaname = 'app' and tableowner <> 'agenty_owner'`;
+      where schemaname = ${schema} and tableowner <> 'agenty_owner'`;
     expect(foreign).toEqual([]);
+  });
+
+  it("agenty_app can use the schema but not create objects in it", async () => {
+    const [row] = await appSql`
+      select
+        has_schema_privilege(current_user, ${schema}, 'USAGE') as can_use,
+        has_schema_privilege(current_user, ${schema}, 'CREATE') as can_create`;
+    expect(row).toEqual({ can_use: true, can_create: false });
   });
 
   it("tables agenty_owner creates are readable and writable by agenty_app", async () => {
     const privileges = ownerSql.begin(async (tx) => {
-      await tx`create table app.__grant_probe (id integer)`;
+      await tx.unsafe(`create table ${schema}.__grant_probe (id integer)`);
       const [row] = await tx`
         select
-          has_table_privilege('agenty_app', 'app.__grant_probe', 'SELECT') as can_select,
-          has_table_privilege('agenty_app', 'app.__grant_probe', 'INSERT') as can_insert,
-          has_table_privilege('agenty_app', 'app.__grant_probe', 'UPDATE') as can_update,
-          has_table_privilege('agenty_app', 'app.__grant_probe', 'DELETE') as can_delete,
-          has_table_privilege('agenty_app', 'app.__grant_probe', 'TRUNCATE') as can_truncate`;
+          has_table_privilege('agenty_app', ${`${schema}.__grant_probe`}, 'SELECT') as can_select,
+          has_table_privilege('agenty_app', ${`${schema}.__grant_probe`}, 'INSERT') as can_insert,
+          has_table_privilege('agenty_app', ${`${schema}.__grant_probe`}, 'UPDATE') as can_update,
+          has_table_privilege('agenty_app', ${`${schema}.__grant_probe`}, 'DELETE') as can_delete,
+          has_table_privilege('agenty_app', ${`${schema}.__grant_probe`}, 'TRUNCATE') as can_truncate`;
       throw new Rollback(JSON.stringify(row));
     });
     const error = await privileges.catch((e: unknown) => e);
@@ -76,5 +84,19 @@ describe("schema app ownership", () => {
       can_delete: true,
       can_truncate: false,
     });
+  });
+
+  it("sequences agenty_owner creates are usable by agenty_app", async () => {
+    const privileges = ownerSql.begin(async (tx) => {
+      await tx.unsafe(`create sequence ${schema}.__seq_probe`);
+      const [row] = await tx`
+        select
+          has_sequence_privilege('agenty_app', ${`${schema}.__seq_probe`}, 'USAGE') as can_use,
+          has_sequence_privilege('agenty_app', ${`${schema}.__seq_probe`}, 'SELECT') as can_select`;
+      throw new Rollback(JSON.stringify(row));
+    });
+    const error = await privileges.catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Rollback);
+    expect(JSON.parse((error as Rollback).message)).toEqual({ can_use: true, can_select: true });
   });
 });

@@ -15,6 +15,20 @@
       "when": 1791550363113,
       "tag": "0001_app_grants",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791568395002,
+      "tag": "0002_auth_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791568396634,
+      "tag": "0003_auth_grants",
+      "breakpoints": true
     }
   ]
 }

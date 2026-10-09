@@ -28,9 +28,11 @@ tasks:
           opa version | head -n 1 | grep -qx "Version: {{trimPrefix "v" .OPA_VERSION}}" || echo "warning - opa {{.OPA_VERSION}} expected, found $(opa version | head -n 1)" >&2
 
   dev:
-    desc: Run the app in development mode (starts Postgres; the app applies migrations on start)
+    desc: Run the app in development mode (starts Postgres and the mock IdP, migrates, seeds)
     cmds:
       - task: db:up
+      - task: db:migrate
+      - task: db:seed
       - task: policy:build
       - pnpm exec next dev
 
@@ -79,17 +81,19 @@ tasks:
       - pnpm exec playwright install {{if eq (env "CI") "true"}}--with-deps {{end}}chromium
 
   db:up:
-    desc: Start local Postgres and wait until healthy
+    desc: Start local Postgres and the mock IdP and wait until both are ready
     cmds:
-      - docker compose up --detach --wait
+      - docker compose up --detach --wait postgres
+      - docker compose up --detach mock-oidc
+      - sh scripts/wait-for-url.sh http://localhost:8080/isalive
 
   db:down:
-    desc: Stop local Postgres (keeps data)
+    desc: Stop local Postgres and the mock IdP (keeps data)
     cmds:
       - docker compose down
 
   db:reset:
-    desc: Stop local Postgres and delete its data (needed after changing docker/postgres/init.sql)
+    desc: Stop local Postgres and the mock IdP and delete the database data (needed after changing docker/postgres/init.sql)
     cmds:
       - docker compose down --volumes
 
@@ -107,6 +111,17 @@ tasks:
     desc: Apply migrations as agenty_owner without starting the app (tests, CI)
     cmds:
       - node scripts/migrate.ts
+
+  db:seed:
+    desc: Register the mock IdP's development providers (insert-if-absent)
+    cmds:
+      - node scripts/seed.ts
+
+  auth:generate:
+    desc: Write Better Auth's reference schema to build/ for diffing after upgrades
+    cmds:
+      - mkdir -p build
+      - pnpm dlx auth@1.7.7 generate --config scripts/auth-generate.config.ts --output build/auth-schema.generated.ts -y
 
   db:studio:
     desc: Open Drizzle Studio (as agenty_owner)
@@ -132,6 +147,7 @@ tasks:
       - task: typecheck
       - task: db:check
       - task: db:migrate
+      - task: db:seed
       - task: test
       - task: build
       - task: test:e2e

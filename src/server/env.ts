@@ -5,6 +5,27 @@ const postgresUrl = z.url({ protocol: /^postgres(ql)?$/, error: "must be a postg
 
 const envSchema = z.object({
   DATABASE_URL: postgresUrl,
+  BETTER_AUTH_SECRET: z.string().min(32, "must be at least 32 characters"),
+  BETTER_AUTH_URL: z.url({ protocol: /^https?$/, error: "must be an http(s) URL" }),
+  BETTER_AUTH_TRUSTED_ORIGINS: z
+    .string()
+    .optional()
+    .transform((value) =>
+      (value ?? "")
+        .split(",")
+        .map((origin) => origin.trim())
+        .filter(Boolean),
+    )
+    .pipe(
+      z.array(
+        z
+          .url({ protocol: /^https?$/, error: "must be an http(s) URL" })
+          .refine(
+            (origin) => new URL(origin).origin === origin,
+            "must be an origin (scheme://host[:port])",
+          ),
+      ),
+    ),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
 });
 

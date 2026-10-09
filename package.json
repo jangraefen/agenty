@@ -8,8 +8,11 @@
   "scripts": {},
   "dependencies": {
     "@base-ui/react": "^1.8.0",
+    "@better-auth/core": "1.7.7",
+    "@better-auth/sso": "1.7.7",
     "@open-policy-agent/opa-wasm": "^1.10.0",
     "@tanstack/react-query": "^5.104.1",
+    "better-auth": "1.7.7",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.4.0",
     "drizzle-orm": "^0.45.4",

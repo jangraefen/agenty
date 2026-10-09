@@ -57,6 +57,11 @@ tasks:
     cmds:
       - sh scripts/build.sh
 
+  docker:build:
+    desc: Build the production image (tag agenty:local)
+    cmds:
+      - docker build --build-arg OPA_VERSION={{.OPA_VERSION}} -t agenty:local .
+
   test:
     desc: Run unit and integration tests (integration needs `task db:up`)
     deps: [policy:build]

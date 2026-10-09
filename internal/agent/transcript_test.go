@@ -22,6 +22,8 @@ type transcript struct {
 	failAt   int
 }
 
+// Append records msg under runID and index, or fails at failAt without
+// recording it.
 func (tr *transcript) Append(_ context.Context, runID string, index int, msg model.Message) error {
 	if index == tr.failAt {
 		return errors.New("transcript store down")

@@ -31,7 +31,10 @@ type AnswerApprovalParams struct {
 }
 
 // Answers a pending, unexpired request of a run of the workspace, and
-// returns its run.
+// returns its run. The workspace is part of the match, so a request cannot
+// be answered through another workspace's URL. Matching only a pending
+// request makes the answer happen once; the row lock of the update makes a
+// concurrent answer, expiry or withdrawal wait and then match nothing.
 func (q *Queries) AnswerApproval(ctx context.Context, arg AnswerApprovalParams) (string, error) {
 	row := q.db.QueryRow(ctx, answerApproval,
 		arg.Status,
@@ -54,6 +57,7 @@ RETURNING run_id
 `
 
 // Rejects the pending requests that have expired, and returns their runs.
+// Like AnswerApproval, it locks requests before their runs.
 func (q *Queries) ExpireApprovals(ctx context.Context, reason string) ([]string, error) {
 	rows, err := q.db.Query(ctx, expireApprovals, reason)
 	if err != nil {
@@ -92,6 +96,9 @@ type InsertApprovalParams struct {
 	ExpiresAt time.Time
 }
 
+// Stores a pending request; SuspendRun calls it in the transaction that
+// marks its run as waiting. The unique index approvals_pending refuses a
+// second pending request of one run.
 func (q *Queries) InsertApproval(ctx context.Context, arg InsertApprovalParams) error {
 	_, err := q.db.Exec(ctx, insertApproval,
 		arg.ID,
@@ -153,6 +160,7 @@ ORDER BY expires_at
 LIMIT 1
 `
 
+// When the next pending request expires, from the index approvals_expiring.
 func (q *Queries) NextApprovalExpiry(ctx context.Context) (time.Time, error) {
 	row := q.db.QueryRow(ctx, nextApprovalExpiry)
 	var expires_at time.Time
@@ -223,6 +231,9 @@ UPDATE runs SET status = 'queued'
 WHERE id = ANY($1::text[]) AND status = 'waiting'
 `
 
+// Puts waiting runs back in the queue once their requests are answered or
+// expired. Only waiting runs move, so a run cancelled meanwhile stays
+// cancelled.
 func (q *Queries) QueueWaitingRuns(ctx context.Context, ids []string) (int64, error) {
 	result, err := q.db.Exec(ctx, queueWaitingRuns, ids)
 	if err != nil {
@@ -236,6 +247,8 @@ UPDATE runs SET status = 'waiting'
 WHERE id = $1 AND status = 'running'
 `
 
+// Marks a running run as waiting, so no worker holds it. It changes no row
+// for a run that is not running, which the caller reports as not found.
 func (q *Queries) SuspendRun(ctx context.Context, id string) (int64, error) {
 	result, err := q.db.Exec(ctx, suspendRun, id)
 	if err != nil {

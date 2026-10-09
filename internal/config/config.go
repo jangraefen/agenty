@@ -1,8 +1,40 @@
 // Package config loads the operator configuration: the model provider, the
-// database, the MCP servers, central policy, and who may use the API. Secrets never live in the file: a value is
-// either read from the environment, {env: NAME}, or written as plain text,
-// {value: TEXT}, and everything read from the environment is treated as a
-// secret.
+// database, the MCP servers, central policy, and who may use the API.
+// Secrets never live in the file: a value is either read from the
+// environment, {env: NAME}, or written as plain text, {value: TEXT}, and
+// everything read from the environment is treated as a secret.
+//
+// # Place in the architecture
+//
+// The operator config, agenty.yaml by default, is what the person running
+// Agenty controls; harnesses are what builders control. Keeping the two apart
+// means a builder never sees or handles a credential, and central policy,
+// which builders may only tighten, lives where builders cannot edit it.
+// "agenty serve" loads the config once, at start, and hands it to the server:
+// the config, and the policy and access it grants, change only with a
+// restart, which the audit log records as server.started.
+//
+// # Two steps: Load, then Resolve
+//
+// Load reads the file, rejects unknown keys, validates every field and reads
+// the central policy files the config names, giving a Config that holds no
+// secret, only the names of the environment variables that hold them.
+// Resolve then reads those variables and returns Resolved: the values, and
+// one secret.Redactor for all of them. The split keeps the Config safe to
+// pass around, record and compare (the server records parts of it in the
+// audit log), while the secrets sit in one place whose every value the
+// redactor knows.
+//
+// # Trust-model guarantees upheld here
+//
+// Guarantee 5 in docs/IDEA.md, credentials never reach the model or logs,
+// starts here: every value read from the environment goes into the redactor
+// that the server's logs, responses, stored runs and tool gateway use, and
+// values too short to redact without matching ordinary text are refused.
+// Users' tokens must come from the environment, are at least TokenMinLength
+// characters, and must be distinct, so a token names exactly one user. Error
+// messages never repeat a value written in the file, in case a secret was
+// written there by mistake.
 package config
 
 import (
@@ -25,7 +57,9 @@ import (
 	"github.com/jangraefen/agenty/internal/secret"
 )
 
-// Config is the operator configuration.
+// Config is the operator configuration, as Load returns it: validated, with
+// central policy read from its files, and no secret in it. Resolve reads the
+// values it names from the environment.
 type Config struct {
 	Provider Provider `yaml:"provider"`
 	// Database is where the server keeps its state.
@@ -45,7 +79,10 @@ type Config struct {
 	Policy []policy.Module `yaml:"-"`
 }
 
-// file is a config file: the config, and its policy as written.
+// file is a config file: the config, and its policy as written. Config
+// keeps the policy modules, read and named by their files, while the file
+// lists only the paths; the two shapes are kept apart so Config never
+// carries a path that only means something relative to the file.
 type file struct {
 	Config `yaml:",inline"`
 	Policy policySection `yaml:"policy"`
@@ -58,11 +95,15 @@ type policySection struct {
 }
 
 // Provider configures the model providers. Anthropic is the only one so far.
+// It is a pointer field per provider, so an absent section can be told from
+// an empty one.
 type Provider struct {
 	Anthropic *Anthropic `yaml:"anthropic"`
 }
 
-// Anthropic configures the Anthropic provider.
+// Anthropic configures the Anthropic provider. The server builds the model
+// client a harness runs on from it; the harness names only the provider and
+// the model.
 type Anthropic struct {
 	APIKey    Value `yaml:"api_key"`
 	MaxTokens int   `yaml:"max_tokens"`
@@ -81,7 +122,10 @@ type Database struct {
 	URL Value `yaml:"url"`
 }
 
-// MCPServer is an MCP server Agenty starts over stdio.
+// MCPServer is an MCP server Agenty starts over stdio. Only the tool
+// gateway starts it, and only when a harness grants one of its tools. Env
+// holds the variables it receives, credentials among them; they are given to
+// the server's process at start, never to the model.
 type MCPServer struct {
 	Command string           `yaml:"command"`
 	Args    []string         `yaml:"args"`
@@ -96,7 +140,9 @@ type MCPServer struct {
 // configured.
 const DefaultMCPIdleTimeout = 15 * time.Minute
 
-// IdleTimeoutOrDefault returns the server's idle timeout.
+// IdleTimeoutOrDefault returns the server's idle timeout. IdleTimeout is a
+// pointer so that an explicit zero, which stops the server after each run,
+// differs from leaving it unset.
 func (s MCPServer) IdleTimeoutOrDefault() time.Duration {
 	if s.IdleTimeout == nil {
 		return DefaultMCPIdleTimeout
@@ -104,7 +150,8 @@ func (s MCPServer) IdleTimeoutOrDefault() time.Duration {
 	return *s.IdleTimeout
 }
 
-// User is a person who may use the API.
+// User is a person who may use the API. Bearer tokens are a stopgap until
+// OIDC.
 type User struct {
 	// Token is the user's bearer token. It must come from the environment:
 	// a token is a credential.
@@ -128,7 +175,7 @@ type CORS struct {
 	Origins []string `yaml:"origins"`
 }
 
-// Runs configures how runs execute.
+// Runs configures how runs execute in the server's single process.
 type Runs struct {
 	// Workers is how many runs execute at once; the others wait, queued.
 	// Zero means DefaultRunWorkers.
@@ -138,7 +185,8 @@ type Runs struct {
 // DefaultRunWorkers is the number of workers when none is configured.
 const DefaultRunWorkers = 16
 
-// WorkersOrDefault returns the number of workers.
+// WorkersOrDefault returns the number of workers. Zero, the YAML default,
+// means DefaultRunWorkers; validate rejects negative values.
 func (r Runs) WorkersOrDefault() int {
 	if r.Workers == 0 {
 		return DefaultRunWorkers
@@ -161,10 +209,14 @@ const DefaultApprovalTimeout = time.Hour
 const TokenMinLength = 32
 
 // namePattern is the form of user and workspace names, which appear in URLs.
+// Restricting them keeps paths readable and unambiguous without escaping,
+// and rules out names that differ only in case.
 var namePattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
 // Value is a configuration value: read from an environment variable, which
-// makes it a secret, or given as plain text. Exactly one is set.
+// makes it a secret, or given as plain text. Exactly one is set. The form is
+// explicit rather than a bare string, so an operator cannot paste a
+// credential where a variable name belongs without the file saying so.
 type Value struct {
 	Env   string `yaml:"env"`
 	Value string `yaml:"value"`
@@ -191,20 +243,31 @@ func (v *Value) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
+// FieldError must satisfy error; the guard fails the build if it stops.
 var _ error = (*FieldError)(nil) //nolint:errcheck // an interface guard, not a discarded error
 
-// FieldError reports an invalid field, named by its YAML path.
+// FieldError reports an invalid field, named by its YAML path. Validation
+// collects every FieldError it finds and joins them, so an operator fixes
+// the whole file in one go, and callers can walk the joined error for the
+// fields.
 type FieldError struct {
 	Field string
 	Msg   string
 }
 
+// Error formats the error as the field's YAML path and the message.
 func (e *FieldError) Error() string {
 	return fmt.Sprintf("field %q: %s", e.Field, e.Msg)
 }
 
 // Load reads, parses and validates the config file at path, and reads its
 // policy files relative to it. Unknown keys are rejected.
+//
+// Unknown keys are an error rather than ignored, because a misspelt key,
+// such as a policy section, would otherwise drop a control silently. Policy
+// files are read relative to the config file, not the working directory, so
+// the config means the same wherever serve is started. The modules are only
+// read here; server.New compiles them, so a Rego mistake fails the start.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // G304: the operator names the config file.
 	if err != nil {
@@ -213,6 +276,8 @@ func Load(path string) (*Config, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	var f file
+	// An empty file decodes as io.EOF; it is let through so validate
+	// reports every missing field instead of one decode error.
 	if err := dec.Decode(&f); err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("config %s: decode: %w", path, err)
 	}
@@ -230,6 +295,10 @@ func Load(path string) (*Config, error) {
 	return &c, nil
 }
 
+// validate checks every field that can be checked without the environment
+// and returns all problems joined, each a FieldError. Map keys are visited in
+// sorted order so the errors come out the same each time. Checks that need
+// the values themselves, such as token length, are Resolve's.
 func (f *file) validate() error {
 	var errs []error
 	add := func(field, msg string) {
@@ -255,6 +324,8 @@ func (f *file) validate() error {
 			add("provider.anthropic.history_cache_ttl", `must be "5m" or "1h"`)
 		}
 	}
+	// The database is required: the server keeps every harness, run and
+	// audit event there and has no other state.
 	checkValue("database.url", f.Database.URL)
 	for _, name := range slices.Sorted(maps.Keys(f.MCPServers)) {
 		srv := f.MCPServers[name]
@@ -279,6 +350,9 @@ func (f *file) validate() error {
 			add(field, fmt.Sprintf("%q is listed twice", name))
 		}
 	}
+	// With no users the server would start but refuse every request, which
+	// can only be a mistake. Tokens must come from the environment, as written
+	// into the file they would be readable by anyone who can read it.
 	if len(f.Users) == 0 {
 		add("users", "none are configured, so no one could sign in")
 	}
@@ -310,6 +384,9 @@ func (f *file) validate() error {
 	if f.Approvals.Timeout < 0 {
 		add("approvals.timeout", "must not be negative")
 	}
+	// Origins are compared with the Origin header as written, so they must
+	// be written in the exact form browsers send; a trailing slash or path
+	// would never match and silently lock the portal out.
 	for i, origin := range f.CORS.Origins {
 		if u, err := url.Parse(origin); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || origin != u.Scheme+"://"+u.Host {
 			add(fmt.Sprintf("cors.origins[%d]", i), "an origin must be scheme://host[:port], with an http or https scheme and nothing after the host")
@@ -318,13 +395,15 @@ func (f *file) validate() error {
 	return errors.Join(errs...)
 }
 
+// hasKey reports whether m has key.
 func hasKey[V any](m map[string]V, key string) bool {
 	_, ok := m[key]
 	return ok
 }
 
 // Resolved holds the configuration's values, read from the environment where
-// configured, and the redactor for the secrets among them.
+// configured, and the redactor for the secrets among them. It is the only
+// place secrets live once read; server.Config takes it alongside Config.
 type Resolved struct {
 	AnthropicAPIKey string
 	DatabaseURL     string
@@ -339,6 +418,14 @@ type Resolved struct {
 }
 
 // Resolve reads the configured environment variables through lookup.
+//
+// Every value read from the environment becomes a secret of the returned
+// redactor; plain {value: TEXT} values do not, as the file already shows
+// them. A variable that is unset or empty is an error rather than an empty
+// value, and so is one shorter than secret.MinLength, since the redactor
+// cannot redact it without also matching ordinary text. All problems are
+// collected and joined, and the messages name the field and the variable,
+// never the value. lookup is a parameter so tests resolve against a map.
 func (c *Config) Resolve(lookup func(string) (string, bool)) (*Resolved, error) {
 	r := &Resolved{MCPServerEnv: map[string]map[string]string{}, UserTokens: map[string]string{}}
 	var secrets []string
@@ -368,6 +455,10 @@ func (c *Config) Resolve(lookup func(string) (string, bool)) (*Resolved, error) 
 		}
 		r.MCPServerEnv[name] = env
 	}
+	// Tokens are checked here rather than in validate, as only their values
+	// show their length and whether two users share one. A shared token
+	// would make the server unable to tell the users apart, the approver
+	// recorded in the audit log included.
 	owners := map[string]string{}
 	for _, user := range slices.Sorted(maps.Keys(c.Users)) {
 		field := "users." + user + ".token"

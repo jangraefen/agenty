@@ -16,12 +16,17 @@ import (
 // userKey is the gin context key of the signed-in user's name.
 const userKey = "user"
 
-// userToken is a user's bearer token, as a SHA-256 hash.
+// userToken is a user's bearer token, as a SHA-256 hash. The server keeps
+// only the hash, which gives every token the same length for a
+// constant-time comparison.
 type userToken struct {
 	hash [sha256.Size]byte
 	user string
 }
 
+// hashTokens hashes the configured users' tokens, from user to token, in the
+// order of the users' names, so the list, and the work of comparing against
+// it, is the same at every start.
 func hashTokens(tokens map[string]string) []userToken {
 	out := make([]userToken, 0, len(tokens))
 	for _, user := range slices.Sorted(maps.Keys(tokens)) {
@@ -43,6 +48,9 @@ func (s *Server) authenticate(c *gin.Context) {
 		s.fail(c, http.StatusUnauthorized, errSignIn)
 		return
 	}
+	// Every token is compared, without stopping at a match, so the time
+	// taken does not tell which user's token matched, or how many there are
+	// before it.
 	hash := sha256.Sum256([]byte(token))
 	user := ""
 	for _, t := range s.tokens {
@@ -73,9 +81,14 @@ func (s *Server) authenticate(c *gin.Context) {
 func (s *Server) member(c *gin.Context) {
 	ws, ok := c.Params.Get("workspace")
 	inWorkspace := strings.HasPrefix(c.FullPath(), "/v1/workspaces/")
+	// The reads of a run are left to ownRun, which answers a non-member
+	// exactly as this check would, unless the run is their own.
 	if c.Request.Method == http.MethodGet && ownRunReads[c.FullPath()] {
 		return
 	}
+	// A route outside any workspace, such as /v1/me or the audit routes,
+	// passes; one under /v1/workspaces/ without a workspace parameter finds
+	// ws empty, which no one is a member of, so it fails closed.
 	if (ok || inWorkspace) && !s.isMember(c.GetString(userKey), ws) {
 		s.fail(c, http.StatusNotFound, fmt.Errorf("workspace %s: not found", ws))
 	}
@@ -89,7 +102,9 @@ var ownRunReads = map[string]bool{
 	"/v1/workspaces/:workspace/runs/:id/events":     true,
 }
 
-// isMember reports whether user is a member of the workspace.
+// isMember reports whether user is a member of the workspace, as the
+// operator config read at the start lists its members. A workspace the
+// config does not have has no members.
 func (s *Server) isMember(user, workspace string) bool {
 	return slices.Contains(s.cfg.Operator.Workspaces[workspace].Members, user)
 }

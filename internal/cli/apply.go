@@ -9,6 +9,7 @@ import (
 	"github.com/jangraefen/agenty/internal/harness"
 )
 
+// applyUsage is the usage text of "agenty apply".
 const applyUsage = `usage: agenty apply [flags] FILE
 
 Stores the harness in FILE, with its policy files, on the server. A changed
@@ -16,6 +17,15 @@ harness becomes its next version; an unchanged one is left as it is.
 Harnesses belong to the workspace they are applied to.
 `
 
+// apply implements "agenty apply": it loads a harness file and stores it in
+// the workspace with PUT /v1/workspaces/{ws}/harnesses/{name}, then prints
+// the version the server assigned.
+//
+// The file is loaded and validated locally with harness.Load, which also
+// reads the harness's policy files relative to it, so a broken harness fails
+// before any request; the server validates it again, as the API is not only
+// the CLI's. Versioning is the server's decision: an unchanged harness keeps
+// its version, so apply is safe to repeat.
 func apply(ctx context.Context, args []string, env Env) int {
 	flags, rest, code, ok := parseFlags(command{name: "apply", usage: applyUsage, nargs: 1, client: true, workspace: true}, args, env)
 	if !ok {

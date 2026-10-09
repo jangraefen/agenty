@@ -1,20 +1,39 @@
+/**
+ * The page layout of a signed-in user: the sidebar beside the page's main
+ * content. The authed layout (routes/_authed.tsx) wraps every signed-in page
+ * in it, with AppSidebar as the sidebar.
+ *
+ * On a wide screen (md and up) the sidebar is always shown, sticky beside
+ * the page. On a narrow one a bar with a menu button shows and hides it over
+ * the page.
+ */
 import { useRouterState } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { LuMenu, LuX } from "react-icons/lu";
 import { cn } from "@/lib/utils";
 
-// Shell lays a page out beside the sidebar. Below md the sidebar is hidden
-// behind a menu button, and leaving the page or Escape hides it again. It
-// does not hold the focus: the page stays usable while it shows.
+/**
+ * Shell lays a page out beside the sidebar. Below md the sidebar is hidden
+ * behind a menu button, and leaving the page or Escape hides it again. It
+ * does not hold the focus: the page stays usable while it shows.
+ *
+ * Whether it shows is one piece of state, open, which the CSS reads at
+ * narrow widths only, so a wide screen ignores it.
+ */
 export function Shell({ sidebar, children }: { sidebar: ReactNode; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const href = useRouterState({ select: (state) => state.location.href });
+  // Following a link, such as a chat in the sidebar, closes the sidebar, so
+  // the page it opened shows. Reset while rendering, rather than in an
+  // effect, so the page never shows a frame with the sidebar still open.
   const [shownAt, setShownAt] = useState(href);
   if (shownAt !== href) {
     setShownAt(href);
     setOpen(false);
   }
   const toggle = useRef<HTMLButtonElement>(null);
+  // Escape closes the open sidebar and returns the focus to the button that
+  // opened it; the listener is there only while the sidebar is open.
   useEffect(() => {
     if (!open) {
       return;

@@ -1,4 +1,13 @@
 /// <reference types="vitest/config" />
+/**
+ * The build, development server and unit test configuration of the frontend.
+ *
+ * Plugins: TanStack Router's generates routeTree.gen.ts from src/routes and
+ * splits each route into its own chunk; React's and Tailwind's compile the
+ * app; agenty-csp writes the Content-Security-Policy (src/csp.ts) into the
+ * built index.html. The API's URL is fixed here at build time, as the
+ * frontend is a static bundle deployed apart from the server.
+ */
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
@@ -47,6 +56,8 @@ export default defineConfig(({ mode }) => {
       tailwindcss(),
       csp(apiUrl),
     ],
+    // Replaces the env lookup with the normalised URL, so src/config.ts reads
+    // it without a trailing slash, whatever the environment said.
     define: { "import.meta.env.VITE_AGENTY_API_URL": JSON.stringify(apiUrl) },
     resolve: {
       alias: { "@": new URL("./src", import.meta.url).pathname },
@@ -57,6 +68,7 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       strictPort: true,
     },
+    // Unit tests: Vitest on jsdom, the API mocked by MSW (src/test/setup.ts).
     test: {
       environment: "jsdom",
       setupFiles: ["./src/test/setup.ts"],

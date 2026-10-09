@@ -19,6 +19,7 @@ import (
 
 const testKey = "sk-ant-test-key-0123456789"
 
+// newModel returns a provider that sends its requests to the fake api.
 func newModel(t *testing.T, api *anthropictest.API) *anthropic.Model {
 	t.Helper()
 	m, err := anthropic.New(anthropic.Config{APIKey: testKey, Model: "claude-test", MaxTokens: 1024, BaseURL: api.URL})
@@ -398,6 +399,9 @@ func TestGenerate_ReplaysTheReplyUnchanged(t *testing.T) {
 	}
 }
 
+// TestGenerate_ProviderParts: a reply with another provider's part is rebuilt
+// from its text and calls, and a broken part of this provider fails before
+// any request is sent.
 func TestGenerate_ProviderParts(t *testing.T) {
 	tests := []struct {
 		name     string

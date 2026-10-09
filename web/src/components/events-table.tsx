@@ -1,3 +1,14 @@
+/**
+ * A table of audit log events, shared by every view of the log that lists
+ * events: the user's activity (`/activity`), a workspace's changes (its
+ * overview and `/w/{ws}/audit`) and the auditors' events (`/audit/events`).
+ *
+ * Each view passes its own infinite query (myActivityQuery,
+ * workspaceAuditQuery, auditEventsQuery) and says which columns it needs;
+ * the table shows the query's loading, error and empty states, a row per
+ * event with a short summary, the event's whole details on request, and
+ * Load more.
+ */
 import type { InfiniteData, UseInfiniteQueryResult } from "@tanstack/react-query";
 import { type ReactNode, useId, useState } from "react";
 import { LuChevronRight } from "react-icons/lu";
@@ -8,6 +19,11 @@ import { formatTime } from "@/lib/format";
 
 type Event = Schemas["AuditLogEvent"];
 
+/**
+ * The names of the audit log's actions, for people. An action the server
+ * adds later shows as its own name until it gets one here, so the table
+ * never hides an event.
+ */
 const labels: Record<string, string> = {
   "tool.decision": "Policy decision",
   "tool.approval": "Approval",
@@ -19,13 +35,19 @@ const labels: Record<string, string> = {
   "server.started": "Server started",
 };
 
-// text is a detail of an event as text, or "" when it has none.
+/**
+ * text is a detail of an event as text, or "" when it has none. Details are
+ * untyped JSON, so anything but a string or a number counts as none rather
+ * than being shown as "[object Object]".
+ */
 function text(value: unknown): string {
   return typeof value === "string" || typeof value === "number" ? String(value) : "";
 }
 
-// summary says in a few words what an event's details hold; the whole of
-// them is a click away.
+/**
+ * summary says in a few words what an event's details hold, by its action;
+ * the whole of them is a click away. An action it does not know gets none.
+ */
 function summary({ action, details: d }: Event): string {
   switch (action) {
     case "harness.changed":
@@ -43,11 +65,16 @@ function summary({ action, details: d }: Event): string {
   }
 }
 
-// EventsTable lists audit log events, newest first, and loads more on
-// request. Their details come from users, models and tools, so they are
-// shown as text only. showActor adds who acted, showWorkspace where;
-// subject links an event's run or names its target. limit shows only the
-// newest events, without loading more.
+/**
+ * EventsTable lists audit log events, newest first, and loads more on
+ * request. Their details come from users, models and tools, so they are
+ * shown as text only. showActor adds who acted, showWorkspace where;
+ * subject links an event's run or names its target. limit shows only the
+ * newest events, without loading more.
+ *
+ * The rows are the query's pages flattened in order, as each page continues
+ * the one before it.
+ */
 export function EventsTable({
   events,
   empty,
@@ -104,6 +131,7 @@ export function EventsTable({
           </table>
         </div>
       )}
+      {/* A table cut to its newest events loads no more: its page links to the whole log. */}
       {limit === undefined && (
         <LoadMore query={events} variant="outline" className="justify-self-start" />
       )}
@@ -111,10 +139,15 @@ export function EventsTable({
   );
 }
 
-// EventRow is an event in a row of its own; a toggle at its start shows
-// the whole of its details in a row below, as wide as the table. The
-// toggle is named after the row's cells, so its name says which event it
-// opens.
+/**
+ * EventRow is an event in a row of its own; a toggle at its start shows
+ * the whole of its details in a row below, as wide as the table. The
+ * toggle is named after the row's cells, so its name says which event it
+ * opens.
+ *
+ * The details row is rendered only while open, and the summary row drops
+ * its bottom border then, so the two read as one event.
+ */
 function EventRow({
   event,
   showActor,
@@ -128,6 +161,7 @@ function EventRow({
 }) {
   const [open, setOpen] = useState(false);
   const id = useId();
+  // The columns the details row spans: every one but the toggle's.
   const columns = 4 + Number(showActor) + Number(showWorkspace);
   const labelledBy = ["toggle", "what", ...(showWorkspace ? ["workspace"] : []), "of", "summary"]
     .map((cell) => `${id}-${cell}`)
@@ -158,6 +192,7 @@ function EventRow({
         </td>
         {showActor && (
           <td className="py-2 pr-4 whitespace-nowrap">
+            {/* No actor: the server acted on its own, as when it started. */}
             {event.actor === "" ? (
               <span className="text-muted-foreground">the server</span>
             ) : (

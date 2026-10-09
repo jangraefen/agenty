@@ -17,6 +17,8 @@ func layer(name, rules string) policy.Layer {
 	return policy.Layer{Name: name, Modules: []policy.Module{{Name: name + ".rego", Source: "package agenty.tool\n\n" + rules}}}
 }
 
+// input is a granted call as the gateway hands it to policy, with the run's
+// executed calls counted.
 func input() toolgateway.Request {
 	return toolgateway.Request{
 		RunID:   "run-1",

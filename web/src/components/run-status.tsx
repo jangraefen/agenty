@@ -1,6 +1,13 @@
 import type { RunStatus } from "@/api/queries";
 import { cn } from "@/lib/utils";
 
+/**
+ * A run's status as a coloured badge, in chats and the auditors' runs.
+ * The status word itself is the badge's text, so the colour only repeats
+ * what it says.
+ */
+
+/** The badge's colours for each status, in the light theme and the dark. */
 const colors: Record<RunStatus, string> = {
   queued: "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200",
   running: "bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-200",
@@ -10,6 +17,7 @@ const colors: Record<RunStatus, string> = {
   cancelled: "bg-muted text-muted-foreground",
 };
 
+/** A badge saying a run's status. */
 export function RunStatusBadge({ status }: { status: RunStatus }) {
   return (
     <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium", colors[status])}>

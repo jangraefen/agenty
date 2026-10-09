@@ -7,7 +7,8 @@ import (
 	"github.com/jangraefen/agenty/internal/api"
 )
 
-// event is one server-sent event of a run.
+// event is one server-sent event of a run: its name, one of api's Event
+// constants, and its data, which the stream sends as JSON.
 type event struct {
 	name string
 	data any
@@ -15,6 +16,15 @@ type event struct {
 
 // hub holds the events of one run that has not finished, for any number of
 // subscribers.
+//
+// It is an append-only list, not a set of subscriber channels: a subscriber
+// reads from any index, so one that connects late gets every event from the
+// first, and a slow one holds nothing up. Waiting for more is waiting on
+// changed, which publish closes, waking every subscriber at once, and
+// replaces. A hub lives in Server.runs from enqueue, or New for a run an
+// earlier server left, until finish, cancelIdle or cancelLeft unregisters it.
+// It also carries the run's context, so a cancel reaches the run through it
+// whether a worker runs it or not.
 type hub struct {
 	runID, workspace, harness string
 	// ctx is the run's context, and cancel cancels it, with the cause
@@ -29,6 +39,7 @@ type hub struct {
 	changed chan struct{}
 }
 
+// newHub returns an empty hub for a run; register gives it its context.
 func newHub(runID, workspace, harness string) *hub {
 	return &hub{runID: runID, workspace: workspace, harness: harness, changed: make(chan struct{})}
 }

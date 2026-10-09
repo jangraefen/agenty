@@ -1,3 +1,23 @@
+/**
+ * One run of a conversation, as a stretch of the chat: what ConversationChat
+ * (components/chat.tsx) lists, a Turn per run.
+ *
+ * A Turn is a run of list items in the chat's ordered list: the user's
+ * input, the agent's replies (Reply), each with the tool calls it made
+ * (ToolCall) and their results folded in, the run's waiting approvals
+ * (WaitingApprovals, of ApprovalCards), a Working indicator while it runs,
+ * how it ended if it failed or was cancelled (RunEnd), and a footer with its
+ * status, steps, duration and token usage.
+ *
+ * Each Turn loads its own run's transcript (transcriptQuery). For the latest
+ * run, the event stream invalidates it as the run records tool calls and
+ * ends, so its replies appear as the model writes them, between calls.
+ *
+ * Everything shown here comes from the user, the model or tools, which a
+ * prompt injection can shape: it is rendered as React text children only,
+ * never as HTML, and model text is shown as plain text, not as rendered
+ * Markdown. The Content-Security-Policy is the second line of defence.
+ */
 import { useQuery } from "@tanstack/react-query";
 import { useRouteContext } from "@tanstack/react-router";
 import { Fragment, useId } from "react";
@@ -15,10 +35,17 @@ type Run = Schemas["Run"];
 type Message = Schemas["TranscriptMessage"];
 type ToolResult = Schemas["ToolResult"];
 
-// Turn shows one run of a conversation as list items of a chat: the user's
-// input, the agent's replies with the tool calls they made, and how the run
-// went. Everything in it comes from the user, the model or tools, so it is
-// only ever rendered as text. waiting holds the run's approval requests.
+/**
+ * Turn shows one run of a conversation as list items of a chat: the user's
+ * input, the agent's replies with the tool calls they made, and how the run
+ * went. Everything in it comes from the user, the model or tools, so it is
+ * only ever rendered as text. waiting holds the run's approval requests;
+ * onOutcome tells the page how answering one went.
+ *
+ * The tool results come in the transcript as messages of their own, after
+ * the reply that made the calls; Turn indexes them by call ID, so each
+ * ToolCall shows its result inside the reply that asked for it.
+ */
 export function Turn({
   run,
   workspace,
@@ -34,17 +61,21 @@ export function Turn({
   const transcript = useQuery(transcriptQuery(api, workspace, run.id));
   // The input is the run's; the transcript, once loaded, adds the replies.
   const replies = transcript.data?.slice(1) ?? [];
+  // Each result by the call it answers, for the replies to look up.
   const results = new Map<string, ToolResult>();
   for (const message of replies) {
     for (const result of message.tool_results ?? []) {
       results.set(result.call_id, result);
     }
   }
+  // Whether the transcript holds the agent's answer: a reply that asks for
+  // no more tool calls. Until it does, the run's output stands in for it.
   const answered = replies.some((m) => m.role === "assistant" && (m.tool_calls ?? []).length === 0);
   const running = unfinished(run.status);
 
   return (
     <>
+      {/* The id is the target of a #run-<id> link to this run. */}
       <li id={`run-${run.id}`} data-from="user" className="grid justify-items-end gap-1">
         <span className="text-xs text-muted-foreground">
           {run.started_by} · <time dateTime={run.created_at}>{formatTime(run.created_at)}</time>
@@ -114,8 +145,12 @@ export function Turn({
   );
 }
 
-// Reply is a message of the agent. The first of a run's replies names the
-// agent; the others name it to screen readers only.
+/**
+ * Reply is a message of the agent: its text, if any, as a chat bubble of
+ * plain text, then the tool calls it asked for. The first of a run's replies
+ * names the agent, by its harness; the others name it to screen readers
+ * only, so each reply can be told apart when read on its own.
+ */
 function Reply({
   first,
   harness,
@@ -152,8 +187,16 @@ function Reply({
   );
 }
 
-// ToolCall shows a call the model asked for, folded, with its result once
-// there is one. A denied call's result is an error, as the model saw it.
+/**
+ * ToolCall shows a call the model asked for, folded, with its result once
+ * there is one. A denied call's result is an error, as the model saw it.
+ *
+ * Folded, it shows only the tool's name and a state: done, error, waiting
+ * while the run goes on without a result yet, or no result once the run has
+ * ended without one, as when it was cancelled before the result came. A
+ * native details element folds it, which needs no state of its own and
+ * keeps the arguments and result out of the way of the conversation.
+ */
 function ToolCall({
   call,
   result,
@@ -208,6 +251,11 @@ function ToolCall({
   );
 }
 
+/**
+ * RunEnd says that a run failed or was cancelled, with the server's error,
+ * which says why it failed or who cancelled it. The composer below then
+ * offers to continue from where the run stopped.
+ */
 function RunEnd({ run }: { run: Run }) {
   const id = useId();
   return (
@@ -225,6 +273,11 @@ function RunEnd({ run }: { run: Run }) {
   );
 }
 
+/**
+ * WaitingApprovals holds the run's calls that wait for approval, each as an
+ * ApprovalCard, in a highlighted section in place in the chat, where the
+ * call that needs it was made, rather than on a separate page.
+ */
 function WaitingApprovals({
   waiting,
   workspace,
@@ -257,8 +310,11 @@ function WaitingApprovals({
   );
 }
 
-// breakable lets a tool name wrap after its underscores, as in
-// files_read_text_file, before it wraps anywhere else.
+/**
+ * breakable lets a tool name wrap after its underscores, as in
+ * files_read_text_file, before it wraps anywhere else: it splits the name
+ * and puts a <wbr> after each underscore, keeping the name as text.
+ */
 function breakable(name: string) {
   return name.split("_").map((part, i, parts) => (
     // biome-ignore lint/suspicious/noArrayIndexKey: the parts never reorder.

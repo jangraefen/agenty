@@ -27,6 +27,7 @@ import (
 	"github.com/jangraefen/agenty/internal/store/storetest"
 )
 
+// call is a model's tool call with JSON arguments args.
 func call(id, name, args string) model.ToolCall {
 	return model.ToolCall{ID: id, Name: name, Args: json.RawMessage(args)}
 }

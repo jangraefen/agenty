@@ -21,12 +21,21 @@ import (
 
 // handlers implements the API's routes, as generated from its spec. Sign-in
 // and workspace membership are checked before any of them runs.
+//
+// It embeds the Server rather than being one, so the route methods, whose
+// names the spec's operation IDs fix, stay apart from the Server's own API.
+// Each handler decodes its request, checks it, calls the store or the run
+// lifecycle in run.go, and maps the result to package api's types.
 type handlers struct {
 	*Server
 }
 
+// handlers must implement every route of the spec; a route added to it
+// fails to compile here until it is.
 var _ ServerInterface = handlers{}
 
+// GetMe names the signed-in user, the workspaces they are a member of, and
+// whether they are an auditor; the web frontend checks a token with it.
 func (s handlers) GetMe(c *gin.Context) {
 	user := c.GetString(userKey)
 	c.JSON(http.StatusOK, api.Me{User: user, Workspaces: s.memberships(user), Auditor: s.cfg.Operator.Users[user].Auditor})
@@ -98,16 +107,21 @@ func (s handlers) GetConversation(c *gin.Context, id string) {
 	c.JSON(http.StatusOK, out)
 }
 
+// apiConversation is a stored conversation summary as the API shows it.
 func apiConversation(cv store.ConversationSummary) api.ConversationSummary {
 	return api.ConversationSummary{ID: cv.ID, Workspace: cv.Workspace, Harness: cv.Harness, Title: cv.Title, Status: api.RunStatus(cv.Status)}
 }
 
 // conversationCursor names the conversation a page of them ends with, for
 // the next page: its latest activity, in microseconds as stored, and its ID.
+// The ID breaks ties between conversations active in the same microsecond,
+// so a page never skips or repeats one.
 func conversationCursor(cv store.ConversationSummary) string {
 	return strconv.FormatInt(cv.UpdatedAt.UnixMicro(), 10) + "." + cv.ID
 }
 
+// parseConversationCursor reads a cursor conversationCursor made, and fails
+// for anything else.
 func parseConversationCursor(cursor string) (time.Time, string, error) {
 	micros, id, ok := strings.Cut(cursor, ".")
 	at, err := strconv.ParseInt(micros, 10, 64)
@@ -131,6 +145,10 @@ func (s handlers) pageLimit(c *gin.Context, limit int) (int, bool) {
 	return limit, true
 }
 
+// PutHarness stores a harness in the workspace, as a new immutable version
+// if it changed; the store records harness.changed with it. The harness is
+// validated, and its policy compiled, before it is stored, so a broken
+// harness is refused here rather than failing its first run.
 func (s handlers) PutHarness(c *gin.Context, workspace, name string) {
 	var body api.Harness
 	if err := decode(c, &body); err != nil {
@@ -159,6 +177,7 @@ func (s handlers) PutHarness(c *gin.Context, workspace, name string) {
 	c.JSON(http.StatusOK, harnessVersion(v))
 }
 
+// ListHarnesses lists the latest version of every harness in the workspace.
 func (s handlers) ListHarnesses(c *gin.Context, workspace string) {
 	versions, err := s.cfg.Store.Harnesses(c.Request.Context(), workspace)
 	if err != nil {
@@ -172,6 +191,7 @@ func (s handlers) ListHarnesses(c *gin.Context, workspace string) {
 	c.JSON(http.StatusOK, out)
 }
 
+// GetHarness returns the latest version of a harness in the workspace.
 func (s handlers) GetHarness(c *gin.Context, workspace, name string) {
 	v, err := s.cfg.Store.Harness(c.Request.Context(), workspace, name)
 	if err != nil {
@@ -181,10 +201,14 @@ func (s handlers) GetHarness(c *gin.Context, workspace, name string) {
 	c.JSON(http.StatusOK, harnessVersion(v))
 }
 
+// harnessVersion is a stored harness version as the API shows it.
 func harnessVersion(v store.HarnessVersion) api.HarnessVersion {
 	return api.HarnessVersion{Version: v.Version, Harness: api.FromHarness(v.Harness), CreatedAt: v.CreatedAt}
 }
 
+// CreateRun starts a new conversation: it queues a run of the latest
+// version of the named harness, which the conversation then keeps, and
+// answers with the queued run before any worker takes it up.
 func (s handlers) CreateRun(c *gin.Context, workspace string) {
 	var req api.CreateRun
 	if err := decode(c, &req); err != nil {
@@ -222,6 +246,9 @@ func (s handlers) startRun(c *gin.Context, r newRun) {
 func (s handlers) ownRun(c *gin.Context, workspace, id string) (store.Run, bool) {
 	user := c.GetString(userKey)
 	run, err := s.cfg.Store.OwnRun(c.Request.Context(), workspace, user, id)
+	// member let the reads of a run through for non-members; one who finds
+	// no own run is answered as member would have, so they cannot tell a
+	// workspace that exists from one that does not.
 	switch {
 	case errors.Is(err, store.ErrNotFound) && !s.isMember(user, workspace):
 		s.fail(c, http.StatusNotFound, fmt.Errorf("workspace %s: not found", workspace))
@@ -253,6 +280,10 @@ func (s handlers) FollowUpRun(c *gin.Context, workspace, id string) {
 		s.fail(c, http.StatusBadRequest, errors.New("input is required"))
 		return
 	}
+	// Only the conversation's latest run, once finished, is followed up, so
+	// a conversation never branches and never has two runs at once. The store
+	// refuses a second follow-up of the same run too, for two requests that
+	// both pass this check.
 	ctx := c.Request.Context()
 	runs, err := s.cfg.Store.Conversation(ctx, workspace, id)
 	if err != nil {
@@ -268,6 +299,8 @@ func (s handlers) FollowUpRun(c *gin.Context, workspace, id string) {
 		s.fail(c, http.StatusConflict, fmt.Errorf("run %s has not finished: follow it up once it has", id))
 		return
 	}
+	// The version the run followed, not the harness's latest: a builder's
+	// change, a grant taken away included, applies to new conversations only.
 	v, err := s.cfg.Store.HarnessVersionByID(ctx, last.HarnessVersionID)
 	if err != nil {
 		s.failStore(c, err)
@@ -276,12 +309,16 @@ func (s handlers) FollowUpRun(c *gin.Context, workspace, id string) {
 	s.startRun(c, newRun{version: v, input: req.Input, user: c.GetString(userKey), follows: last.ID})
 }
 
+// GetRun returns one of the user's own runs as stored.
 func (s handlers) GetRun(c *gin.Context, workspace, id string) {
 	if run, ok := s.ownRun(c, workspace, id); ok {
 		c.JSON(http.StatusOK, apiRun(run))
 	}
 }
 
+// apiRun is a stored run as the API shows it to its owner, input and output
+// included; auditors get apiAuditRun instead. An unfinished run has the zero
+// FinishedAt.
 func apiRun(r store.Run) api.Run {
 	out := api.Run{
 		ID:             r.ID,
@@ -324,6 +361,10 @@ func (s handlers) CancelRun(c *gin.Context, workspace, id string) {
 		}
 		by := cancelledBy(c.GetString(userKey))
 		// A worker that claims the run from now on finds it cancelled.
+		// Cancelling the hub's context also stops a running run's agent;
+		// cancelIdle then ends a queued or waiting one in the store, which
+		// no worker holds. A run claimed in between is left to its worker,
+		// which finds its context cancelled with this cause.
 		h.cancel(by)
 		s.cancelIdle(c.Request.Context(), h, id, by)
 		c.Status(http.StatusAccepted)
@@ -366,6 +407,8 @@ func apiApproval(a store.Approval) api.ApprovalRequest {
 	}
 }
 
+// GetRunTranscript returns one of the user's own runs' messages, as stored:
+// redacted, and without the provider forms, which are for the model alone.
 func (s handlers) GetRunTranscript(c *gin.Context, workspace, id string) {
 	if _, ok := s.ownRun(c, workspace, id); !ok {
 		return
@@ -398,6 +441,9 @@ func (s handlers) StreamRunEvents(c *gin.Context, workspace, id string) {
 		s.replayEvents(c, run)
 		return
 	}
+	// Every event from the first, then each as it is published: the hub
+	// keeps them all, so the client misses nothing whenever it connects.
+	// Each round flushes, so an event reaches the client as it happens.
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	sent := 0
@@ -423,6 +469,11 @@ func (s handlers) StreamRunEvents(c *gin.Context, workspace, id string) {
 	}
 }
 
+// replayEvents sends the stream of a run without a hub from the store: its
+// audit records, then its end. A run without a hub that has not finished is
+// one this server does not run, which is a conflict, not an empty stream.
+// A finished run's approval requests are not replayed: they were answered,
+// and its audit records hold the answers.
 func (s handlers) replayEvents(c *gin.Context, run store.Run) {
 	ctx := c.Request.Context()
 	id := run.ID
@@ -463,6 +514,9 @@ func (s handlers) AnswerApproval(c *gin.Context, workspace, id, approval string)
 			reason = "approved through the API"
 		}
 	}
+	// The store answers only a pending request that has not expired, and
+	// queues the run in the same transaction; the signal then wakes a
+	// worker to resume it. The signed-in user is recorded as the approver.
 	answered, err := s.cfg.Store.AnswerApproval(c.Request.Context(), workspace, id, approval, store.Answer{Approved: answer.Approved, Approver: c.GetString(userKey), Reason: reason})
 	switch {
 	case err != nil:

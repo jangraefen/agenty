@@ -1,5 +1,13 @@
+/**
+ * Response fixtures for the mocked API: each function returns a valid value
+ * of one of the spec's schemas, with overrides for what a test is about, so
+ * tests state only the fields that matter to them. The defaults describe one
+ * consistent world: user demo, workspace and harness notes, and run run-1,
+ * which is also its conversation's ID, as a conversation's first run is.
+ */
 import type { Schemas } from "./server";
 
+/** A finished run, by default run-1 of harness notes, which succeeded. */
 export function run(overrides: Partial<Schemas["Run"]> = {}): Schemas["Run"] {
   return {
     id: "run-1",
@@ -18,6 +26,7 @@ export function run(overrides: Partial<Schemas["Run"]> = {}): Schemas["Run"] {
   };
 }
 
+/** An audit record, by default an allowed decision on a file read. */
 export function auditRecord(
   overrides: Partial<Schemas["AuditRecord"]> = {},
 ): Schemas["AuditRecord"] {
@@ -32,6 +41,7 @@ export function auditRecord(
   };
 }
 
+/** A waiting approval request of run-1, by default for a file write. */
 export function approvalRequest(
   overrides: Partial<Schemas["ApprovalRequest"]> = {},
 ): Schemas["ApprovalRequest"] {
@@ -67,6 +77,7 @@ export function storedHarness(
   };
 }
 
+/** A conversation as the recent chats list it, by default run-1's. */
 export function conversation(
   overrides: Partial<Schemas["ConversationSummary"]> = {},
 ): Schemas["ConversationSummary"] {
@@ -89,6 +100,7 @@ export function conversationOf(
   return { ...conversation({ status: runs.at(-1)?.status ?? "succeeded", ...overrides }), runs };
 }
 
+/** A run as the auditors' run list shows it. */
 export function auditRun(overrides: Partial<Schemas["AuditRun"]> = {}): Schemas["AuditRun"] {
   return {
     id: "run-1",
@@ -105,6 +117,7 @@ export function auditRun(overrides: Partial<Schemas["AuditRun"]> = {}): Schemas[
   };
 }
 
+/** An audit log event, by default a harness change in workspace notes. */
 export function logEvent(
   overrides: Partial<Schemas["AuditLogEvent"]> = {},
 ): Schemas["AuditLogEvent"] {

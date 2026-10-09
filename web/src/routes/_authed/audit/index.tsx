@@ -9,12 +9,33 @@ import { RunStatusBadge } from "@/components/run-status";
 import { Label } from "@/components/ui/label";
 import { formatDuration, formatTime } from "@/lib/format";
 
+/**
+ * The audit log's runs view, at `/audit`, the auditors' landing page from
+ * the sidebar's Compliance section.
+ *
+ * It lists the runs of every workspace (`GET /v1/audit/runs`), newest first,
+ * a page at a time: who ran which harness, how it went and how long it took,
+ * each linking to its audit records at `/audit/runs/{id}`. It shows nothing
+ * that was said in a run: auditors see what happened, not inputs, replies or
+ * transcripts, and the API does not give them those.
+ *
+ * The filters live in the URL's search parameters, so a filtered view can be
+ * shared and survives a reload; FilterForm writes them, auditFilters reads
+ * them back, and each set of filters is a query of its own in the cache.
+ */
+
+/** The text filters of the runs, by search parameter, with their labels. */
 const fields = [
   { name: "workspace", label: "Workspace" },
   { name: "harness", label: "Harness" },
   { name: "started_by", label: "Started by" },
 ] as const;
 
+/**
+ * The filters a search holds: the text filters, trimmed, and a status only
+ * when it is one of the run statuses. It validates the route's search and
+ * reads the filter form, so both pass the API only what it accepts.
+ */
 function auditFilters(search: Record<string, unknown>): AuditFilters {
   const filters: AuditFilters = textFilters(
     search,
@@ -26,13 +47,13 @@ function auditFilters(search: Record<string, unknown>): AuditFilters {
   return filters;
 }
 
-// The runs of every workspace, for auditors: who ran which harness, how it
-// went, and, a click away, what the gateway recorded. Never what was said.
+/** The runs of every workspace, for auditors; audit.tsx above keeps everyone else out. */
 export const Route = createFileRoute("/_authed/audit/")({
   validateSearch: auditFilters,
   component: AuditRuns,
 });
 
+/** The runs view: the filters, the table of runs, and Load more. */
 function AuditRuns() {
   const filters = auditFilters(Route.useSearch());
   const { api } = Route.useRouteContext();
@@ -64,6 +85,8 @@ function AuditRuns() {
       <FilterForm
         fields={fields}
         values={filters}
+        // Filtering replaces the history entry, so Back leaves the audit log
+        // instead of stepping through every filter tried.
         onFilter={(form) => void navigate({ search: auditFilters(form), replace: true })}
       >
         {(id) => (
@@ -94,6 +117,7 @@ function AuditRuns() {
           The runs could not be loaded: {runs.error.message}
         </p>
       )}
+      {/* Tells screen readers how many runs are shown once a page loads. */}
       <p role="status" className="sr-only">
         {runs.isFetchingNextPage
           ? "Loading more runs…"
@@ -166,6 +190,8 @@ function AuditRuns() {
       )}
       <LoadMore
         query={runs}
+        // An empty last page gives "", which matches no row, so the focus
+        // goes to the table.
         onLoaded={(data) => setFocusRun(data.pages.at(-1)?.runs[0]?.id ?? "")}
         variant="outline"
         className="justify-self-start"

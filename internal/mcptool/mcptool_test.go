@@ -40,6 +40,7 @@ func connectServer(t *testing.T, srv *mcp.Server) *mcptool.Session {
 	return s
 }
 
+// toolsByName lists the session's tools, keyed by their gateway names.
 func toolsByName(t *testing.T, s *mcptool.Session) map[string]toolgateway.Tool {
 	t.Helper()
 	tools, err := s.Tools(t.Context())

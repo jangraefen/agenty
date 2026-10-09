@@ -1,3 +1,13 @@
+/**
+ * The model behind the harness form: conversion between a stored harness and
+ * the form's values, and the form's field validators.
+ *
+ * The new-harness and edit pages start components/harness-form.tsx, a
+ * TanStack Form on HarnessValues, from emptyHarnessValues or fromHarness;
+ * hooks/use-save-harness.ts turns the submitted values back into a Harness
+ * with toHarness and stores it. Kept apart from the components so the
+ * conversion and validation are tested without rendering.
+ */
 import type { Schemas } from "@/api/client";
 
 type Harness = Schemas["Harness"];
@@ -15,6 +25,7 @@ export interface HarnessValues {
   policy: PolicyModule[];
 }
 
+/** The new-harness form's starting values: blank fields, Anthropic, 10 steps and 20 tool calls. */
 export function emptyHarnessValues(): HarnessValues {
   return {
     name: "",
@@ -28,6 +39,7 @@ export function emptyHarnessValues(): HarnessValues {
   };
 }
 
+/** The form's values for a stored harness, for editing it: tools one per line. */
 export function fromHarness(harness: Harness): HarnessValues {
   return {
     name: harness.name,
@@ -41,6 +53,11 @@ export function fromHarness(harness: Harness): HarnessValues {
   };
 }
 
+/**
+ * The harness the form's values describe, as the API stores it. Names are
+ * trimmed, as the validators check them trimmed; tools and policy are left
+ * out when empty, as a harness file would leave them out.
+ */
 export function toHarness(values: HarnessValues): Harness {
   const tools = toolLines(values.tools);
   return {
@@ -53,6 +70,7 @@ export function toHarness(values: HarnessValues): Harness {
   };
 }
 
+/** The tool names of the tools field: one per line, blank lines ignored. */
 function toolLines(tools: string): string[] {
   return tools
     .split("\n")
@@ -64,9 +82,12 @@ function toolLines(tools: string): string[] {
 // the form says what is wrong before it sends; the server checks again, and
 // compiles the policy, which only it can.
 
+/** A harness name: lowercase words of letters and digits joined by single hyphens. */
 const slug = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+/** A tool name, as model provider APIs accept it (toolgateway.ValidateToolName). */
 const toolName = /^[a-zA-Z0-9_-]{1,64}$/;
 
+/** The error of a harness name, or undefined when it is valid. */
 export function validateName(name: string): string | undefined {
   const trimmed = name.trim();
   if (trimmed === "") {
@@ -75,12 +96,20 @@ export function validateName(name: string): string | undefined {
   return slug.test(trimmed) ? undefined : "Use lowercase letters, digits and single hyphens.";
 }
 
+/**
+ * The error of a required field left blank, worded for label: "are" for a
+ * plural label such as "Instructions", "is" otherwise.
+ */
 export function validateRequired(value: string, label: string): string | undefined {
   return value.trim() === ""
     ? `${label} ${label.endsWith("s") ? "are" : "is"} required.`
     : undefined;
 }
 
+/**
+ * The error of the tools field: the first malformed or repeated tool, so the
+ * user fixes one line at a time.
+ */
 export function validateTools(tools: string): string | undefined {
   const seen = new Set<string>();
   for (const tool of toolLines(tools)) {
@@ -95,6 +124,7 @@ export function validateTools(tools: string): string | undefined {
   return undefined;
 }
 
+/** The error of a step or tool-call limit: a whole number of at least 1. */
 export function validateLimit(limit: number): string | undefined {
   if (!Number.isInteger(limit)) {
     return "Must be a whole number.";
@@ -102,6 +132,7 @@ export function validateLimit(limit: number): string | undefined {
   return limit < 1 ? "Must be at least 1." : undefined;
 }
 
+/** The error of the name of policy module index: required, and unique within the harness. */
 export function validateModuleName(policy: PolicyModule[], index: number): string | undefined {
   const name = policy[index]?.name.trim() ?? "";
   if (name === "") {

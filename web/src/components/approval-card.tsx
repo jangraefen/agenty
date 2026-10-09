@@ -1,3 +1,14 @@
+/**
+ * A tool call waiting for approval, answered in the chat where the call was
+ * made: the WaitingApprovals section of a Turn (components/conversation.tsx)
+ * lists one card per waiting request.
+ *
+ * Policy may answer a call with require_approval; the run then waits, held
+ * durably by the server, until the user approves or rejects the call, or the
+ * request expires at its expires_at. The card shows the tool, policy's
+ * reasons, the arguments and the time left, and posts the answer to
+ * `POST .../runs/{id}/approvals/{approval}`.
+ */
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouteContext } from "@tanstack/react-router";
 import { useId, useState } from "react";
@@ -13,10 +24,17 @@ import { formatRemaining, formatTime } from "@/lib/format";
 
 type ApprovalRequest = Schemas["ApprovalRequest"];
 
-// ApprovalCard shows a call waiting for approval, as a list item, and
-// answers it as the signed-in user, telling onOutcome how that went: the card
-// itself leaves when the request does. Everything in the request comes from
-// the model or policy, so it is shown as text only.
+/**
+ * ApprovalCard shows a call waiting for approval, as a list item, and
+ * answers it as the signed-in user, telling onOutcome how that went: the card
+ * itself leaves when the request does. Everything in the request comes from
+ * the model or policy, so it is shown as text only.
+ *
+ * A clock ticking each second (useNow) counts down the time left and blocks
+ * the buttons once the request has expired, as the server no longer takes an
+ * answer then. The server stays the judge: an answer it refuses with 404,
+ * the request answered elsewhere or expired, is told as not counted.
+ */
 export function ApprovalCard({
   request,
   workspace,
@@ -31,11 +49,14 @@ export function ApprovalCard({
   const now = useNow(1000);
   const [reason, setReason] = useState("");
   const id = useId();
+  // By the browser's clock; a clock that is off only moves when the
+  // buttons block, not whether the server takes the answer.
   const expired = Date.parse(request.expires_at) <= now;
   const { tool } = request;
 
   const answer = useMutation({
     mutationFn: (approved: boolean) => {
+      // A blank reason is left out rather than sent empty.
       const why = reason.trim();
       return unwrap(
         api.POST("/v1/workspaces/{workspace}/runs/{id}/approvals/{approval}", {
@@ -54,6 +75,8 @@ export function ApprovalCard({
             ? `${tool} was already answered, or it expired: your answer did not count.`
             : `The answer to ${tool} could not be sent: ${error.message}`,
       }),
+    // Answered or refused, the waiting requests are fetched again: either
+    // way this one is likely gone, and its card with it.
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: approvalsQuery(api, workspace).queryKey });
       // An answered run waits no longer.

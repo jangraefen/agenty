@@ -3,13 +3,26 @@ import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-// What a page shows while its data loads, when it cannot be loaded, and when
-// what it would show does not exist.
+/**
+ * What a page shows while its data loads, when it cannot be loaded, and when
+ * what it would show does not exist.
+ *
+ * The router uses RoutePending and RouteError as every route's defaults
+ * (router.tsx), and the root route its error page; routes give NotFoundPage
+ * their own title and way on, as the workspace layout's membership check
+ * and lib/not-found.ts turn a missing workspace, conversation, harness or
+ * run into the route's not-found.
+ */
 
+/** Shown while a route's loader runs, once it takes long enough to show anything. */
 export function RoutePending() {
   return <p className="text-muted-foreground">Loading…</p>;
 }
 
+/**
+ * Shown when a route's beforeLoad, loader or component throws: the error's
+ * message, as text, and a button that loads the page again.
+ */
 export function RouteError({ error }: ErrorComponentProps) {
   const router = useRouter();
   return (
@@ -26,8 +39,12 @@ export function RouteError({ error }: ErrorComponentProps) {
   );
 }
 
-// NotFoundPage says what was not found, and maybe why in detail; children
-// link to where the user can go on.
+/**
+ * NotFoundPage says what was not found, and maybe why in detail; children
+ * link to where the user can go on. The detail says when "not found" may
+ * mean "not yours": the API answers both alike, so as not to tell one from
+ * the other.
+ */
 export function NotFoundPage({
   title,
   detail,

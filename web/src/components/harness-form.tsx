@@ -1,3 +1,17 @@
+/**
+ * The harness form, shared by the new-harness page and a harness's edit page
+ * (routes/_authed/w/$workspace/new-harness.tsx and .../harnesses/$name/edit.tsx).
+ *
+ * It edits the harness's fields as HarnessValues, the form's own shape
+ * (lib/harness-form), with a field per value and a list of policy modules,
+ * and previews beside them the harness file the values make, as YAML
+ * (lib/harness-yaml). The page passes in what submitting does, which is
+ * useSaveHarness storing the values as the harness's next version.
+ *
+ * It is built on the app's TanStack Form hook (components/form.tsx), whose
+ * fields bring their label, hint and error. Validation here is for the
+ * builder's convenience; the server validates every harness it stores.
+ */
 import { useId, useRef } from "react";
 import { CodeBlock } from "@/components/code-block";
 import { useAppForm } from "@/components/form";
@@ -13,9 +27,15 @@ import {
 } from "@/lib/harness-form";
 import { harnessYaml } from "@/lib/harness-yaml";
 
-// HarnessForm authors a harness, previewing it as YAML. A new harness takes
-// a name; an existing one keeps its own, as the name is its identity. A
-// submit runs the fields' change validators too.
+/**
+ * HarnessForm authors a harness, previewing it as YAML. A new harness takes
+ * a name; an existing one keeps its own, as the name is its identity. A
+ * submit runs the fields' change validators too.
+ *
+ * The preview subscribes to the form's values and converts them with the
+ * same toHarness that saving uses, so it shows what will be stored. error is
+ * the save's failure, shown above the submit button.
+ */
 export function HarnessForm({
   initial,
   creating,
@@ -51,6 +71,8 @@ export function HarnessForm({
         ref={formElement}
         noValidate
         className="grid gap-4"
+        // The browser's own validation is off (noValidate): the form's
+        // validators say what is wrong, in the app's words, under each field.
         onSubmit={(event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -120,6 +142,8 @@ export function HarnessForm({
             {(field) => <field.NumberField label="Tool calls at most" />}
           </form.AppField>
         </div>
+        {/* The harness's own policy: it can only tighten central policy,
+            never loosen it, as policy has only deny and require_approval rules. */}
         <form.Field name="policy" mode="array">
           {(policy) => (
             <section className="grid gap-3">
@@ -151,6 +175,8 @@ export function HarnessForm({
                   </form.AppField>
                   <form.AppField
                     name={`policy[${index}].source`}
+                    // Checked on submit only, unlike the other fields, which
+                    // check every change; the server compiles the Rego itself.
                     validators={{ onSubmit: ({ value }) => validateRequired(value, "Rego") }}
                   >
                     {(field) => <field.TextareaField label="Rego" rows={6} code />}

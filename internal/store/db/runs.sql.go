@@ -30,6 +30,10 @@ type CancelIdleRunRow struct {
 	Workspace string
 }
 
+// Cancels a run no worker holds, queued or waiting, and returns its steps
+// and workspace for its run.finished event; no row for any other run. A
+// running run is stopped by its worker instead. :many, not :one, so no row
+// is a result rather than an error.
 func (q *Queries) CancelIdleRun(ctx context.Context, arg CancelIdleRunParams) ([]CancelIdleRunRow, error) {
 	rows, err := q.db.Query(ctx, cancelIdleRun, arg.ID, arg.Error)
 	if err != nil {
@@ -74,6 +78,15 @@ type ClaimRunRow struct {
 
 // Marks the oldest queued run as running and returns it with its workspace.
 // Concurrent claims skip each other's rows, so each run is claimed once.
+//
+// The subquery picks the oldest queued run from runs_queued and locks it;
+// SKIP LOCKED passes over a run another claim has locked instead of
+// waiting for it, so workers never queue behind each other. FOR NO KEY
+// UPDATE, the lock an update of non-key columns takes anyway, is used
+// rather than FOR UPDATE: it does not block the foreign-key checks of rows
+// that refer to the run, such as its messages and audit events. The outer
+// update repeats status = 'queued', so it never moves a run that is in any
+// other state.
 func (q *Queries) ClaimRun(ctx context.Context) (ClaimRunRow, error) {
 	row := q.db.QueryRow(ctx, claimRun)
 	var i ClaimRunRow
@@ -102,7 +115,8 @@ type ConversationRunsRow struct {
 }
 
 // The runs of the conversation the run named by id belongs to, oldest first,
-// if that run is one of the workspace's.
+// if that run is one of the workspace's. Ordered by creation, which is the
+// order runs follow one another in; served by runs_conversation_id.
 func (q *Queries) ConversationRuns(ctx context.Context, arg ConversationRunsParams) ([]ConversationRunsRow, error) {
 	rows, err := q.db.Query(ctx, conversationRuns, arg.Workspace, arg.ID)
 	if err != nil {
@@ -158,6 +172,10 @@ type FailRunningRunsRow struct {
 	Workspace string
 }
 
+// Fails every run still marked running, at a server's start: one server
+// serves a database, so these were the earlier server's, and their
+// goroutines are gone. It returns each run's id, steps and workspace for
+// its run.finished event.
 func (q *Queries) FailRunningRuns(ctx context.Context, error string) ([]FailRunningRunsRow, error) {
 	rows, err := q.db.Query(ctx, failRunningRuns, error)
 	if err != nil {
@@ -229,7 +247,9 @@ type FinishRunParams struct {
 	Error  string
 }
 
-// The run's end, if it was running; it returns the run's workspace.
+// The run's end, if it was running; it returns the run's workspace, for its
+// run.finished event. No row for a run that is not running, so a run ends
+// once.
 func (q *Queries) FinishRun(ctx context.Context, arg FinishRunParams) (string, error) {
 	row := q.db.QueryRow(ctx, finishRun,
 		arg.ID,
@@ -357,6 +377,7 @@ type GetRunRow struct {
 }
 
 // A run is found only in the workspace of the harness version it runs.
+// Callers that act for a user use GetOwnRun.
 func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (GetRunRow, error) {
 	row := q.db.QueryRow(ctx, getRun, arg.ID, arg.Workspace)
 	var i GetRunRow
@@ -403,6 +424,8 @@ type IdleRunsRow struct {
 
 // The runs no worker holds that have not finished, queued or waiting, oldest
 // first, with their workspaces, harnesses and the users who started them.
+// A starting server reads them to give each its event stream again, and to
+// cancel those of users who left the run's workspace.
 func (q *Queries) IdleRuns(ctx context.Context) ([]IdleRunsRow, error) {
 	rows, err := q.db.Query(ctx, idleRuns)
 	if err != nil {
@@ -462,6 +485,14 @@ type InsertRunRow struct {
 // conversation is one user's; any other run starts one of its own. It is
 // returned as stored, before a worker may claim it, with its harness; no
 // row is returned for a run that follows no run of its starter.
+//
+// The one-row derived table "wanted" holds the run to follow, or NULL; the
+// LEFT JOIN finds it only among the starter's runs, and the WHERE keeps the
+// row when nothing is to be followed or the run to follow was found. A
+// follow-up takes its conversation's id; a first run names its own
+// conversation. The UNIQUE follows column refuses a second follower. The
+// harness's name, version and workspace come from subqueries, as RETURNING
+// cannot join.
 func (q *Queries) InsertRun(ctx context.Context, arg InsertRunParams) (InsertRunRow, error) {
 	row := q.db.QueryRow(ctx, insertRun,
 		arg.ID,
@@ -531,7 +562,8 @@ type ListAuditRunsRow struct {
 // The runs of every workspace, newest first, each with its workspace,
 // optionally of one workspace, harness, starter or status, starting after
 // the run named by before. A before that is not a run matches nothing. For
-// auditors only.
+// auditors only. The page cursor is a run's (created_at, id), compared as a
+// row, which matches the ordering and the index runs_created_at.
 func (q *Queries) ListAuditRuns(ctx context.Context, arg ListAuditRunsParams) ([]ListAuditRunsRow, error) {
 	rows, err := q.db.Query(ctx, listAuditRuns,
 		arg.Workspace,
@@ -616,6 +648,10 @@ type ListConversationsRow struct {
 // first, after the one with before_at and before_id when they are
 // set. A conversation is its first run, whose ID names it, and its latest
 // run, the one no run follows, whose creation is its latest activity.
+//
+// The cursor holds the previous page's last values, not a run to look them
+// up by, as a follow-up moves a conversation's latest activity between
+// reads. First runs are found by runs_first_by_starter.
 func (q *Queries) ListConversations(ctx context.Context, arg ListConversationsParams) ([]ListConversationsRow, error) {
 	rows, err := q.db.Query(ctx, listConversations,
 		arg.StartedBy,
@@ -660,6 +696,8 @@ type SetRunDigestsParams struct {
 	HistoryDigest string
 }
 
+// Records what a running run sends the model, which later follow-ups compare
+// with their own.
 func (q *Queries) SetRunDigests(ctx context.Context, arg SetRunDigestsParams) (int64, error) {
 	result, err := q.db.Exec(ctx, setRunDigests, arg.ID, arg.PromptDigest, arg.HistoryDigest)
 	if err != nil {

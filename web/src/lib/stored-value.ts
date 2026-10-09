@@ -1,8 +1,22 @@
-// StoredValue is a value kept under a key of storage, localStorage in the
-// browser, so a reload keeps it; parse reads it from what is stored there,
-// null for nothing. It tells subscribers when it changes. When the browser
-// refuses storage, as some do in private windows, the value lives in memory
-// only, as long as the page.
+/**
+ * A string kept in browser storage that survives a reload, follows other
+ * tabs and tells subscribers when it changes: the shared mechanism under
+ * auth/session.ts (the API token) and theme/theme.ts (the theme choice).
+ */
+
+/**
+ * StoredValue is a value kept under a key of storage, localStorage in the
+ * browser, so a reload keeps it; parse reads it from what is stored there,
+ * null for nothing. It tells subscribers when it changes. When the browser
+ * refuses storage, as some do in private windows, the value lives in memory
+ * only, as long as the page.
+ *
+ * The value is kept in memory: storage is read once when it is made and
+ * again when another tab changes it, and written on every set, so a storage
+ * that refuses never stands between the app and its value. parse lets an
+ * owner turn whatever is stored under the key, which another version of the
+ * app or the user may have left there, into a valid value, as Theme does.
+ */
 export class StoredValue<T extends string | null> {
   #value: T;
   readonly #storage: Storage;
@@ -17,6 +31,7 @@ export class StoredValue<T extends string | null> {
     this.#value = this.#read();
   }
 
+  /** The value as this tab knows it. */
   get value(): T {
     return this.#value;
   }
@@ -46,6 +61,8 @@ export class StoredValue<T extends string | null> {
       if (event.key !== this.#key && event.key !== null) {
         return;
       }
+      // Notified only on a real change, so a tab writing the same value
+      // again does not make subscribers redo their work.
       const value = this.#read();
       if (value !== this.#value) {
         this.#value = value;
@@ -70,6 +87,7 @@ export class StoredValue<T extends string | null> {
     };
   };
 
+  /** Reads and parses the stored value; storage that throws counts as empty. */
   #read(): T {
     let stored: string | null = null;
     try {
@@ -80,6 +98,7 @@ export class StoredValue<T extends string | null> {
     return this.#parse(stored);
   }
 
+  /** Calls every listener, in subscription order; Theme relies on applying first. */
   #notify(): void {
     for (const listener of this.#listeners) {
       listener();

@@ -21,6 +21,12 @@ import (
 // its gateway, which starts and stops them as ever: starting takes the
 // conversation's kept server, if any, and stopping hands it back to the
 // lease. Only the gateway lists and calls their tools.
+//
+// The server holds one Pool for its lifetime and closes it on shutdown. The
+// pool is keyed by conversation, never by user or harness, because a
+// server's state may hold what one conversation's tool calls produced, and
+// runs are private (guarantee 7). A conversation runs one run at a time, so
+// at most one lease holds its servers.
 type Pool struct {
 	// idleTimeout is how long each server is kept while idle.
 	idleTimeout map[string]time.Duration
@@ -35,6 +41,9 @@ type Pool struct {
 // poolKey names a kept server: the conversation it belongs to and its name.
 type poolKey struct{ conversation, server string }
 
+// idleSession is a kept server and the timer that stops it once idle for its
+// timeout. The pointer identifies one keeping, so a timer that fires late
+// can tell whether its server was taken, or replaced, since.
 type idleSession struct {
 	session ToolSession
 	timer   *time.Timer
@@ -48,6 +57,8 @@ func NewPool(idleTimeout map[string]time.Duration, logger *slog.Logger) *Pool {
 }
 
 // Lease returns a lease on the servers of conversation, for one run of it.
+// It starts nothing: each server is wrapped in a leasedServer, which the
+// gateway starts as it would any server.
 func (p *Pool) Lease(conversation string, servers map[string]ToolServer) *Lease {
 	l := &Lease{pool: p, conversation: conversation, servers: map[string]ToolServer{}, held: map[string]ToolSession{}, taken: map[string]bool{}}
 	for name, srv := range servers {
@@ -56,7 +67,9 @@ func (p *Pool) Lease(conversation string, servers map[string]ToolServer) *Lease 
 	return l
 }
 
-// take removes the kept server name of conversation from the pool.
+// take removes the kept server name of conversation from the pool, and stops
+// its idle timer, so the server now belongs to the caller alone. It returns
+// nil if none is kept.
 func (p *Pool) take(conversation, name string) ToolSession {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -84,6 +97,8 @@ func (p *Pool) keep(conversation, name string, session ToolSession) (stop ToolSe
 	if p.closed || timeout <= 0 {
 		return session
 	}
+	// The timer captures this keeping, not the key, so expire stops only
+	// this session even if the key is reused.
 	old := p.idle[key]
 	kept := &idleSession{session: session}
 	kept.timer = time.AfterFunc(timeout, func() { p.expire(key, kept) })
@@ -95,7 +110,11 @@ func (p *Pool) keep(conversation, name string, session ToolSession) (stop ToolSe
 	return old.session
 }
 
-// expire stops kept if it is still the idle server under key.
+// expire stops kept if it is still the idle server under key. Stopping a
+// timer does not stop a callback that has already begun, so a server taken
+// or replaced at the moment its timer fires is left alone. The server is
+// stopped outside the lock, as stopping may take seconds; nobody waits on
+// the result, so a failure is logged.
 func (p *Pool) expire(key poolKey, kept *idleSession) {
 	p.mu.Lock()
 	if p.idle[key] != kept {
@@ -110,7 +129,8 @@ func (p *Pool) expire(key poolKey, kept *idleSession) {
 }
 
 // Close stops every kept server. A run's servers kept after Close are
-// stopped at once.
+// stopped at once, as keep sees the pool closed; runs still going on during
+// shutdown thus leak nothing.
 func (p *Pool) Close() error {
 	p.mu.Lock()
 	p.closed = true
@@ -128,6 +148,7 @@ func (p *Pool) Close() error {
 	return closeSessions(sessions)
 }
 
+// closeSession stops one session, naming its server in the error.
 func closeSession(name string, session ToolSession) error {
 	if err := session.Close(); err != nil {
 		return fmt.Errorf("toolgateway: server %s: stop: %w", name, err)
@@ -142,6 +163,12 @@ const probeTimeout = 10 * time.Second
 // Lease is a run's hold on the servers of its conversation. Hand Servers to
 // the run's gateway; once the gateway has stopped them, Keep hands them back
 // to the pool, or Close stops them.
+//
+// The server decides which: Keep after a run that ended normally, Close
+// after a cancelled run, where a call may still be running in a server, and
+// Return for a run that failed to start. The lease records which servers
+// were reused and which started anew, so the server can tell the model that
+// a conversation lost the state a fresh server no longer holds.
 type Lease struct {
 	pool         *Pool
 	conversation string
@@ -156,7 +183,9 @@ type Lease struct {
 	fresh []string
 }
 
-// Servers returns the servers to hand to the run's gateway.
+// Servers returns the servers to hand to the run's gateway. They are leased
+// wrappers: starting one may reuse the conversation's kept session, and
+// stopping one hands it back to the lease rather than ending it.
 func (l *Lease) Servers() map[string]ToolServer {
 	return l.servers
 }
@@ -195,6 +224,10 @@ func (l *Lease) Close() error {
 // keepIf hands the servers the gateway stopped that kept names back to the
 // pool, and stops the others, and those the pool does not keep, all at once,
 // as a server may take seconds to stop.
+//
+// Only sessions the gateway has stopped are in held, so a server is never
+// kept while this run's gateway can still call it. held is emptied first, so
+// calling keepIf again does nothing.
 func (l *Lease) keepIf(kept func(name string) bool) error {
 	l.mu.Lock()
 	held := l.held
@@ -220,10 +253,16 @@ type leasedServer struct {
 	server ToolServer
 }
 
+// Start takes the conversation's kept server name if there is one and it
+// answers a tool listing within probeTimeout, and starts the server anew
+// otherwise. Either way the session is wrapped, so the gateway's Close hands
+// it back to the lease.
 func (s leasedServer) Start(ctx context.Context, name string) (ToolSession, error) {
 	l := s.lease
 	if kept := l.pool.take(l.conversation, name); kept != nil {
-		// A server that died, or hangs, while idle answers no more.
+		// A server that died, or hangs, while idle answers no more. Probe it
+		// with a tool listing, the cheapest call every server supports,
+		// rather than hand the run a server that fails on its first call.
 		probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 		_, err := kept.Tools(probeCtx)
 		cancel()
@@ -241,6 +280,8 @@ func (s leasedServer) Start(ctx context.Context, name string) (ToolSession, erro
 			l.mu.Unlock()
 			return nil, fmt.Errorf("toolgateway: server %s: %w", name, ctx.Err())
 		}
+		// The kept server is dead: stop what is left of it and fall through
+		// to a fresh start, which Fresh reports.
 		if err := closeSession(name, kept); err != nil {
 			return nil, fmt.Errorf("toolgateway: server %s: replacing it: %w", name, err)
 		}
@@ -263,6 +304,9 @@ type leasedSession struct {
 	name  string
 }
 
+// Close hands the session back to the lease, which decides on Keep, Return
+// or Close whether it is kept or stopped. It never fails: nothing has
+// stopped yet.
 func (s leasedSession) Close() error {
 	s.lease.mu.Lock()
 	defer s.lease.mu.Unlock()

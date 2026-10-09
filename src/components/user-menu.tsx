@@ -17,36 +17,47 @@ import { authClient } from "@/lib/auth-client";
 export function UserMenu({ name, email }: { name: string; email: string }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   // Local sign-out: ends the app session only, so there is no IdP redirect to follow.
   async function signOut() {
+    setFailed(false);
     setPending(true);
-    try {
-      const { error } = await authClient.signOut();
-      if (!error) {
-        router.replace("/");
-        router.refresh();
-      }
-    } finally {
-      setPending(false);
+    const succeeded = await authClient.signOut().then(
+      ({ error }) => !error,
+      () => false,
+    );
+    setPending(false);
+    if (!succeeded) {
+      setFailed(true);
+      return;
     }
+    router.replace("/");
+    router.refresh();
   }
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger render={<Button variant="ghost" />}>{name}</DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-64">
-        <DropdownMenuGroup>
-          <DropdownMenuLabel className="flex flex-col gap-1">
-            <span className="font-medium text-foreground">{name}</span>
-            <span>{email}</span>
-          </DropdownMenuLabel>
-        </DropdownMenuGroup>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem disabled={pending} onClick={signOut}>
-          Sign out
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <div className="flex items-center gap-3">
+      {failed ? (
+        <p className="text-destructive text-sm" role="alert">
+          Sign-out failed. Please try again.
+        </p>
+      ) : null}
+      <DropdownMenu>
+        <DropdownMenuTrigger render={<Button variant="ghost" />}>{name}</DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-64">
+          <DropdownMenuGroup>
+            <DropdownMenuLabel className="flex flex-col gap-1">
+              <span className="font-medium text-foreground">{name}</span>
+              <span>{email}</span>
+            </DropdownMenuLabel>
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem disabled={pending} onClick={signOut}>
+            Sign out
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   );
 }

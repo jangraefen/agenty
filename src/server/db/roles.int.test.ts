@@ -23,6 +23,12 @@ describe("runtime role (DATABASE_URL)", () => {
     expect(rows).toEqual([{ rolname: "agenty_app", rolsuper: false, rolbypassrls: false }]);
   });
 
+  it("is a member of no role (owner membership would bypass RLS)", async () => {
+    const rows = await appSql`
+      select count(*)::int as n from pg_auth_members where member = 'agenty_app'::regrole`;
+    expect(rows).toEqual([{ n: 0 }]);
+  });
+
   it("cannot create objects in schema app", async () => {
     const [row] = await appSql`select has_schema_privilege(current_user, 'app', 'CREATE') as ok`;
     expect(row?.ok).toBe(false);

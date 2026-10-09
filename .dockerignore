@@ -9,3 +9,5 @@ playwright-report
 !.env.example
 .claude
 docs
+.superpowers
+.github

@@ -28,7 +28,7 @@ All commands go through `Taskfile.yml` (go-task), identically locally and in CI.
 | `task test:e2e` | Playwright against the standalone build on port 3100 |
 | `task build` | `scripts/build.sh`: self-contained `.next/standalone` |
 | `task docker:build` | Production image `agenty:local` |
-| `task ci` | Everything CI checks; locally run `task db:up` first |
+| `task ci` | Everything the `ci` job checks (the `docker` job additionally builds the image, migrates from it and smoke-tests it); locally run `task db:up` first |
 
 Run tests through `task` (it loads `.env`); plain `pnpm exec vitest` lacks `DATABASE_URL`.
 

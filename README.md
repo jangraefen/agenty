@@ -19,7 +19,7 @@ Node 24, pnpm, [go-task](https://taskfile.dev), Docker, and [opa](https://www.op
     docker run --rm -e DATABASE_MIGRATION_URL=... agenty:local node scripts/migrate.mjs
     docker run -p 3000:3000 -e DATABASE_URL=... agenty:local
 
-The database needs the roles from `docker/postgres/init.sql`.
+The database needs the roles from `docker/postgres/init.sql`. Create them with your own passwords: the values in that file are local-development defaults only.
 
 ## Troubleshooting
 

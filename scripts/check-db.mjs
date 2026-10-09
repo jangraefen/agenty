@@ -7,14 +7,19 @@ if (!url) {
   process.exit(1);
 }
 
+/** A short, URL-free reason: connection errors are often AggregateErrors with an empty message. */
+function describeError(error) {
+  if (!(error instanceof Error)) return "unknown error";
+  const inner = error instanceof AggregateError ? error.errors[0] : undefined;
+  const code = error.code ?? inner?.code;
+  return code ?? (error.message || inner?.message || error.name);
+}
+
 const sql = postgres(url, { max: 1, connect_timeout: 5, onnotice: () => {} });
 try {
   await sql`select 1`;
 } catch (error) {
-  console.error(
-    `Database not reachable (${error instanceof Error ? error.message : "unknown error"}).`,
-    "Start it with `task db:up`.",
-  );
+  console.error(`Database not reachable (${describeError(error)}).`, "Start it with `task db:up`.");
   process.exitCode = 1;
 } finally {
   await sql.end();

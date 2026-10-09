@@ -28,11 +28,14 @@ class CookieJar {
   }
 }
 
-/** Starts a sign-in at /sign-in/social. Returns the IdP's authorize URL and the state cookies. */
+/**
+ * Starts a sign-in at /sign-in/social. Returns the IdP's authorize URL, its `state` parameter
+ * (Better Auth stores it in `verification` as `auth-state:<state>`) and the state cookies.
+ */
 export async function startSignIn(
   auth: Auth,
   baseURL: string,
-): Promise<{ url: string; cookie: string }> {
+): Promise<{ url: string; state: string; cookie: string }> {
   const response = await auth.handler(
     new Request(`${baseURL}/api/auth/sign-in/social`, {
       method: "POST",
@@ -44,21 +47,30 @@ export async function startSignIn(
     throw new Error(`sign-in start answered ${response.status}`);
   }
   const { url } = (await response.json()) as { url: string };
+  const state = new URL(url).searchParams.get("state");
+  if (!state) throw new Error("sign-in start returned no state");
   const jar = new CookieJar();
   jar.store(response);
-  return { url, cookie: jar.header() };
+  return { url, state, cookie: jar.header() };
 }
 
 /**
  * Signs in at the mock IdP's login form as `sub` with the given claims and finishes at the app's
  * callback. Returns the callback's status and location and the cookies collected, including the
- * session cookie on success.
+ * session cookie on success. `onState` receives the sign-in's `state` as soon as it exists.
  */
 export async function signInViaMock(
   auth: Auth,
-  opts: { baseURL: string; sub: string; email: string; name?: string },
+  opts: {
+    baseURL: string;
+    sub: string;
+    email: string;
+    name?: string;
+    onState?: (state: string) => void;
+  },
 ): Promise<{ status: number; location: string; cookie: string }> {
   const start = await startSignIn(auth, opts.baseURL);
+  opts.onState?.(start.state);
 
   const idp = await fetch(start.url, {
     method: "POST",

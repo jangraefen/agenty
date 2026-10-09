@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createServer, type Socket } from "node:net";
 import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { account, session, user } from "@/server/db/auth-schema";
+import { account, session, user, verification } from "@/server/db/auth-schema";
 import { getDb } from "@/server/db/client";
 import { getEnv } from "@/server/env";
 import { signInViaMock, startSignIn } from "../../../tests/support/oidc";
@@ -29,6 +29,11 @@ const auth = createAuth(config);
 const db = getDb();
 
 const createdEmails: string[] = [];
+// Sign-in state rows (`verification.identifier` = `auth-state:<state>`, as Better Auth stores
+// them). A callback that gets to parse the state deletes its row; a test that fails or stops
+// before that leaves it behind.
+const createdStateIdentifiers: string[] = [];
+const trackState = (state: string) => createdStateIdentifiers.push(`auth-state:${state}`);
 
 function testIdentity() {
   const id = randomUUID();
@@ -38,7 +43,12 @@ function testIdentity() {
 }
 
 async function signIn(identity = testIdentity()) {
-  const result = await signInViaMock(auth, { baseURL, ...identity, name: "Test User" });
+  const result = await signInViaMock(auth, {
+    baseURL,
+    ...identity,
+    name: "Test User",
+    onState: trackState,
+  });
   return { ...identity, ...result };
 }
 
@@ -58,6 +68,9 @@ async function usersWithEmail(email: string) {
 
 afterAll(async () => {
   if (createdEmails.length > 0) await db.delete(user).where(inArray(user.email, createdEmails));
+  if (createdStateIdentifiers.length > 0) {
+    await db.delete(verification).where(inArray(verification.identifier, createdStateIdentifiers));
+  }
 });
 
 beforeEach(() => {
@@ -111,11 +124,10 @@ describe("OIDC sign-in", () => {
 
   it("sends an IdP error back to the sign-in page, not Better Auth's error page", async () => {
     const start = await startSignIn(auth, baseURL);
-    const state = new URL(start.url).searchParams.get("state") ?? "";
-    expect(state).not.toBe("");
+    trackState(start.state);
 
     const response = await auth.handler(
-      new Request(`${baseURL}/api/auth/callback/oidc?error=access_denied&state=${state}`, {
+      new Request(`${baseURL}/api/auth/callback/oidc?error=access_denied&state=${start.state}`, {
         headers: { cookie: start.cookie },
       }),
     );

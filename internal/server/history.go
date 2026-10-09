@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -227,4 +228,35 @@ func messageSum(msg model.Message) [sha256.Size]byte {
 	}
 	// Strings and structs of them always marshal.
 	return sha256.Sum256(must.Value(json.Marshal(sent)))
+}
+
+// redactMessage returns a copy of msg with every secret redact knows of
+// redacted, wherever in the message it is, and whether that changed it.
+func redactMessage(redact *secret.Redactor, msg model.Message) (model.Message, bool) {
+	changed := false
+	text := func(s string) string {
+		r := redact.String(s)
+		changed = changed || r != s
+		return r
+	}
+	raw := func(j json.RawMessage) json.RawMessage {
+		r := redact.JSON(j)
+		changed = changed || !bytes.Equal(r, j)
+		return r
+	}
+	msg.Text = text(msg.Text)
+	msg.ToolCalls = slices.Clone(msg.ToolCalls)
+	for i := range msg.ToolCalls {
+		msg.ToolCalls[i].Args = raw(msg.ToolCalls[i].Args)
+	}
+	msg.ToolResults = slices.Clone(msg.ToolResults)
+	for i := range msg.ToolResults {
+		msg.ToolResults[i].Content = text(msg.ToolResults[i].Content)
+	}
+	if msg.Provider != nil {
+		p := *msg.Provider
+		p.Data = raw(p.Data)
+		msg.Provider = &p
+	}
+	return msg, changed
 }

@@ -1,0 +1,53 @@
+# Run `task --list` to see all tasks. Every command, locally and in CI, goes through this file.
+version: "3"
+
+dotenv: [".env"]
+
+vars:
+  OPA_VERSION: v1.21.1
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+
+tasks:
+  setup:
+    desc: Check required tools, install dependencies, create .env
+    cmds:
+      - task: tools:check
+      - pnpm install --frozen-lockfile
+
+  tools:check:
+    desc: Check that required CLIs are installed (prints install hints)
+    cmds:
+      - for: [node, pnpm, docker, opa]
+        cmd: |-
+          command -v {{.ITEM}} >/dev/null || { echo "missing '{{.ITEM}}' - see README.md#requirements" >&2; exit 1; }
+      - cmd: |-
+          opa version | head -n 1 | grep -qx "Version: {{trimPrefix "v" .OPA_VERSION}}" || echo "warning - opa {{.OPA_VERSION}} expected, found $(opa version | head -n 1)" >&2
+
+  dev:
+    desc: Run the app in development mode
+    cmds:
+      - pnpm exec next dev
+
+  lint:
+    desc: Lint and check formatting (Biome)
+    cmds:
+      - pnpm exec biome ci .
+
+  format:
+    desc: Apply formatting and safe+unsafe Biome fixes (incl. Tailwind class sorting)
+    cmds:
+      - pnpm exec biome check --write --unsafe .
+
+  typecheck:
+    desc: Type-check the project
+    cmds:
+      - pnpm exec next typegen
+      - pnpm exec tsc --noEmit
+
+  build:
+    desc: Production build (standalone)
+    run: once
+    cmds:
+      - pnpm exec next build

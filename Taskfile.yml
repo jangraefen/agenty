@@ -73,7 +73,8 @@ tasks:
       - task: lint
       - go mod tidy
       - git diff --exit-code go.mod go.sum
-      - task: test
+      # On a database of its own, on a free port: see the script.
+      - scripts/with-check-db.sh go test -race ./...
       - task: coverage
       - task: web:check
 

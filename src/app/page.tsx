@@ -26,19 +26,17 @@ async function Home() {
   if (access === "no-organization") return <NoOrganization />;
 
   return (
-    <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 p-8">
-      <Card>
-        <CardHeader>
-          <CardTitle>Agents arrive in the next milestone</CardTitle>
-        </CardHeader>
-      </Card>
-    </main>
+    <Card>
+      <CardHeader>
+        <CardTitle>Agents arrive in the next milestone</CardTitle>
+      </CardHeader>
+    </Card>
   );
 }
 
 function Landing() {
   return (
-    <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center gap-6 p-8">
+    <div className="mx-auto my-auto flex w-full max-w-2xl flex-col gap-6">
       <div className="flex flex-col gap-2">
         <h1 className="font-semibold text-4xl tracking-tight">Agenty</h1>
         <p className="text-lg text-muted-foreground">
@@ -50,13 +48,13 @@ function Landing() {
           Sign in
         </Link>
       </div>
-    </main>
+    </div>
   );
 }
 
 function NoOrganization() {
   return (
-    <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center gap-6 p-8">
+    <div className="mx-auto my-auto flex w-full max-w-2xl flex-col gap-6">
       <Card>
         <CardHeader>
           <CardTitle>No active organization</CardTitle>
@@ -68,6 +66,6 @@ function NoOrganization() {
           <SignOutButton />
         </CardContent>
       </Card>
-    </main>
+    </div>
   );
 }

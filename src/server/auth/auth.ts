@@ -75,7 +75,7 @@ export function createAuth(
       useSecureCookies: baseURL.startsWith("https://"),
     },
     session: {
-      expiresIn: 43_200,
+      expiresIn: 12 * 60 * 60, // seconds
       disableSessionRefresh: true,
       cookieCache: { enabled: false },
     },

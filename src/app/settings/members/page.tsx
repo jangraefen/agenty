@@ -37,7 +37,7 @@ async function Members() {
   const signedIn = await signedInAdmin();
   const members = await listMembers(signedIn.ctx);
   return (
-    <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 p-8">
+    <>
       <h1 className="font-semibold text-2xl tracking-tight">Members</h1>
       <Table>
         <TableHeader>
@@ -59,6 +59,6 @@ async function Members() {
           ))}
         </TableBody>
       </Table>
-    </main>
+    </>
   );
 }

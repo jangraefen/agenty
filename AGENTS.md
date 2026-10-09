@@ -57,12 +57,11 @@ Run tests through `task` (it loads `.env`); plain `pnpm exec vitest` lacks `DATA
 
 ```
 src/app/            routes, pages, route handlers (thin: parse, call src/server, respond)
+  layout.tsx        root layout: organization header for signed-in members + the shared <main>
+                    (layouts don't re-run on client navigation: pages check session and role themselves)
   api/auth/[...all] Better Auth handler
-  (auth)/           signed-out pages; layout.tsx is the centered frame (no app header)
-    sign-in/        SSO sign-in page
-  (app)/            app pages; layout.tsx renders the organization header for signed-in members
-                    (pages still check session and role themselves: layouts don't re-run on navigation)
-    settings/members/ admin-only member list
+  sign-in/          SSO sign-in page
+  settings/members/ admin-only member list
 src/components/ui/  shadcn/ui components (Base UI preset `base-nova`)
 src/lib/            shared client/server utilities (utils.ts re-exports `cn` from the `cn` package;
                     auth-client.ts is the Better Auth client)

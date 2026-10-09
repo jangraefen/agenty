@@ -8,7 +8,7 @@ export const metadata: Metadata = { title: "Sign in · Agenty" };
 
 export default function SignInPage({ searchParams }: PageProps<"/sign-in">) {
   return (
-    <Card>
+    <Card className="mx-auto my-auto w-full max-w-md">
       <CardHeader>
         <h1 className="font-semibold text-2xl tracking-tight">Sign in to Agenty</h1>
         <CardDescription>Use your organization's single sign-on.</CardDescription>

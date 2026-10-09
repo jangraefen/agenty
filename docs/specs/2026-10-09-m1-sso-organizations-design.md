@@ -1,6 +1,6 @@
 # M1 – SSO and organizations: design
 
-Status: approved by reviewer (with changes applied) · Date: 2026-10-09 · Branch: `feat/m1-sso-organizations`
+Status: draft, approved by reviewer subagent; awaiting maintainer approval · Date: 2026-10-09 · Branch: `feat/m1-sso-organizations`
 
 ## Goal
 
@@ -47,15 +47,15 @@ subagent and the maintainer has approved the merge.
 | Organizations | Our own tables `auth.organization` (`id uuid`, `slug` unique, `name`, `issuer`, timestamps) and `auth.member` (`user_id`, `organization_id`, `role` `admin`/`member`, `last_sign_in_at`, timestamps; unique `user_id`, i.e. one organization per user in M1). Better Auth's organization plugin is not used: without invitations, organization creation or switching it would only add endpoints to block, and the SSO plugin's own organization provisioning cannot re-derive roles on every sign-in. This deviates from the brief's "organization plugin" deliberately; workspaces may bring it (or our own model) back later. |
 | Configuration file | `AUTH_CONFIG_FILE` (env) points to a JSON file, Zod-validated at start (strict: unknown keys rejected). Shape below. Secrets are never in the file: each provider names the env var holding its client secret (`clientSecretEnv`), which must be set and non-empty. |
 | Organization sync | At server start, after migrations (`register()` in `src/instrumentation.ts`), organizations are upserted by `slug` as `agenty_app` (`INSERT … ON CONFLICT (slug) DO UPDATE`, safe with concurrent instances): insert, or rename. Each organization row stores its provider's `issuer`; if the configured issuer of an existing organization differs, start fails (accounts are keyed by provider id and `sub`, so re-pointing a slug to another IdP could bind foreign `sub`s to existing users). Slugs are therefore immutable; README documents the manual steps for an intentional IdP change. Organizations missing from the config are not deleted (their data stays); their users can no longer sign in, and `getTenantContext` rejects their sessions (the organization must be present in the loaded config). Invalid config stops the server, like invalid env. |
-| Providers | Built from the config and passed to the SSO plugin as `defaultSSO` (in memory), so client secrets never reach the database. Verified in the plugin source: `defaultSSO` takes precedence over the database, skips no token validation (signature, issuer, audience, userinfo `sub`), and needs no organization plugin. Registration is off (`providersLimit: 0`) and the provider-management endpoints are disabled. Each provider: `providerId` = organization slug, `issuer`, `clientId`, secret from env, PKCE on, scopes from config (default `openid email profile`; client-supplied `scopes` are rejected in a `hooks.before`, so nobody can request e.g. `offline_access`), mapping for `email` and `name`. |
-| OIDC discovery | We discover ourselves instead of the plugin (which re-discovers on every sign-in and callback and requires the discovery URL **and every discovered endpoint** to be trusted origins, which also makes them allowed redirect targets and CSRF origins). At server start, for each provider, `<issuer>/.well-known/openid-configuration` (or `discoveryUrl`) is fetched (timeout, a few retries), Zod-validated (its `issuer` must equal the configured one exactly) and the explicit `authorizationEndpoint`, `tokenEndpoint`, `jwksEndpoint` and `userInfoEndpoint` are passed to `defaultSSO` (`skipDiscovery`). Endpoints can also be set explicitly in the config, which removes the start-up dependency on that IdP. If discovery still fails, the server does not start (fail fast; orchestrators restart it). |
+| Providers | Built from the config and passed to the SSO plugin as `defaultSSO` (in memory), so client secrets never reach the database. Verified in the plugin source: `defaultSSO` takes precedence over the database, skips no token validation (signature, issuer, audience, userinfo `sub`), and needs no organization plugin. Registration is off (`providersLimit: 0`) and the provider-management endpoints are disabled. Each provider: `providerId` = organization slug, `issuer`, `clientId`, secret from env, PKCE on, scopes from config (default `openid email profile`). A `hooks.before` on `/sign-in/sso` accepts only the body keys `email`, `callbackURL` and `errorCallbackURL` and rejects any other (`scopes`, `additionalParams`, `providerId`, `providerType`, `requestSignUp`, …), so nobody can request e.g. `offline_access` or inject authorization parameters, mapping for `email` and `name`. |
+| OIDC discovery | We discover ourselves instead of the plugin (which re-discovers on every sign-in and callback and requires the discovery URL **and every discovered endpoint** to be trusted origins, which also makes them allowed redirect targets and CSRF origins). Discovery is **lazy per provider with an in-memory cache** (1 hour; failures are not cached): a `hooks.before` on `/sign-in/sso` and `/sso/callback/:providerId` resolves the provider (by email domain, same rule as the plugin, or by path) and, if needed, fetches `<issuer>/.well-known/openid-configuration` (or `discoveryUrl`) with a timeout, Zod-validates it (its `issuer` must equal the configured one exactly) and sets the explicit `authorizationEndpoint`, `tokenEndpoint`, `jwksEndpoint` and `userInfoEndpoint` on that provider's `defaultSSO` entry. With those keys present the plugin performs no discovery of its own (`needsRuntimeDiscovery`). Endpoints can also be set explicitly in the config (no discovery for that provider). An unreachable or invalid IdP only breaks that organization's sign-in, with the readable error `idp_unavailable`; other organizations and server start are unaffected. |
 | Provider selection | The sign-in page asks for the email address; `signIn.sso({ email, callbackURL, errorCallbackURL })` resolves the provider by the email's domain. The plugin matches case-insensitively and includes subdomains (`x.acme.test` matches `acme.test`), so config validation rejects a domain that equals or is a subdomain of another organization's domain. |
-| Account binding | Better Auth already refuses implicit linking for SSO users (their email is never marked verified), and we pin `account.accountLinking.disableImplicitLinking: true`. In addition, the plugin's `resolveUser` hook (runs on every SSO sign-in inside the transaction that creates user, account and session) **returns** `reject` (never throws) when the asserted email's domain does not match the provider's organization `domains` (same matching rule as provider selection), or when the email belongs to a user bound to another provider. A rejection rolls back everything. This also covers clients that pass `providerId` directly instead of an email. |
-| Provisioning | Organization and role are decided in `resolveUser` from the **verified ID token claims** (`verifiedIdTokenClaims`, not userinfo, which some IdPs such as Entra ID return without `groups`): `admin` if the configured claim (string or string array) contains one of the configured admin values, else `member`. The `member` row is upserted inside the same transaction, in `databaseHooks.session.create.before`, with the decision handed over from `resolveUser` via AsyncLocalStorage; the upsert never changes an existing row's `organization_id`, and it sets `last_sign_in_at`. So a failed provisioning rolls back the sign-in. `provisionUser` (runs after commit) and the plugin's `organizationProvisioning` (disabled) are not used. The first plan task prototypes this; fallback if the hand-over cannot work: upsert in `provisionUser`, catch all its errors, and rely on `getTenantContext` failing closed without a member row. |
+| Account binding | Better Auth already refuses implicit linking for SSO users (their email is never marked verified), and we pin `account.accountLinking.disableImplicitLinking: true`. In addition, the plugin's `resolveUser` hook (runs on every SSO sign-in inside the transaction that creates user, account and session) **returns** `reject` (never throws) when the asserted email's domain does not match the provider's organization `domains` (same matching rule as provider selection), or when the email belongs to a user bound to another provider. A rejection rolls back everything. It also stays correct should a provider ever be selected by something other than the email (the body-key allowlist already rejects `providerId`). |
+| Provisioning | Organization and role are decided in `resolveUser` from the **verified ID token claims** (`verifiedIdTokenClaims`, not userinfo, which some IdPs such as Entra ID return without `groups`): `admin` if the configured claim (string or string array) contains one of the configured admin values, else `member`. The decision is handed to `databaseHooks.session.create.before` (same request, same transaction) through a `WeakMap` keyed by the Better Auth endpoint context object, which both hooks can reach (the database hooks receive it as their context argument; `resolveUser` via the core context helper); no AsyncLocalStorage `enterWith`. The `member` upsert in `session.create.before` writes through **Better Auth's transaction adapter** (`getCurrentAdapter`), never our own pool (a separate connection would block on the foreign key to the uncommitted user and would not roll back). It never changes an existing row's `organization_id` and sets `last_sign_in_at`. A missing decision makes the hook throw, which rolls back the sign-in. `provisionUser` (runs after commit) and the plugin's `organizationProvisioning` (disabled) are not used. The first plan task prototypes the hand-over and the adapter write; fallback if it cannot work: upsert in `provisionUser`, catch all its errors, and rely on `getTenantContext` failing closed without a member row. |
 | Sessions | Database sessions, cookie cache off (Better Auth default, pinned explicitly), secure cookies in production. **Absolute lifetime 12 hours, no refresh** (`expiresIn`, `disableSessionRefresh: true`): roles and memberships are re-derived only at sign-in, so a demotion or removal at the IdP takes effect at the latest 12 hours later (documented). No active-organization field: in M1 the tenant is the user's single membership. |
 | Stored IdP tokens | Better Auth stores the IdP's access token in `auth.account`; `account.encryptOAuthTokens: true` encrypts it (with `BETTER_AUTH_SECRET`). The ID token stays in plain text (accepted: it is short-lived and readable only by `agenty_app`). No refresh token is requested. |
 | Endpoints | Allowlist: Better Auth core session endpoints (get-session, sign-out), `sign-in/sso` and `sso/callback/:providerId`. Everything else the plugins expose (provider register/update/delete/list/get, shared `/sso/callback`, SAML ACS/SLO/metadata, domain verification) is in `disabledPaths`; a test pins the complete list of reachable endpoints. |
-| Errors | `signIn.sso` is called with `errorCallbackURL: "/sign-in"`, and `onAPIError.errorURL` points to `/sign-in` too (state errors otherwise land on Better Auth's own error page). The sign-in page maps a fixed set of `error` codes to messages and never renders `error_description` (IdP-controlled text). Two concurrent first sign-ins of the same user can make one fail on the unique email; it gets the generic "sign-in failed, try again" message. |
+| Errors | `signIn.sso` is called with `errorCallbackURL: "/sign-in"`, and `onAPIError.errorURL` points to `/sign-in` too (state errors otherwise land on Better Auth's own error page). The sign-in page maps a fixed set of `error` codes (including `idp_unavailable`, the account-binding rejections and `unable to create session`) to messages and never renders `error_description` (IdP-controlled text). Two concurrent first sign-ins of the same user can make one fail on the unique email; it gets the generic "sign-in failed, try again" message. |
 | Trusted origins | `BETTER_AUTH_URL` only. With explicit endpoints, IdPs on public hosts need no trust. A provider whose endpoints are on loopback/private hosts (the dev mock IdP) must set `"privateNetwork": true` in the config, which adds its endpoint origins to the trusted origins; README warns that trusted origins are also accepted redirect targets. |
 | IDs | `advanced.database.generateId: "uuid"`; id and foreign key columns are `uuid`. |
 | Auth tables | Schema `auth` (new, owned by `agenty_owner`; `agenty_app` gets `USAGE` and table privileges via default privileges, same pattern as `app`): `user`, `session`, `account`, `verification`, `sso_provider`, `organization`, `member`. **No RLS**: they are read before a tenant is known. Only `src/server/auth/**` may import the auth schema or instance (Biome `noRestrictedImports`). Accepted risk: session tokens are readable by `agenty_app`; raw SQL against `auth` outside `src/server/auth/` is not allowed (review rule). |
@@ -167,16 +167,18 @@ creates as `agenty_owner` and drops):
 - Config parsing: valid file; each validation rule rejected with its JSON path;
   missing secret env var; secrets never in error messages.
 - Sync: inserts, renames, leaves removed organizations in place; idempotent.
-- Discovery: valid document, issuer mismatch rejected, unreachable IdP fails
-  start, explicit endpoints skip discovery.
+- Discovery: valid document, issuer mismatch rejected, unreachable IdP gives
+  `idp_unavailable` for that organization only (another organization still
+  signs in), cache hit, failures not cached, explicit endpoints skip discovery.
 - Role rule: claim as string and as array, no match, claim missing, no rule;
   read from the ID token, not userinfo.
 - Provisioning: first sign-in creates the member row with the derived role; a
   later sign-in with changed groups updates the role; a provisioning failure
   leaves no user, account or session.
 - Sync: a changed issuer for an existing slug stops start.
-- Endpoints: the reachable endpoint list is exactly the allowlist; client
-  `scopes` are rejected.
+- Endpoints: the reachable endpoint list is exactly the allowlist; any body key
+  on `/sign-in/sso` other than `email`, `callbackURL`, `errorCallbackURL` is
+  rejected.
 - Binding: same email through another provider is rejected; an email outside
   the provider's domains is rejected; nothing is created in either case.
 - `getTenantContext`: no session, no membership, organization removed from
@@ -215,9 +217,12 @@ directly.
 - `config/agenty.dev.json` (committed) declares Acme (`acme.test`) and Globex
   (`globex.test`) against the mock; `.env.example` points `AUTH_CONFIG_FILE` to
   it and sets the two (dummy) client secrets.
-- The Docker CI job starts the mock IdP too, mounts the dev config into the
+- The Docker CI job starts the mock IdP too (not strictly needed, since discovery is
+  lazy, but it keeps the configuration realistic), mounts the dev config into the
   container and sets its env, so the image starts with a valid configuration
-  and can run discovery (its smoke test still only checks health).
+  (its smoke test still only checks health). App container and mock IdP run
+  with host networking, so the issuer `http://localhost:8080/...` is the same
+  for both.
 - Production runtime stays the app plus Postgres; the mock IdP is dev/test only.
 
 ## UI and routes
@@ -268,10 +273,12 @@ sign-in transaction and a returned `reject` persists nothing; default account
 linking refuses unverified SSO emails. Still to prove in the first plan task,
 before any UI work:
 
-- The provisioning hand-over (`resolveUser` → AsyncLocalStorage →
-  `session.create.before` in the same transaction); fallback described under
+- The provisioning hand-over (`resolveUser` → `WeakMap` keyed by the endpoint
+  context → `session.create.before`) and the member write through
+  `getCurrentAdapter` in the same transaction; fallback described under
   Provisioning.
-- `skipDiscovery` with explicit endpoints in `defaultSSO`, and that
+- Lazy discovery filling the endpoints of a `defaultSSO` entry from a
+  before-hook, so the plugin performs no discovery itself; and that
   `privateNetwork` (trusted endpoint origins) is enough for the loopback mock.
 - The mock IdP's defaults (interactive login, custom claims in the ID token).
 - **TypeScript 7 and Better Auth's inferred types:** if inference breaks, the

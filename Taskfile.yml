@@ -31,6 +31,7 @@ tasks:
     cmds:
       - task: db:up
       - task: db:migrate
+      - task: policy:build
       - pnpm exec next dev
 
   lint:
@@ -57,6 +58,7 @@ tasks:
 
   test:
     desc: Run unit and integration tests (integration needs `task db:up`)
+    deps: [policy:build]
     cmds:
       - pnpm exec vitest run {{.CLI_ARGS}}
 
@@ -94,3 +96,14 @@ tasks:
     desc: Open Drizzle Studio (as agenty_owner)
     cmds:
       - pnpm exec drizzle-kit studio
+
+  policy:test:
+    desc: Run Rego tests
+    cmds:
+      - opa test policies -v
+
+  policy:build:
+    desc: Compile Rego policies to build/policy/policy.wasm
+    run: once
+    cmds:
+      - sh scripts/build-policy.sh

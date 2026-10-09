@@ -20,10 +20,16 @@ Sign in at the mock IdP with any username and this claims JSON:
 ## Production image
 
     task docker:build
-    docker run -p 3000:3000 -e DATABASE_URL=... -e DATABASE_MIGRATION_URL=... agenty:local
+    docker run -p 3000:3000 \
+      -e DATABASE_URL=... -e DATABASE_MIGRATION_URL=... \
+      -e BETTER_AUTH_SECRET=... -e BETTER_AUTH_URL=... \
+      -e OIDC_DISCOVERY_URL=... -e OIDC_CLIENT_ID=... -e OIDC_CLIENT_SECRET=... \
+      agenty:local
 
 The server applies pending database migrations on start (as the role in `DATABASE_MIGRATION_URL`)
 and refuses to start if they fail. Several instances may start at once; they migrate one after another.
+
+The database needs the roles from `docker/postgres/init.sql`. Create them with your own passwords: the values in that file are local-development defaults only.
 
 ### Sign-in (OIDC)
 
@@ -43,8 +49,6 @@ contain `email`.
 
 Access is controlled in the IdP: everyone it authenticates can sign in. Sessions last 12 hours, so
 users removed at the IdP lose access within 12 hours. Signing out ends only the Agenty session.
-
-The database needs the roles from `docker/postgres/init.sql`. Create them with your own passwords: the values in that file are local-development defaults only.
 
 ## Troubleshooting
 

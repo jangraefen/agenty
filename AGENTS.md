@@ -78,8 +78,8 @@ Folders `src/server/{agents,tools,workflows,crypto}` are created by the mileston
 - Two roles, created by `docker/postgres/init.sql` (compose runs it on an empty volume; CI via psql):
   - `agenty_owner`: owns schema `app` and all its tables, runs migrations (`DATABASE_MIGRATION_URL`).
   - `agenty_app`: runtime role (`DATABASE_URL`); no superuser, no `BYPASSRLS`, owns nothing, cannot
-    create objects. Gets table/sequence access through default privileges. RLS therefore always
-    applies to it.
+    create objects. Gets table/sequence access through default privileges. It cannot bypass RLS, so any RLS added later
+    (e.g. with tenancy) applies to it; there is none today.
 - Schema `app` and grants come from migrations (0000, 0001), not from init.sql. Prefer migrations
   for future role/grant changes; init.sql only runs on an empty data directory.
 - Drizzle's bookkeeping lives in schema `drizzle` (owner only).
@@ -161,10 +161,10 @@ has no `server-only` import because `scripts/migrate.ts` (`task db:migrate`) run
    tools is policy-checked too.
 3. **Idempotent steps:** policy check and tool execution run in one workflow step; every tool call
    carries the idempotency key `runId:toolCallId` to external calls.
-4. **Secrets:** provider keys and tool credentials are stored per tenant, AES-256-GCM encrypted
+4. **Secrets:** provider keys and tool credentials are stored AES-256-GCM encrypted
    (master key from env). Secrets never appear in prompts, logs, error messages or API responses.
 5. **Untrusted input:** tool descriptions and results are untrusted (prompt injection). HTTP tools
-   have SSRF protection (no private/internal IPs, per-tenant domain allowlist), timeouts and
+   have SSRF protection (no private/internal IPs, domain allowlist configured by the instance admin), timeouts and
    response size limits.
 
 ## Conventions

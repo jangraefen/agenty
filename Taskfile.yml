@@ -51,3 +51,8 @@ tasks:
     run: once
     cmds:
       - pnpm exec next build
+
+  test:
+    desc: Run unit and integration tests (integration needs `task db:up`)
+    cmds:
+      - pnpm exec vitest run {{.CLI_ARGS}}

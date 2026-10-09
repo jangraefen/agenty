@@ -1,0 +1,13 @@
+.git
+.next
+build
+node_modules
+test-results
+playwright-report
+.env
+.env.*
+!.env.example
+.claude
+docs
+.superpowers
+.github

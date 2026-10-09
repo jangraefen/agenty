@@ -1,0 +1,137 @@
+# Run `task --list` to see all tasks. Every command, locally and in CI, goes through this file.
+version: "3"
+
+dotenv: [".env"]
+
+vars:
+  OPA_VERSION: v1.21.1
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+
+tasks:
+  setup:
+    desc: Check required tools, install dependencies and Playwright Chromium, create .env
+    cmds:
+      - task: tools:check
+      - pnpm install --frozen-lockfile
+      - task: playwright:install
+      - cmd: test -f .env || cp .env.example .env
+
+  tools:check:
+    desc: Check that required CLIs are installed (prints install hints)
+    cmds:
+      - for: [node, pnpm, docker, opa]
+        cmd: |-
+          command -v {{.ITEM}} >/dev/null || { echo "missing '{{.ITEM}}' - see README.md#requirements" >&2; exit 1; }
+      - cmd: |-
+          opa version | head -n 1 | grep -qx "Version: {{trimPrefix "v" .OPA_VERSION}}" || echo "warning - opa {{.OPA_VERSION}} expected, found $(opa version | head -n 1)" >&2
+
+  dev:
+    desc: Run the app in development mode (starts Postgres; the app applies migrations on start)
+    cmds:
+      - task: db:up
+      - task: policy:build
+      - pnpm exec next dev
+
+  lint:
+    desc: Lint and check formatting (Biome)
+    cmds:
+      - pnpm exec biome ci .
+
+  format:
+    desc: Apply formatting and safe+unsafe Biome fixes (incl. Tailwind class sorting)
+    cmds:
+      - pnpm exec biome check --write --unsafe .
+
+  typecheck:
+    desc: Type-check the project
+    cmds:
+      - pnpm exec next typegen
+      - pnpm exec tsc --noEmit
+
+  build:
+    desc: Production build (.next/standalone, self-contained)
+    run: once
+    cmds:
+      - sh scripts/build.sh
+
+  docker:build:
+    desc: Build the production image (tag agenty:local)
+    cmds:
+      - docker build --build-arg OPA_VERSION={{.OPA_VERSION}} -t agenty:local .
+
+  test:
+    desc: Run unit and integration tests (integration needs `task db:up`)
+    deps: [policy:build]
+    cmds:
+      - pnpm exec vitest run {{.CLI_ARGS}}
+
+  test:e2e:
+    desc: Run Playwright E2E tests against the standalone production build
+    deps: [build]
+    cmds:
+      - pnpm exec playwright test {{.CLI_ARGS}}
+
+  playwright:install:
+    desc: Install Playwright's Chromium (with OS dependencies in CI)
+    cmds:
+      - pnpm exec playwright install {{if eq (env "CI") "true"}}--with-deps {{end}}chromium
+
+  db:up:
+    desc: Start local Postgres and wait until healthy
+    cmds:
+      - docker compose up --detach --wait
+
+  db:down:
+    desc: Stop local Postgres (keeps data)
+    cmds:
+      - docker compose down
+
+  db:reset:
+    desc: Stop local Postgres and delete its data (needed after changing docker/postgres/init.sql)
+    cmds:
+      - docker compose down --volumes
+
+  db:check:
+    desc: Fail fast if DATABASE_URL is unreachable
+    cmds:
+      - node scripts/check-db.mjs
+
+  db:generate:
+    desc: Generate a migration from src/server/db/schema.ts (pass `-- --custom --name x` for SQL)
+    cmds:
+      - pnpm exec drizzle-kit generate {{.CLI_ARGS}}
+
+  db:migrate:
+    desc: Apply migrations as agenty_owner without starting the app (tests, CI)
+    cmds:
+      - node scripts/migrate.ts
+
+  db:studio:
+    desc: Open Drizzle Studio (as agenty_owner)
+    cmds:
+      - pnpm exec drizzle-kit studio
+
+  policy:test:
+    desc: Run Rego tests
+    cmds:
+      - opa test policies -v
+
+  policy:build:
+    desc: Compile Rego policies to build/policy/policy.wasm
+    run: once
+    cmds:
+      - sh scripts/build-policy.sh
+
+  ci:
+    desc: Everything CI checks (needs a reachable database; locally run `task db:up` first)
+    cmds:
+      - task: policy:test
+      - task: lint
+      - task: typecheck
+      - task: db:check
+      - task: db:migrate
+      - task: test
+      - task: build
+      - task: test:e2e

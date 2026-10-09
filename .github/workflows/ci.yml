@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  POSTGRES_URL_SUPERUSER: postgres://postgres:postgres@localhost:5432/agenty
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: agenty
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d agenty"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: arduino/setup-task@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: open-policy-agent/setup-opa@v2
+        with:
+          version: 1.21.1  # keep in sync with OPA_VERSION in Taskfile.yml
+      - name: Create database roles
+        run: psql "$POSTGRES_URL_SUPERUSER" -v ON_ERROR_STOP=1 -f docker/postgres/init.sql
+      - run: task setup
+      - run: task ci
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: playwright-report
+          if-no-files-found: ignore
+
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: agenty
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d agenty"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: arduino/setup-task@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create database roles
+        run: psql "$POSTGRES_URL_SUPERUSER" -v ON_ERROR_STOP=1 -f docker/postgres/init.sql
+      - run: task docker:build
+      - name: Smoke-test the image (migrates the empty database on start)
+        run: |
+          docker run -d --name agenty --network host \
+            -e DATABASE_URL=postgres://agenty_app:agenty_app@localhost:5432/agenty \
+            -e DATABASE_MIGRATION_URL=postgres://agenty_owner:agenty_owner@localhost:5432/agenty \
+            agenty:local
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3000/api/health; then exit 0; fi
+            sleep 1
+          done
+          docker logs agenty
+          exit 1

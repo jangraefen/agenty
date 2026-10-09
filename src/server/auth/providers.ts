@@ -55,7 +55,7 @@ const rowSchema = z.object({
   issuer: httpUrl,
   domain: z
     .string()
-    .transform(splitList)
+    .transform((value) => splitList(value.toLowerCase()))
     .pipe(z.array(z.string().regex(domainName)).min(1)),
   samlConfig: z.null().optional(),
   organizationId: z.null().optional(),

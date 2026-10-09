@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,9 @@ const emailSchema = z.email();
 export function SignInForm({ initialError }: { initialError?: string | undefined }) {
   const [error, setError] = useState(initialError);
   const [pending, setPending] = useState(false);
+  // Before hydration a click would submit the form natively (GET /sign-in?email=...).
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => setHydrated(true), []);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -51,7 +54,7 @@ export function SignInForm({ initialError }: { initialError?: string | undefined
           {error}
         </p>
       ) : null}
-      <Button disabled={pending} type="submit">
+      <Button disabled={!hydrated || pending} type="submit">
         Continue with SSO
       </Button>
     </form>

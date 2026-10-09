@@ -3,7 +3,7 @@
 url=$1
 tries=0
 while [ "$tries" -lt 60 ]; do
-  if curl -fsS "$url" >/dev/null 2>&1; then
+  if curl -fsS --max-time 5 "$url" >/dev/null 2>&1; then
     exit 0
   fi
   tries=$((tries + 1))

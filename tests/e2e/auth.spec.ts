@@ -1,14 +1,19 @@
 import { expect, type Page, test } from "@playwright/test";
 import { loginAtMockIdp, uniqueEmail, uniqueOrg } from "./support/mock-idp";
 
+/** Opens the sign-in page once the form is hydrated (the button is disabled until then). */
+async function gotoSignIn(page: Page) {
+  await page.goto("/sign-in");
+  await expect(page.getByRole("button", { name: "Continue with SSO", exact: true })).toBeEnabled();
+}
+
 async function signIn(
   page: Page,
   email: string,
   claims: { name: string; org?: string; groups?: string[] },
   idpEmail = email,
 ) {
-  await page.goto("/sign-in");
-  await page.waitForLoadState("networkidle"); // the form needs hydration, or submit reloads the page
+  await gotoSignIn(page);
   await page.getByLabel("Work email").fill(email);
   await page.getByRole("button", { name: "Continue with SSO" }).click();
   await loginAtMockIdp(page, { email: idpEmail, ...claims });
@@ -100,8 +105,7 @@ test("an organization owned by another provider cannot be joined", async ({ page
 });
 
 test("an email domain without an identity provider is rejected", async ({ page }) => {
-  await page.goto("/sign-in");
-  await page.waitForLoadState("networkidle");
+  await gotoSignIn(page);
   await page.getByLabel("Work email").fill("eve@evil.test");
   await page.getByRole("button", { name: "Continue with SSO" }).click();
   await expect(

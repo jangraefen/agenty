@@ -45,6 +45,13 @@ describe("parseProvider", () => {
     });
   });
 
+  it("lower-cases the domain list, so domains match case-insensitively", () => {
+    expect(parseProvider(row({ domain: "Example.com, CORP.test" }))).toMatchObject({
+      ok: true,
+      provider: { domains: ["example.com", "corp.test"] },
+    });
+  });
+
   it("accepts an already parsed oidcConfig (Better Auth adapter rows)", () => {
     const parsed = { ...row(), oidcConfig: JSON.parse(row().oidcConfig ?? "{}") };
     expect(parseProvider(parsed)).toMatchObject({ ok: true });
@@ -88,7 +95,6 @@ describe("parseProvider", () => {
     ["saml config", { samlConfig: "{}" }, "samlConfig"],
     ["plugin organization", { organizationId: "x" }, "organizationId"],
     ["no organization claim", { organizationClaim: "" }, "organizationClaim"],
-    ["upper-case domain", { domain: "CORP.test" }, "domain"],
     ["empty domain entry", { domain: "corp.test," }, "domain"],
     ["issuer not http(s)", { issuer: "ftp://x" }, "issuer"],
   ] as const)("rejects %s, naming the field", (_name, over, field) => {

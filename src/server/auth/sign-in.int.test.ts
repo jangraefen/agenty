@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { APIError } from "better-auth/api";
 import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
-import { account, member, organization, session, user } from "@/server/db/auth-schema";
+import { account, member, organization, session, ssoProvider, user } from "@/server/db/auth-schema";
 import { createDb } from "@/server/db/client";
 import { seedDevProviders } from "@/server/db/seed";
 import { finishCallback, type SignInResult, signInViaMock } from "../../../tests/support/sso";
@@ -147,6 +147,43 @@ describe("account binding", () => {
         .from(user)
         .where(inArray(user.email, [email, mixed])),
     ).toHaveLength(1);
+  });
+
+  it("refuses a user bound to another provider and adds no account", async () => {
+    // A second provider for a subdomain of corp.test: corp also accepts that subdomain, so the
+    // same email can reach both providers.
+    const rand = random();
+    const providerId = `sub-${rand}`;
+    const subDomain = `sub-${rand}.corp.test`;
+    await seedDevProviders(db, [
+      { providerId, issuer: `http://localhost:8080/${rand}`, domain: subDomain },
+    ]);
+    // Its users are deleted in afterAll; no organization or account references the row.
+    onTestFinished(async () => {
+      await db.delete(ssoProvider).where(eq(ssoProvider.providerId, providerId));
+    });
+
+    // Bound to corp: the sign-in starts with a corp.test address (selection prefers the exact
+    // domain, which would pick the new provider), and the IdP returns the subdomain address.
+    const email = newEmail(subDomain, "u");
+    const slug = newSlug();
+    expect((await signIn(newEmail(), { org: slug }, email)).location).toBe("/");
+    const [created] = await userRows(email);
+    expect(created).toBeDefined();
+    const userId = created?.id ?? "";
+    const membership = await membershipOf(userId);
+    expect(membership).toEqual([expect.objectContaining({ slug, providerId: "corp" })]);
+
+    const result = await signIn(email, { org: slug });
+    expect(errorOf(result)).toBe("account_bound_to_other_provider");
+    expect(
+      await db
+        .select({ providerId: account.providerId })
+        .from(account)
+        .where(eq(account.userId, userId)),
+    ).toEqual([{ providerId: "corp" }]);
+    expect(await db.select().from(account).where(eq(account.providerId, providerId))).toEqual([]);
+    expect(await membershipOf(userId)).toEqual(membership);
   });
 
   it("refuses a changed organization and leaves the membership as it was", async () => {

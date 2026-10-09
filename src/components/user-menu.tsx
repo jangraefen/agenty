@@ -21,8 +21,15 @@ function useSignOut() {
   const [pending, setPending] = useState(false);
   async function signOut() {
     setPending(true);
-    await authClient.signOut();
-    router.push("/sign-in");
+    try {
+      const { error } = await authClient.signOut();
+      if (!error) {
+        router.replace("/sign-in");
+        router.refresh();
+      }
+    } finally {
+      setPending(false);
+    }
   }
   return { signOut, pending };
 }

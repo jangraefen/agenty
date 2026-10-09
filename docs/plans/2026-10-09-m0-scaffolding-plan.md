@@ -6,7 +6,7 @@
 
 **Architecture:** One Next.js 16 App Router app running as a standalone Node server, talking to Postgres through Drizzle with a runtime role that cannot bypass RLS. Shared shell scripts hold build logic so the Taskfile and the Dockerfile run the same commands. Rego policies compile to WASM at build time and are evaluated in-process.
 
-**Tech Stack:** Node 24, pnpm 12, go-task 3, Next.js 16.4, React 19.3, TypeScript (strict), Tailwind 4.3, shadcn 4.21, TanStack Query 5, Zod 4, Biome 2.5.15, Drizzle ORM 0.45 + drizzle-kit 0.31 + postgres.js 3.4, OPA 1.21.1 + `@open-policy-agent/opa-wasm` 1.10, Vitest 5, Playwright 1.64, Postgres 18, esbuild.
+**Tech Stack:** Node 24, pnpm 12, go-task 3, Next.js 16.4, React 19.3, TypeScript 7 (strict), Tailwind 4.3, shadcn 4.21, TanStack Query 5, Zod 4, Biome 2.5.15, Drizzle ORM 0.45 + drizzle-kit 0.31 + postgres.js 3.4, OPA 1.21.1 + `@open-policy-agent/opa-wasm` 1.10, Vitest 5, Playwright 1.64, Postgres 18, esbuild.
 
 **Spec:** `docs/specs/2026-10-09-m0-scaffolding-design.md`
 
@@ -15,6 +15,8 @@
 - Never read or reference the git branch `legacy`.
 - Node 24 LTS: `.nvmrc` = `24`, `engines.node` = `>=24`, Docker base `node:24-bookworm-slim`, CI `node-version-file: .nvmrc`.
 - pnpm only, pinned via `packageManager`; dependency build scripts allowed explicitly in `pnpm-workspace.yaml` (`allowBuilds`).
+- TypeScript 7 (`typescript@^7`): Next 16.4 type-checks with the project-local `tsc` CLI by default (`experimental.useTypeScriptCli`, see https://nextjs.org/docs/app/api-reference/config/next-config-js/useTypeScriptCli); do not set it to `false`.
+- `opa` v1.21.1 is installed by the developer (on `PATH`); the Taskfile never downloads it. CI uses `open-policy-agent/setup-opa`; the Docker build stage downloads the binary itself.
 - Biome only (exact version `2.5.15`); no ESLint, no Prettier, no `.eslintrc`, no `.prettierrc`.
 - TypeScript `strict` + `noUncheckedIndexedAccess`.
 - English only, no i18n.
@@ -85,7 +87,7 @@ Set `"name": "agenty"`, keep `"private": true`, delete `"version"`, add `"engine
 
 ```bash
 pnpm add -D --save-exact @biomejs/biome@2.5.15
-pnpm add -D @types/node@24 typescript@latest
+pnpm add -D @types/node@24 typescript@^7
 echo 24 > .nvmrc
 ```
 
@@ -158,9 +160,6 @@ Append to the generated file (it already ignores `/build`, `/.next/`, `.env*`, `
 # keep the example env file
 !.env.example
 
-# tools downloaded by `task setup`
-/.tools/
-
 # playwright
 /test-results/
 /playwright-report/
@@ -231,14 +230,21 @@ vars:
   OPA_VERSION: v1.21.1
 
 env:
-  PATH: "{{.ROOT_DIR}}/.tools/bin:{{env \"PATH\"}}"
   NEXT_TELEMETRY_DISABLED: "1"
 
 tasks:
   setup:
-    desc: Install dependencies and tools (opa, Playwright browser); create .env
+    desc: Check required tools, install dependencies, create .env
     cmds:
+      - task: tools:check
       - pnpm install --frozen-lockfile
+
+  tools:check:
+    desc: Check that required CLIs are installed (prints install hints)
+    cmds:
+      - for: [node, pnpm, docker, opa]
+        cmd: command -v {{.ITEM}} >/dev/null || { echo "missing '{{.ITEM}}' - see README.md#requirements" >&2; exit 1; }
+      - cmd: opa version | head -n 1 | grep -qx "Version: {{trimPrefix "v" .OPA_VERSION}}" || echo "warning - opa {{.OPA_VERSION}} expected, found $(opa version | head -n 1)" >&2
 
   dev:
     desc: Run the app in development mode
@@ -274,9 +280,7 @@ tasks:
 task format && task lint && task typecheck && task build
 ```
 
-Expected: all succeed; `.next/standalone/server.js` exists.
-
-If `tsc`/`next build` fail because of the TypeScript major (TypeScript 7 is the native compiler and may not yet be supported by Next.js), run `pnpm add -D typescript@^6` and re-verify; record the reason in `CLAUDE.md` (Task 10) under "Version notes".
+Expected: all succeed; `.next/standalone/server.js` exists; the `next build` output shows type checking ran via the `tsc` CLI (TypeScript 7). `tools:check` fails if `opa` is not installed — it is required from Task 6 on, so install it now (`brew install opa`, or see https://www.openpolicyagent.org/docs#running-opa).
 
 - [ ] **Step 11: Commit**
 
@@ -1130,51 +1134,16 @@ git commit -m "feat: add database health check route"
 ### Task 6: OPA policy toolchain
 
 **Files:**
-- Create: `policies/agenty/main.rego`, `policies/agenty/main_test.rego`, `scripts/build-policy.sh`, `scripts/install-opa.sh`, `src/server/policy/evaluate.ts`, `src/server/policy/evaluate.test.ts`
+- Create: `policies/agenty/main.rego`, `policies/agenty/main_test.rego`, `scripts/build-policy.sh`, `src/server/policy/evaluate.ts`, `src/server/policy/evaluate.test.ts`
 - Modify: `Taskfile.yml`, `next.config.ts`, `package.json`, `pnpm-lock.yaml`
 
 **Interfaces:**
-- Produces: `build/policy/policy.wasm` (entrypoint `agenty/authz/decision`); `evaluatePolicy(input: unknown): Promise<PolicyDecision>`; `parseResultSet(raw: unknown): PolicyDecision`; `type PolicyDecision = { allow: boolean; reason: string; require_approval: boolean }`; tasks `opa:install`, `policy:build`, `policy:test`.
+- Produces: `build/policy/policy.wasm` (entrypoint `agenty/authz/decision`); `evaluatePolicy(input: unknown): Promise<PolicyDecision>`; `parseResultSet(raw: unknown): PolicyDecision`; `type PolicyDecision = { allow: boolean; reason: string; require_approval: boolean }`; tasks `policy:build`, `policy:test`.
 
-- [ ] **Step 1: opa installer**
+- [ ] **Step 1: Confirm opa**
 
-Verify asset names and checksum files on https://github.com/open-policy-agent/opa/releases/tag/v1.21.1 (expected: `opa_linux_amd64_static`, `opa_linux_arm64_static`, `opa_darwin_arm64_static`, `opa_darwin_amd64`, each with `.sha256`).
-
-`scripts/install-opa.sh`:
-
-```sh
-#!/bin/sh
-# Downloads a pinned opa binary into .tools/bin and verifies its checksum.
-# Usage: scripts/install-opa.sh <version> <dest-dir>
-set -eu
-
-version="$1"
-dest="$2"
-
-os=$(uname -s | tr '[:upper:]' '[:lower:]')
-case "$(uname -m)" in
-  x86_64 | amd64) arch=amd64 ;;
-  arm64 | aarch64) arch=arm64 ;;
-  *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
-esac
-
-asset="opa_${os}_${arch}_static"
-if [ "$os" = darwin ] && [ "$arch" = amd64 ]; then asset="opa_darwin_amd64"; fi
-
-base="https://github.com/open-policy-agent/opa/releases/download/${version}"
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
-
-curl -fsSL -o "$tmp/$asset" "$base/$asset"
-curl -fsSL -o "$tmp/$asset.sha256" "$base/$asset.sha256"
-(cd "$tmp" && if command -v sha256sum >/dev/null; then sha256sum -c "$asset.sha256"; else shasum -a 256 -c "$asset.sha256"; fi)
-
-mkdir -p "$dest"
-install -m 0755 "$tmp/$asset" "$dest/opa"
-"$dest/opa" version | head -n 1
-```
-
-If the `.sha256` file format is not `<hash>  <filename>`, adapt the check (compare the hash string directly).
+Run: `task tools:check && opa version`
+Expected: `Version: 1.21.1`.
 
 - [ ] **Step 2: Rego policy and tests**
 
@@ -1232,28 +1201,19 @@ If `tar` rejects the leading slash (BSD tar), extract with `tar -xzf ... -C "$ou
 Add to `Taskfile.yml`:
 
 ```yaml
-  opa:install:
-    desc: Download the pinned opa CLI into .tools/bin
-    status:
-      - test "$(.tools/bin/opa version 2>/dev/null | head -n 1)" = "Version: {{trimPrefix "v" .OPA_VERSION}}"
-    cmds:
-      - sh scripts/install-opa.sh {{.OPA_VERSION}} .tools/bin
-
   policy:test:
     desc: Run Rego tests
-    deps: [opa:install]
     cmds:
       - opa test policies -v
 
   policy:build:
     desc: Compile Rego policies to build/policy/policy.wasm
     run: once
-    deps: [opa:install]
     cmds:
       - sh scripts/build-policy.sh
 ```
 
-Add `- task: opa:install` to `setup` after `pnpm install`, and make `test` depend on the wasm: `deps: [policy:build]`. Make `dev` run `- task: policy:build` before `next dev`.
+Make `test` depend on the wasm: `deps: [policy:build]`. Make `dev` run `- task: policy:build` before `next dev`.
 
 Run: `task policy:test` → PASS (2 tests); `task policy:build` → `build/policy/policy.wasm` exists.
 
@@ -1380,7 +1340,7 @@ Check https://nextjs.org/docs/app/api-reference/config/next-config-js/output for
 
 ```bash
 task lint && task typecheck && task test
-git add policies scripts/build-policy.sh scripts/install-opa.sh src/server/policy Taskfile.yml next.config.ts package.json pnpm-lock.yaml
+git add policies scripts/build-policy.sh src/server/policy Taskfile.yml next.config.ts package.json pnpm-lock.yaml
 git commit -m "feat: add OPA policy toolchain with WASM evaluation"
 ```
 
@@ -1440,7 +1400,6 @@ Replace the `build` task:
   build:
     desc: Production build (.next/standalone, self-contained)
     run: once
-    deps: [opa:install]
     cmds:
       - sh scripts/build.sh
 ```
@@ -1538,10 +1497,10 @@ Add to `Taskfile.yml`, and extend `setup` with the browser install:
 
 ```yaml
   setup:
-    desc: Install dependencies and tools (opa, Playwright Chromium); create .env
+    desc: Check required tools, install dependencies and Playwright Chromium, create .env
     cmds:
+      - task: tools:check
       - pnpm install --frozen-lockfile
-      - task: opa:install
       - task: playwright:install
       - cmd: test -f .env || cp .env.example .env
 ```
@@ -1592,7 +1551,7 @@ git commit -m "feat: add standalone build, Playwright E2E and task ci"
 - Modify: `Taskfile.yml`
 
 **Interfaces:**
-- Consumes: `scripts/build.sh`, `scripts/install-opa.sh`, `.next/standalone` layout (Task 7).
+- Consumes: `scripts/build.sh`, `.next/standalone` layout (Task 7).
 - Produces: image running `node server.js` on port 3000 as user `node`; `node scripts/migrate.mjs` inside the image applies migrations (`DATABASE_MIGRATION_URL`); task `docker:build` tags `agenty:local`.
 
 - [ ] **Step 1: `.dockerignore`**
@@ -1600,7 +1559,6 @@ git commit -m "feat: add standalone build, Playwright E2E and task ci"
 ```
 .git
 .next
-.tools
 build
 node_modules
 test-results
@@ -1630,11 +1588,16 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
 
 FROM base AS build
 ARG OPA_VERSION=v1.21.1
+ARG TARGETARCH
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl \
   && rm -rf /var/lib/apt/lists/*
-COPY scripts/install-opa.sh scripts/install-opa.sh
-RUN sh scripts/install-opa.sh "$OPA_VERSION" /usr/local/bin
+# opa compiles policies/ to WASM during the build; checksum-verified static binary.
+RUN set -eu; asset="opa_linux_${TARGETARCH}_static"; \
+  base="https://github.com/open-policy-agent/opa/releases/download/${OPA_VERSION}"; \
+  curl -fsSL -o /tmp/opa "$base/$asset"; \
+  echo "$(curl -fsSL "$base/$asset.sha256" | cut -d ' ' -f 1)  /tmp/opa" | sha256sum -c -; \
+  install -m 0755 /tmp/opa /usr/local/bin/opa; rm /tmp/opa; opa version
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN sh scripts/build.sh
@@ -1648,7 +1611,7 @@ EXPOSE 3000
 CMD ["node", "server.js"]
 ```
 
-Keep `ARG OPA_VERSION` in sync with `OPA_VERSION` in `Taskfile.yml`; `docker:build` passes it explicitly so the Taskfile is the source of truth.
+Verify on https://github.com/open-policy-agent/opa/releases/tag/v1.21.1 that `opa_linux_amd64_static.sha256` / `opa_linux_arm64_static.sha256` exist and start with the hash. Keep `ARG OPA_VERSION` in sync with `OPA_VERSION` in `Taskfile.yml`; `docker:build` passes it explicitly so the Taskfile is the source of truth.
 
 - [ ] **Step 3: Task**
 
@@ -1690,7 +1653,7 @@ git commit -m "feat: add multi-stage Dockerfile with bundled migration runner"
 
 - [ ] **Step 1: Workflow**
 
-Check the current major versions of the actions (2026-10-09: checkout v7, setup-node v7, pnpm/action-setup v6, arduino/setup-task v3, cache v6, upload-artifact v7) and their inputs.
+Check the current major versions of the actions (2026-10-09: checkout v7, setup-node v7, pnpm/action-setup v6, arduino/setup-task v3, upload-artifact v7, open-policy-agent/setup-opa v2) and their inputs.
 
 `.github/workflows/ci.yml`:
 
@@ -1737,10 +1700,9 @@ jobs:
       - uses: arduino/setup-task@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/cache@v6
+      - uses: open-policy-agent/setup-opa@v2
         with:
-          path: .tools
-          key: tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Taskfile.yml', 'scripts/install-opa.sh') }}
+          version: 1.21.1  # keep in sync with OPA_VERSION in Taskfile.yml
       - name: Create database roles
         run: psql "$POSTGRES_URL_SUPERUSER" -v ON_ERROR_STOP=1 -f docker/postgres/init.sql
       - run: task setup
@@ -1828,7 +1790,7 @@ All commands go through `Taskfile.yml` (go-task), identically locally and in CI.
 
 | Command | Does |
 |---|---|
-| `task setup` | pnpm install, pinned `opa` into `.tools/bin`, Playwright Chromium, `.env` from `.env.example` |
+| `task setup` | Check tools (node, pnpm, docker, opa), pnpm install, Playwright Chromium, `.env` from `.env.example` |
 | `task dev` | Postgres up, migrations, policy build, `next dev` |
 | `task db:up` / `db:down` / `db:reset` | Local Postgres (compose); `db:reset` deletes data (needed after editing `docker/postgres/init.sql`) |
 | `task db:generate` | New migration from `src/server/db/schema.ts`; `-- --custom --name x` for hand-written SQL |
@@ -1924,11 +1886,14 @@ throws (fail closed).
 
 ## Version notes
 
-- Node 24 LTS (`.nvmrc`); OPA version pinned in `Taskfile.yml` (`OPA_VERSION`) and passed to
-  the Docker build.
+- Node 24 LTS (`.nvmrc`).
+- TypeScript 7: Next 16.4 type-checks with the project-local `tsc` CLI
+  (`experimental.useTypeScriptCli`, on by default). Don't turn it off; TS 7 has no JS compiler API.
+- opa v1.21.1: installed by the developer; `OPA_VERSION` in `Taskfile.yml` is checked by
+  `task tools:check`, passed to the Docker build, and mirrored in `.github/workflows/ci.yml`.
 ````
 
-Fill "Version notes" with any deviation found during Tasks 1–9 (e.g. a TypeScript major pin).
+Add any further deviation found during Tasks 1–9 to "Version notes".
 
 - [ ] **Step 2: `README.md`**
 
@@ -1937,11 +1902,13 @@ Fill "Version notes" with any deviation found during Tasks 1–9 (e.g. a TypeScr
 
 Self-hosted, multi-tenant AI agent builder with chat.
 
+## Requirements
+
+Node 24, pnpm, [go-task](https://taskfile.dev), Docker, and [opa](https://www.openpolicyagent.org/docs#running-opa) v1.21.1 (`brew install opa`).
+
 ## Quick start
 
-Requirements: Node 24, pnpm, [go-task](https://taskfile.dev), Docker.
-
-    task setup     # dependencies, opa, Playwright browser, .env
+    task setup     # tool check, dependencies, Playwright browser, .env
     task dev       # Postgres + migrations + dev server on http://localhost:3000
 
 `task --list` shows all commands; `CLAUDE.md` describes the architecture and conventions.
@@ -1959,7 +1926,7 @@ The database needs the roles from `docker/postgres/init.sql`.
 
 ```bash
 git status --short            # only CLAUDE.md, README.md untracked
-rm -rf node_modules .next build .tools
+rm -rf node_modules .next build
 task db:reset && task db:up
 task setup && task ci
 task docker:build

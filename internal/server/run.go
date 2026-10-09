@@ -22,7 +22,9 @@ import (
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
-// newRun is a run to queue.
+// newRun is a run to queue, as CreateRun and FollowUpRun build it: the
+// harness version it runs, already resolved, so the queue never decides
+// which version a conversation keeps.
 type newRun struct {
 	version store.HarnessVersion
 	input   string
@@ -40,6 +42,8 @@ type newRun struct {
 // 500 otherwise.
 func (s *Server) enqueue(r newRun) (store.Run, int, error) {
 	v := r.version
+	// The server mints the run ID, so the run's job exists under it before
+	// the run is stored, and a worker that claims the run at once finds it.
 	id := rand.Text()
 	j, err := s.register(id, v.Workspace, v.Harness.Name)
 	if err != nil {
@@ -47,6 +51,7 @@ func (s *Server) enqueue(r newRun) (store.Run, int, error) {
 	}
 	run, err := s.cfg.Store.CreateRun(s.ctx, store.NewRun{ID: id, HarnessVersionID: v.ID, Input: r.input, StartedBy: r.user, Follows: r.follows})
 	if err != nil {
+		// Nothing was stored, so the job goes as it came.
 		s.unregister(id)
 		j.cancel(nil)
 		status := http.StatusInternalServerError
@@ -105,6 +110,11 @@ func (s *Server) signal() {
 
 // work waits for a signal, then claims queued runs and executes them, one
 // at a time, until none is left, and waits again, until the server stops.
+//
+// The wake channel, not polling, starts a claim: the store is asked only when
+// a run may be queued, and SKIP LOCKED lets every worker claim at once
+// without taking the same run. One run at a time per worker is what bounds
+// how many agents, and their MCP servers, run at once.
 func (s *Server) work() {
 	for {
 		select {
@@ -114,6 +124,9 @@ func (s *Server) work() {
 		}
 		for s.ctx.Err() == nil {
 			claimed, ok, err := s.cfg.Store.ClaimRun(s.ctx)
+			// A failed claim, such as the database being unreachable, is
+			// retried after a pause, as a signal may not come again for the
+			// runs already queued.
 			if err != nil {
 				if s.ctx.Err() == nil {
 					s.cfg.Logger.Error("cannot claim a run", "error", err)
@@ -138,7 +151,8 @@ func (s *Server) work() {
 const claimRetry = 5 * time.Second
 
 // take executes a run a worker claimed, unless it was cancelled while it was
-// queued.
+// queued. A run that cannot be prepared ends here, as cancelled, failed by
+// the server stopping, or failed with the reason, and is never retried.
 func (s *Server) take(claimed store.ClaimedRun) {
 	j := s.job(claimed.Workspace, claimed.ID)
 	if j == nil {
@@ -172,7 +186,9 @@ func (s *Server) take(claimed store.ClaimedRun) {
 // errStopped is how a run ends that the server stopped before it finished.
 const errStopped = "the server stopped before the run finished"
 
-// prepared is a run ready to execute.
+// prepared is a run ready to execute: what prepare built, which execute
+// consumes. The agent and the lease hold started MCP servers, so whoever
+// holds a prepared must close the agent and keep, close or return the lease.
 type prepared struct {
 	agent *agent.Agent
 	lease *toolgateway.Lease
@@ -216,11 +232,16 @@ func (s *Server) prepare(j *job, claimed store.ClaimedRun) (prepared, error) {
 	if err != nil {
 		return prepared{}, err
 	}
+	// The harness of the conversation's pinned version, and central policy
+	// as the server has it now, which is not versioned.
 	hv := v.Harness
 	m, err := s.cfg.NewModel(hv.Model)
 	if err != nil {
 		return prepared{}, fmt.Errorf("cannot start run: %w", err)
 	}
+	// Every configured server is offered; the gateway starts only those that
+	// serve a granted tool. Their credentials come from the resolved config
+	// as process environment, never through the model.
 	servers := make(map[string]toolgateway.ToolServer, len(s.cfg.Operator.MCPServers))
 	for name, srv := range s.cfg.Operator.MCPServers {
 		servers[name] = s.cfg.Server(name, mcptool.Server{Command: srv.Command, Args: srv.Args, Env: s.cfg.Resolved.MCPServerEnv[name]})
@@ -240,6 +261,9 @@ func (s *Server) prepare(j *job, claimed store.ClaimedRun) (prepared, error) {
 	if err != nil {
 		return prepared{}, errors.Join(fmt.Errorf("cannot start run: %w", err), lease.Return())
 	}
+	// The digests are stored before the run sends anything, so a later
+	// follow-up knows what this run was sent and can tell whether its
+	// provider forms are still valid; see conversationHistory.
 	digest := a.PromptDigest()
 	history := conversationHistory(s.cfg.Resolved.Redactor, prior, digest)
 	if err := s.cfg.Store.SetRunDigests(ctx, stored.ID, digest, historyDigest(history)); err != nil {
@@ -250,6 +274,8 @@ func (s *Server) prepare(j *job, claimed store.ClaimedRun) (prepared, error) {
 		lease:   lease,
 		history: history,
 	}
+	// A new turn starts on its input; a run that waited resumes at its call
+	// instead, with the answer the approver gave.
 	if !waited {
 		p.input = withLostState(stored.Input, lease.Fresh(), history)
 		return p, nil
@@ -263,6 +289,11 @@ func (s *Server) prepare(j *job, claimed store.ClaimedRun) (prepared, error) {
 // answered returns the audit log of the run that waited for the answered
 // approval, which the run resumes with. A run is taken up only for an
 // answered approval it has not used.
+//
+// The records give the resumed gateway the run's call counts, denied calls
+// included, so a suspension never resets the harness's tool call limit. The
+// checks refuse to resume a run whose request is still open or was already
+// acted on, rather than run a call twice.
 func (s *Server) answered(ctx context.Context, approval store.Approval) ([]toolgateway.Record, error) {
 	if approval.Status == store.ApprovalPending || approval.Status == store.ApprovalWithdrawn {
 		return nil, fmt.Errorf("run %s was taken up while its approval request is %s", approval.RunID, approval.Status)
@@ -291,6 +322,9 @@ func (s *Server) resumption(ctx context.Context, p *prepared, approval store.App
 		return err
 	}
 	p.own = own
+	// An approval is bound to the call and arguments the approver saw; if
+	// the stored reply no longer makes exactly that call, approving it would
+	// run something no one approved, so it becomes a rejection.
 	answer := toolgateway.Approval{Approved: approval.Status == store.ApprovalApproved, Approver: approval.Approver, Reason: approval.Reason}
 	if !asked(p.own, approval) {
 		answer = toolgateway.Approval{Approver: approval.Approver, Reason: "the call cannot run as it was asked for: the model's call is not stored as it was"}
@@ -327,7 +361,10 @@ func asked(own []model.Message, approval store.Approval) bool {
 	return c.Name == approval.Tool && jsonEqual(c.Args, approval.Args)
 }
 
-// jsonEqual reports whether a and b are the same JSON value.
+// jsonEqual reports whether a and b are the same JSON value, whatever their
+// spacing or key order: the request's arguments and the transcript's call
+// are stored apart, and only the value matters to what the call does.
+// Invalid JSON equals nothing.
 func jsonEqual(a, b json.RawMessage) bool {
 	var x, y any
 	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
@@ -336,7 +373,9 @@ func jsonEqual(a, b json.RawMessage) bool {
 	return reflect.DeepEqual(x, y)
 }
 
-// callsAsReplies drops the provider form of every message.
+// callsAsReplies drops the provider form of every message, so the replies
+// are sent as their text and tool calls: the form a provider accepts when
+// what came before them has changed.
 func callsAsReplies(messages []model.Message) []model.Message {
 	out := slices.Clone(messages)
 	for i := range out {
@@ -356,6 +395,7 @@ func (s *Server) prior(ctx context.Context, workspace string, run store.Run) ([]
 	if err != nil {
 		return nil, err
 	}
+	// The conversation ends with run itself, which is not prior.
 	runs = runs[:len(runs)-1]
 	prior := make([]priorRun, len(runs))
 	for i, r := range runs {
@@ -378,9 +418,13 @@ func keep(ctx context.Context, lease *toolgateway.Lease) error {
 	return lease.Keep()
 }
 
-// cancelledBy is the cause of a run's cancellation by a user: the user.
+// cancelledBy is the cause of a run's cancellation by a user: the user. It is
+// set as the job context's cause, so whoever sees the run end, a worker in
+// take or execute or suspend, can tell a user's cancel, recorded as
+// cancelled, from the server stopping, recorded as failed.
 type cancelledBy string
 
+// Error is how the run's record names the cancel: "cancelled by alice".
 func (u cancelledBy) Error() string { return "cancelled by " + string(u) }
 
 // execute runs the agent on ctx, after history, keeps its MCP servers for
@@ -397,6 +441,8 @@ func (s *Server) execute(ctx context.Context, j *job, p prepared) {
 	} else {
 		res, runErr = p.agent.Continue(ctx, p.history, p.input)
 	}
+	// A suspension is not an end: the run's record stays open as waiting.
+	// One that came with a cancel is treated as the cancel, below.
 	var suspended *agent.Suspended
 	if errors.As(runErr, &suspended) && ctx.Err() == nil {
 		// The run waits holding nothing: its servers are kept for the
@@ -407,6 +453,8 @@ func (s *Server) execute(ctx context.Context, j *job, p prepared) {
 		s.suspend(ctx, j, p.agent.ID(), res, suspended)
 		return
 	}
+	// The run ended: close its agent, which hands its servers back to the
+	// lease, and keep them for the conversation, before its end is stored.
 	err := errors.Join(runErr, p.agent.Close(), keep(ctx, p.lease))
 	status, errMsg := store.RunSucceeded, ""
 	var by cancelledBy
@@ -433,7 +481,8 @@ func (s *Server) execute(ctx context.Context, j *job, p prepared) {
 // that cannot be suspended fails.
 func (s *Server) suspend(ctx context.Context, j *job, id string, res agent.Result, suspended *agent.Suspended) {
 	// As precise as PostgreSQL keeps it, so the event and the stored request
-	// agree.
+	// agree. The request expires approvals.timeout from now, which the
+	// expire goroutine enforces.
 	now := time.Now().Truncate(time.Microsecond)
 	// The gateway redacted them already; the store gets nothing it did not.
 	results := slices.Clone(suspended.Results)
@@ -452,6 +501,8 @@ func (s *Server) suspend(ctx context.Context, j *job, id string, res agent.Resul
 		CreatedAt: now,
 		ExpiresAt: now.Add(s.approvalTimeout()),
 	}
+	// Stored even if the run is being cancelled, so a cancel that raced the
+	// suspension still finds a waiting run to end, below.
 	if err := s.cfg.Store.SuspendRun(context.WithoutCancel(ctx), a); err != nil {
 		s.finish(ctx, j, id, store.RunFailed, res, s.cfg.Resolved.Redactor.String(err.Error()))
 		return
@@ -463,6 +514,8 @@ func (s *Server) suspend(ctx context.Context, j *job, id string, res agent.Resul
 		s.cancelIdle(ctx, id, by)
 		return
 	}
+	// Wake the expire goroutine, which may be sleeping until a later
+	// request, or forever, so it learns of this one's expiry.
 	select {
 	case s.expiry <- struct{}{}:
 	default:
@@ -493,6 +546,12 @@ func expiryWait(now, next time.Time, pending bool) (wait time.Duration, forever 
 
 // expire rejects approval requests nobody answered in time, which queues
 // their runs, as each request expires, until the server stops.
+//
+// It is one goroutine with one timer, set for the next request due, not a
+// timer per request: the requests live in the store, waiting runs from an
+// earlier server included, so the store says when the next is due. suspend
+// wakes it for a new request, which may be due sooner. A database error
+// makes it try again after claimRetry instead of sleeping until woken.
 func (s *Server) expire() {
 	reason := "no answer within " + duration(s.approvalTimeout())
 	for {
@@ -500,6 +559,8 @@ func (s *Server) expire() {
 		if err != nil && s.ctx.Err() == nil {
 			s.cfg.Logger.Error("cannot expire approval requests", "error", err)
 		}
+		// Each rejected request queued its run; wake a worker per run, up
+		// to one per worker, to resume them and tell the model.
 		for range min(n, cap(s.wake)) {
 			s.signal()
 		}
@@ -569,6 +630,8 @@ func notRun(ctx context.Context, st store.ClosingReader, id string, by cancelled
 	if err != nil {
 		return store.Closing{}, err
 	}
+	// Nothing to complete when the gateway already decided the call, which
+	// recorded it, or the transcript does not end with the reply that asked.
 	if used(records, a.CallID) || !asked(own, a) {
 		return store.Closing{}, nil
 	}
@@ -613,7 +676,9 @@ func ownMessages(ctx context.Context, st store.ClosingReader, id string) (own []
 }
 
 // used reports whether the call callID was answered in the gateway already,
-// as its run resumed at it, so its approval is used.
+// as its run resumed at it, so its approval is used. The gateway records no
+// approval event as a call suspends, only once the call's approval is
+// settled, which is what tells a used approval from one still to be used.
 func used(records []store.AuditRecord, callID string) bool {
 	return slices.ContainsFunc(records, func(r store.AuditRecord) bool {
 		return r.CallID == callID && r.Event == toolgateway.EventApproval
@@ -685,7 +750,8 @@ func (s *Server) job(workspace, id string) *job {
 	return nil
 }
 
-// duration formats d without trailing zero units: 1h, not 1h0m0s.
+// duration formats d without trailing zero units: 1h, not 1h0m0s. The
+// reason an expired request gives the model, and its approver, reads so.
 func duration(d time.Duration) string {
 	s := d.String()
 	s = strings.TrimSuffix(s, "m0s")
@@ -705,6 +771,7 @@ type runAudit struct {
 	events *notifier
 }
 
+// runAudit is the run's gateway audit sink.
 var _ toolgateway.Audit = runAudit{}
 
 // Record stores rec even if the run is being cancelled: a result is recorded
@@ -718,11 +785,15 @@ func (a runAudit) Record(ctx context.Context, rec toolgateway.Record) error {
 }
 
 // runTranscript redacts each message of a run's conversation and stores it.
+// It is the agent's Transcript; the agent hands it messages as the model saw
+// them, so redacting is its job, and what is stored, and so shown to users
+// and sent to the model by later follow-ups, holds no configured secret.
 type runTranscript struct {
 	store  *store.Store
 	redact *secret.Redactor
 }
 
+// runTranscript is the agent's transcript sink.
 var _ agent.Transcript = runTranscript{}
 
 // Append stores msg even if the run is being cancelled, as Record does. A

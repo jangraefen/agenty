@@ -1,5 +1,14 @@
-// A stand-in for the browser's prefers-color-scheme query, which jsdom does
-// not implement: window.matchMedia answers it until removeFakeColorScheme.
+/**
+ * A fake prefers-color-scheme media query, for the theme tests: they switch
+ * the operating system's scheme and check that Theme follows it, and that
+ * it stops listening when told to.
+ */
+
+/**
+ * A stand-in for the browser's prefers-color-scheme query, which jsdom does
+ * not implement: window.matchMedia answers it until removeFakeColorScheme.
+ * Any other query throws, so a new use of matchMedia does not go untested.
+ */
 export function fakeColorScheme(scheme: "light" | "dark") {
   let dark = scheme === "dark";
   const listeners = new Set<(event: MediaQueryListEvent) => void>();
@@ -39,6 +48,7 @@ export function fakeColorScheme(scheme: "light" | "dark") {
   };
 }
 
+/** Removes the fake, leaving window without matchMedia, as jsdom has it. */
 export function removeFakeColorScheme() {
   Reflect.deleteProperty(window, "matchMedia");
 }

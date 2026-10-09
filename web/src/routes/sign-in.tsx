@@ -8,7 +8,21 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+/**
+ * The sign-in page, at `/sign-in`: the only page outside the authed layout,
+ * so it has no sidebar, only the theme menu.
+ *
+ * Sign-in is a stopgap until OIDC: the user pastes the bearer token the
+ * operator config gave them. The page checks it with `GET /v1/me` before the
+ * session keeps it, then seeds the `me` query with the answer and opens the
+ * new chat page, whose authed guard then finds the user in the cache.
+ *
+ * The token field is uncontrolled and the token goes only into the
+ * Authorization header: the Content-Security-Policy allows inline styles,
+ * and a value attribute could be read by an injected style's selectors.
+ */
 export const Route = createFileRoute("/sign-in")({
+  // A signed-in user has nothing to do here.
   beforeLoad: ({ context }) => {
     if (context.session.token !== null) {
       throw redirect({ to: "/" });
@@ -17,6 +31,11 @@ export const Route = createFileRoute("/sign-in")({
   component: SignIn,
 });
 
+/**
+ * The sign-in form. A mutation checks the candidate token and, once the
+ * server accepts it, signs the session in; the error under the field says
+ * why a token was refused.
+ */
 function SignIn() {
   const { api, session } = Route.useRouteContext();
   const queryClient = useQueryClient();
@@ -27,19 +46,23 @@ function SignIn() {
     // The token is checked before it is kept, so a mistyped one is never
     // stored, and only ever travels in the Authorization header.
     mutationFn: (candidate: string) => {
+      // A token holding anything but visible ASCII is refused here, with a
+      // message that says so, before it is put in a header and sent.
       if (!headerSafe.test(candidate)) {
         throw new InvalidToken();
       }
       return unwrap(api.GET("/v1/me", { headers: { Authorization: `Bearer ${candidate}` } }));
     },
     onSuccess: async (me, candidate) => {
-      // After signing in, which clears the cache for the new user.
+      // After signing in, which clears the cache for the new user, the
+      // answer is cached as theirs, so the authed guard need not ask again.
       session.signIn(candidate);
       queryClient.setQueryData(meQuery(api).queryKey, me);
       await navigate({ to: "/" });
     },
   });
 
+  // The token is read from the form on submit, never held in React state.
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const token = new FormData(event.currentTarget).get("token");
@@ -88,8 +111,14 @@ function SignIn() {
 // What an HTTP header can carry: visible ASCII characters, no spaces.
 const headerSafe = /^[\x21-\x7e]+$/;
 
+/** Thrown for a candidate token with characters a header cannot carry. */
 class InvalidToken extends Error {}
 
+/**
+ * The message shown for a failed sign-in: a malformed token, a token the
+ * server refused (401), no answer at all (status undefined, the client's own
+ * message), or any other failure with the server's message.
+ */
 function signInError(error: Error): string {
   if (error instanceof InvalidToken) {
     return "A token has only letters, digits and punctuation.";

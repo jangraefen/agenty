@@ -5,10 +5,20 @@ import { HarnessForm } from "@/components/harness-form";
 import { useSaveHarness } from "@/hooks/use-save-harness";
 import { fromHarness } from "@/lib/harness-form";
 
+/**
+ * The edit page of a harness, at `/w/{ws}/harnesses/{name}/edit`.
+ *
+ * It fills the shared HarnessForm from the harness's latest version, which
+ * the parent route loaded, and saves through useSaveHarness, which stores
+ * the values as the harness's next version and opens its page. Every
+ * version is immutable: saving never changes what a run or a conversation
+ * already uses, as a conversation stays on the version it started with.
+ */
 export const Route = createFileRoute("/_authed/w/$workspace/harnesses/$name/edit")({
   component: EditHarness,
 });
 
+/** The edit page: the form, its name read-only, saving as a new version. */
 function EditHarness() {
   const { workspace, name } = Route.useParams();
   const { api } = Route.useRouteContext();

@@ -27,8 +27,10 @@ func (l *callLog) calls() []string {
 	return append([]string(nil), l.names...)
 }
 
+// objectSchema is the input schema of the test server's tools.
 var objectSchema = json.RawMessage(`{"type":"object"}`)
 
+// text is the content of a tool result that holds only s.
 func text(s string) []mcp.Content { return []mcp.Content{&mcp.TextContent{Text: s}} }
 
 // newTestServer serves a few tools that cover the result shapes the adapter

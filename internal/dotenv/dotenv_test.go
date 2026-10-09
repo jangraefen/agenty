@@ -13,6 +13,8 @@ import (
 
 // These tests only use .env files they write to temporary directories.
 
+// writeEnv writes a .env file with content to dir, readable by its owner
+// only, as a file of credentials should be.
 func writeEnv(t *testing.T, dir, content string) {
 	t.Helper()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".env"), []byte(content), 0o600))

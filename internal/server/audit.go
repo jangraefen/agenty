@@ -35,7 +35,8 @@ func (s handlers) auditor(c *gin.Context) bool {
 }
 
 // ListAuditRuns lists the runs of every workspace for an auditor, newest
-// first.
+// first, filtered by workspace, harness, starter and status, and paged by
+// the ID of the last run of the page before.
 func (s handlers) ListAuditRuns(c *gin.Context, params api.ListAuditRunsParams) {
 	if !s.auditor(c) {
 		return
@@ -71,7 +72,9 @@ func (s handlers) ListAuditRuns(c *gin.Context, params api.ListAuditRunsParams) 
 	c.JSON(http.StatusOK, out)
 }
 
-// GetAuditRun shows an auditor a run of any workspace with its audit records.
+// GetAuditRun shows an auditor a run of any workspace with its audit records:
+// the tool gateway's decisions, approvals and results, never the run's
+// input, output or transcript.
 func (s handlers) GetAuditRun(c *gin.Context, id string) {
 	if !s.auditor(c) {
 		return
@@ -142,6 +145,11 @@ func (s handlers) ExportAuditLog(c *gin.Context, params api.ExportAuditLogParams
 		s.failStore(c, err)
 		return
 	}
+	// The status is sent before the first event, so an error from here on
+	// cannot change it; the missing trailer is what tells the client the
+	// export is cut short. The trailer is declared before the header is
+	// written, as net/http needs it to be, and set only once the last page
+	// is written.
 	c.Header("Content-Type", "application/jsonl")
 	c.Header("Trailer", exportComplete)
 	c.Status(http.StatusOK)
@@ -195,6 +203,8 @@ func serverStarted(cfg Config) auditlog.Event {
 		Workspaces []workspace     `json:"workspaces"`
 		MCPServers []mcpServer     `json:"mcp_servers"`
 	}
+	// Sorted by name, so two starts with the same config record the same
+	// details.
 	d.Policy = cfg.Operator.Policy
 	for _, name := range slices.Sorted(maps.Keys(cfg.Operator.Users)) {
 		d.Users = append(d.Users, user{name, cfg.Operator.Users[name].Auditor})
@@ -215,7 +225,9 @@ func serverStarted(cfg Config) auditlog.Event {
 const workspaceChange = "harness.changed"
 
 // listEvents answers with a page of events that list returns, its limit and
-// before taken from the request's parameters (before 0 for the newest).
+// before taken from the request's parameters (before 0 for the newest). The
+// three views of the audit log share it and differ only in list, which
+// decides whose events the user sees.
 func (s handlers) listEvents(c *gin.Context, limit int, before int64, list func(before int64, limit int) ([]auditlog.Event, error)) {
 	if before < 0 {
 		s.fail(c, http.StatusBadRequest, fmt.Errorf("before %d: must not be negative", before))
@@ -250,7 +262,8 @@ func (s handlers) ListMyActivity(c *gin.Context, params api.ListMyActivityParams
 }
 
 // ListWorkspaceAuditEvents lists the changes made to a workspace, for its
-// members.
+// members: only workspaceChange events, not its members' runs, which are
+// private to each of them. member has checked membership already.
 func (s handlers) ListWorkspaceAuditEvents(c *gin.Context, workspace string, params api.ListWorkspaceAuditEventsParams) {
 	s.listEvents(c, params.Limit, params.Before, func(before int64, limit int) ([]auditlog.Event, error) {
 		return s.cfg.Store.WorkspaceEvents(c.Request.Context(), workspace, workspaceChange, before, limit)

@@ -23,7 +23,8 @@ type AuditEventsAfterParams struct {
 }
 
 // The events after the one with the given id up to the one with the last,
-// in order, a page at a time.
+// in order, a page at a time. last is fixed when an export starts, so it
+// ends at that event however many are appended while it streams.
 func (q *Queries) AuditEventsAfter(ctx context.Context, arg AuditEventsAfterParams) ([]AuditEvent, error) {
 	rows, err := q.db.Query(ctx, auditEventsAfter, arg.After, arg.Last, arg.MaxRows)
 	if err != nil {
@@ -73,6 +74,9 @@ type InsertAuditEventParams struct {
 	Hash       []byte
 }
 
+// Inserts an event whose id, previous hash and hash the store computed
+// holding LockAuditLog. The primary key would refuse a second event with
+// the same id, should the lock ever be bypassed.
 func (q *Queries) InsertAuditEvent(ctx context.Context, arg InsertAuditEventParams) error {
 	_, err := q.db.Exec(ctx, insertAuditEvent,
 		arg.ID,
@@ -121,7 +125,7 @@ type ListActorEventsParams struct {
 }
 
 // What actor did, newest first, before the event named by before (0 for
-// the newest).
+// the newest). A user's own activity; served by audit_events_actor.
 func (q *Queries) ListActorEvents(ctx context.Context, arg ListActorEventsParams) ([]AuditEvent, error) {
 	rows, err := q.db.Query(ctx, listActorEvents, arg.Actor, arg.Before, arg.MaxRows)
 	if err != nil {
@@ -176,7 +180,8 @@ type ListAuditEventsParams struct {
 // For auditors only.
 // The events of the audit log, newest first, before the one named by before
 // when set, optionally by one actor, in one workspace, with one action, or
-// about one run.
+// about one run. A NULL argument matches every event, so one query serves
+// every combination of filters.
 func (q *Queries) ListAuditEvents(ctx context.Context, arg ListAuditEventsParams) ([]AuditEvent, error) {
 	rows, err := q.db.Query(ctx, listAuditEvents,
 		arg.Actor,
@@ -231,7 +236,8 @@ type ListWorkspaceEventsParams struct {
 }
 
 // The events of a workspace with an action, newest first, before the event
-// named by before (0 for the newest).
+// named by before (0 for the newest). A workspace's changes for its
+// members; served by audit_events_workspace_action.
 func (q *Queries) ListWorkspaceEvents(ctx context.Context, arg ListWorkspaceEventsParams) ([]AuditEvent, error) {
 	rows, err := q.db.Query(ctx, listWorkspaceEvents,
 		arg.Workspace,
@@ -341,7 +347,8 @@ type RunOwnerRow struct {
 	Workspace string
 }
 
-// Who started the run, and in which workspace, for its events.
+// Who started the run, and in which workspace, for its events. No row for
+// a run that is not stored, which makes recording for it fail.
 func (q *Queries) RunOwner(ctx context.Context, id string) (RunOwnerRow, error) {
 	row := q.db.QueryRow(ctx, runOwner, id)
 	var i RunOwnerRow
@@ -361,7 +368,8 @@ type ToolEventsOfRunRow struct {
 	RecordedAt time.Time
 }
 
-// What the tool gateway recorded for a run, in order.
+// What the tool gateway recorded for a run, in order. Uses the partial
+// index audit_events_run_id.
 func (q *Queries) ToolEventsOfRun(ctx context.Context, runID pgtype.Text) ([]ToolEventsOfRunRow, error) {
 	rows, err := q.db.Query(ctx, toolEventsOfRun, runID)
 	if err != nil {

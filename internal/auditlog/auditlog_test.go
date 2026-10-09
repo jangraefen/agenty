@@ -39,6 +39,7 @@ func chain(t *testing.T, prev auditlog.Hash, firstID int64, details ...string) [
 	return out
 }
 
+// export writes events as an export would hold them.
 func export(t *testing.T, events []auditlog.Event) string {
 	t.Helper()
 	var b bytes.Buffer

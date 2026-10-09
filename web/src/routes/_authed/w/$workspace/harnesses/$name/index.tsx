@@ -7,10 +7,24 @@ import { buttonVariants } from "@/components/ui/button";
 import { formatTime } from "@/lib/format";
 import { harnessYaml } from "@/lib/harness-yaml";
 
+/**
+ * A harness's page, at `/w/{ws}/harnesses/{name}`: its latest version, read
+ * only, from the cache the parent route (route.tsx) filled.
+ *
+ * It shows what the harness gives its agent: its instructions, model, limits,
+ * granted tools and policy modules, then the whole harness as YAML
+ * (lib/harness-yaml), as a harness file would hold it. New conversation
+ * opens the new chat page with this harness picked (`/?harness=<ws>/<name>`);
+ * Edit opens the form that saves a new version.
+ *
+ * Instructions and policy are text a builder wrote; like everything shown,
+ * they are rendered as text, never as HTML.
+ */
 export const Route = createFileRoute("/_authed/w/$workspace/harnesses/$name/")({
   component: HarnessPage,
 });
 
+/** The harness page: its header with actions, then its fields, section by section. */
 function HarnessPage() {
   const { workspace, name } = Route.useParams();
   const { api } = Route.useRouteContext();
@@ -63,6 +77,7 @@ function HarnessPage() {
         <h2 id={`${id}-tools`} className="text-sm font-semibold">
           Granted tools
         </h2>
+        {/* Default deny: a harness with no granted tool can call none. */}
         {harness.tools === undefined || harness.tools.length === 0 ? (
           <p className="mt-1 text-sm text-muted-foreground">None: every tool call is denied.</p>
         ) : (

@@ -4,6 +4,14 @@
 -- conversation is one user's; any other run starts one of its own. It is
 -- returned as stored, before a worker may claim it, with its harness; no
 -- row is returned for a run that follows no run of its starter.
+--
+-- The one-row derived table "wanted" holds the run to follow, or NULL; the
+-- LEFT JOIN finds it only among the starter's runs, and the WHERE keeps the
+-- row when nothing is to be followed or the run to follow was found. A
+-- follow-up takes its conversation's id; a first run names its own
+-- conversation. The UNIQUE follows column refuses a second follower. The
+-- harness's name, version and workspace come from subqueries, as RETURNING
+-- cannot join.
 INSERT INTO runs (id, harness_version_id, input, started_by, conversation_id, follows)
 SELECT sqlc.arg(id)::text, sqlc.arg(harness_version_id)::bigint, sqlc.arg(input)::text, sqlc.arg(started_by)::text,
     COALESCE(f.conversation_id, sqlc.arg(id)::text), f.id
@@ -16,7 +24,9 @@ RETURNING sqlc.embed(runs),
     (SELECT hv.workspace FROM harness_versions hv WHERE hv.id = runs.harness_version_id)::text AS workspace;
 
 -- name: FinishRun :one
--- The run's end, if it was running; it returns the run's workspace.
+-- The run's end, if it was running; it returns the run's workspace, for its
+-- run.finished event. No row for a run that is not running, so a run ends
+-- once.
 UPDATE runs
 SET status = $2, output = $3, steps = $4, error = $5, finished_at = now()
 FROM harness_versions
@@ -25,6 +35,7 @@ RETURNING harness_versions.workspace;
 
 -- name: GetRun :one
 -- A run is found only in the workspace of the harness version it runs.
+-- Callers that act for a user use GetOwnRun.
 SELECT sqlc.embed(runs), harness_versions.name AS harness, harness_versions.version AS harness_version
 FROM runs
 JOIN harness_versions ON harness_versions.id = runs.harness_version_id
@@ -43,7 +54,8 @@ WHERE runs.id = sqlc.arg(id) AND harness_versions.workspace = sqlc.arg(workspace
 -- The runs of every workspace, newest first, each with its workspace,
 -- optionally of one workspace, harness, starter or status, starting after
 -- the run named by before. A before that is not a run matches nothing. For
--- auditors only.
+-- auditors only. The page cursor is a run's (created_at, id), compared as a
+-- row, which matches the ordering and the index runs_created_at.
 SELECT sqlc.embed(runs), harness_versions.name AS harness, harness_versions.version AS harness_version,
        harness_versions.workspace
 FROM runs
@@ -66,6 +78,10 @@ JOIN harness_versions ON harness_versions.id = runs.harness_version_id
 WHERE runs.id = sqlc.arg(id);
 
 -- name: FailRunningRuns :many
+-- Fails every run still marked running, at a server's start: one server
+-- serves a database, so these were the earlier server's, and their
+-- goroutines are gone. It returns each run's id, steps and workspace for
+-- its run.finished event.
 UPDATE runs
 SET status = 'failed', error = $1, finished_at = now()
 FROM harness_versions
@@ -74,7 +90,8 @@ RETURNING runs.id, runs.steps, harness_versions.workspace;
 
 -- name: ConversationRuns :many
 -- The runs of the conversation the run named by id belongs to, oldest first,
--- if that run is one of the workspace's.
+-- if that run is one of the workspace's. Ordered by creation, which is the
+-- order runs follow one another in; served by runs_conversation_id.
 SELECT sqlc.embed(runs), harness_versions.name AS harness, harness_versions.version AS harness_version
 FROM runs
 JOIN harness_versions ON harness_versions.id = runs.harness_version_id
@@ -85,6 +102,15 @@ ORDER BY runs.created_at, runs.id;
 -- name: ClaimRun :one
 -- Marks the oldest queued run as running and returns it with its workspace.
 -- Concurrent claims skip each other's rows, so each run is claimed once.
+--
+-- The subquery picks the oldest queued run from runs_queued and locks it;
+-- SKIP LOCKED passes over a run another claim has locked instead of
+-- waiting for it, so workers never queue behind each other. FOR NO KEY
+-- UPDATE, the lock an update of non-key columns takes anyway, is used
+-- rather than FOR UPDATE: it does not block the foreign-key checks of rows
+-- that refer to the run, such as its messages and audit events. The outer
+-- update repeats status = 'queued', so it never moves a run that is in any
+-- other state.
 WITH claimed AS (
     UPDATE runs
     SET status = 'running'
@@ -103,6 +129,8 @@ JOIN harness_versions ON harness_versions.id = claimed.harness_version_id;
 -- name: IdleRuns :many
 -- The runs no worker holds that have not finished, queued or waiting, oldest
 -- first, with their workspaces, harnesses and the users who started them.
+-- A starting server reads them to give each its event stream again, and to
+-- cancel those of users who left the run's workspace.
 SELECT runs.id, runs.status, harness_versions.workspace, harness_versions.name AS harness, runs.started_by AS owner
 FROM runs
 JOIN harness_versions ON harness_versions.id = runs.harness_version_id
@@ -110,6 +138,10 @@ WHERE runs.status IN ('queued', 'waiting')
 ORDER BY runs.created_at, runs.id;
 
 -- name: CancelIdleRun :many
+-- Cancels a run no worker holds, queued or waiting, and returns its steps
+-- and workspace for its run.finished event; no row for any other run. A
+-- running run is stopped by its worker instead. :many, not :one, so no row
+-- is a result rather than an error.
 UPDATE runs
 SET status = 'cancelled', error = $2, finished_at = now()
 FROM harness_versions
@@ -117,6 +149,8 @@ WHERE runs.id = $1 AND runs.status IN ('queued', 'waiting') AND harness_versions
 RETURNING runs.steps, harness_versions.workspace;
 
 -- name: SetRunDigests :execrows
+-- Records what a running run sends the model, which later follow-ups compare
+-- with their own.
 UPDATE runs
 SET prompt_digest = $2, history_digest = $3
 WHERE id = $1 AND status = 'running';
@@ -126,6 +160,10 @@ WHERE id = $1 AND status = 'running';
 -- first, after the one with before_at and before_id when they are
 -- set. A conversation is its first run, whose ID names it, and its latest
 -- run, the one no run follows, whose creation is its latest activity.
+--
+-- The cursor holds the previous page's last values, not a run to look them
+-- up by, as a follow-up moves a conversation's latest activity between
+-- reads. First runs are found by runs_first_by_starter.
 SELECT first.id, harness_versions.workspace, harness_versions.name AS harness,
        left(first.input, 100)::text AS title, latest.status, latest.created_at AS updated_at
 FROM runs first

@@ -1,8 +1,30 @@
 -- +goose Up
 
+-- The whole schema of Agenty's state. Until the first release it is this one
+-- migration, rewritten rather than migrated (see docs/IDEA.md); goose applies
+-- it when the store opens.
+--
+-- Tables and how they refer to each other:
+--
+--   harness_versions  1 ─< runs           (runs.harness_version_id)
+--   runs              1 ─o runs           (runs.follows, at most one follower)
+--   runs              1 ─< run_messages   (run_messages.run_id)
+--   runs              1 ─< approvals      (approvals.run_id)
+--   runs              1 ─< audit_events   (audit_events.run_id, nullable)
+--
+-- There is no table of workspaces, users or conversations: workspaces and
+-- users come from the operator config, a run's workspace is that of its
+-- harness version, and a conversation is the chain of runs that follow one
+-- another. Names of users and workspaces are therefore stored as text, not
+-- as foreign keys.
+
 -- harness_versions holds every harness ever applied, in the workspace it
 -- belongs to, where its name is unique. A version is never changed;
 -- applying a changed harness adds the next version.
+--
+-- id identifies a version across all harnesses and is what runs refer to, so
+-- a run keeps pointing at the exact definition it ran. definition is the
+-- harness as canonical JSON; jsonb suffices, as no hash covers its bytes.
 CREATE TABLE harness_versions (
     id         bigint      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     workspace  text        NOT NULL,
@@ -10,6 +32,7 @@ CREATE TABLE harness_versions (
     version    integer     NOT NULL CHECK (version > 0),
     definition jsonb       NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
+    -- Also serves the lookup of a harness's latest version.
     UNIQUE (workspace, name, version)
 );
 
@@ -30,6 +53,14 @@ CREATE TABLE harness_versions (
 -- earlier runs' replies, as the provider keeps them, can be sent again: some
 -- providers bind a reply's reasoning to exactly what came before it. The
 -- token columns sum those of the run's messages.
+--
+-- id is chosen by the server, not generated here. started_by is the user who
+-- started the run; the conversation's owner is the starter of its first
+-- run, and a run may follow only a run of its own starter, so every run of a
+-- conversation has that one starter. conversation_id is the first run's id,
+-- stored on every run so a conversation is read with one index lookup
+-- rather than by walking follows. follows is UNIQUE, which is what keeps a
+-- conversation from branching, even under concurrent follow-ups.
 CREATE TABLE runs (
     id                 text        PRIMARY KEY,
     harness_version_id bigint      NOT NULL REFERENCES harness_versions (id),
@@ -56,7 +87,12 @@ CREATE TABLE runs (
 -- conversations by the first runs they started.
 CREATE INDEX runs_created_at ON runs (created_at DESC, id DESC);
 CREATE INDEX runs_conversation_id ON runs (conversation_id, created_at, id);
+-- runs_queued is the queue's index: a claim takes the oldest queued run
+-- from it, and as it holds only queued rows, it stays small however many
+-- runs have finished.
 CREATE INDEX runs_queued ON runs (created_at, id) WHERE status = 'queued';
+-- runs_first_by_starter holds only first runs, which is what a user's list
+-- of conversations starts from.
 CREATE INDEX runs_first_by_starter ON runs (started_by) WHERE id = conversation_id;
 
 -- run_messages is the transcript of each run: its conversation with the
@@ -68,6 +104,9 @@ CREATE INDEX runs_first_by_starter ON runs (started_by) WHERE id = conversation_
 -- altered marks a message stored other than as the model saw or wrote it,
 -- because redaction changed it. The tokens are those of the model call that
 -- wrote the message, which only replies have.
+--
+-- The primary key (run_id, position) means a position is written once: a
+-- message is never overwritten, and the transcript reads back in order.
 CREATE TABLE run_messages (
     run_id             text        NOT NULL REFERENCES runs (id),
     position           integer     NOT NULL CHECK (position >= 0),
@@ -92,6 +131,11 @@ CREATE TABLE run_messages (
 -- results of the calls before it in that reply. A request is answered once;
 -- one nobody answers before it expires is rejected, and one whose run is
 -- cancelled is withdrawn.
+--
+-- args is json, as the transcript's tool calls are, to keep the arguments
+-- exactly as the call had them. reasons and results are written by the
+-- store itself, always as lists, so jsonb suffices. approver is empty until
+-- someone answers, and stays empty for an expired or withdrawn request.
 CREATE TABLE approvals (
     id          text        PRIMARY KEY,
     run_id      text        NOT NULL REFERENCES runs (id),
@@ -112,7 +156,10 @@ CREATE TABLE approvals (
 
 -- A run waits for one call at a time.
 CREATE UNIQUE INDEX approvals_pending ON approvals (run_id) WHERE status = 'pending';
+-- The next pending request to expire, which the server sleeps until, and
+-- those that have expired.
 CREATE INDEX approvals_expiring ON approvals (expires_at) WHERE status = 'pending';
+-- A run's latest request.
 CREATE INDEX approvals_of_run ON approvals (run_id, created_at);
 
 -- audit_events is the audit log: every event in the order it was recorded,
@@ -120,6 +167,15 @@ CREATE INDEX approvals_of_run ON approvals (run_id, created_at);
 -- it. ids run from 1 without gaps. details is json, not jsonb, so it keeps
 -- its canonical text, which the hash covers. Nothing that refers to a run
 -- cascades, so no run's deletion takes its events along.
+--
+-- id is not an identity column: the store assigns it, holding a lock, as the
+-- latest id plus one, because a sequence would leave gaps when a
+-- transaction rolls back, and gaps would look like removed events. actor is
+-- empty for the server itself, and workspace for an event of the whole
+-- organisation. run_id names the run an event is about; target names what
+-- else it acted on, such as a harness. prev_hash is the hash of the event
+-- before (all zeros for the first), and hash is SHA-256 over this event's
+-- fields and prev_hash, so changing any event breaks every link after it.
 CREATE TABLE audit_events (
     id          bigint      PRIMARY KEY,
     recorded_at timestamptz NOT NULL,
@@ -139,8 +195,9 @@ CREATE INDEX audit_events_run_id ON audit_events (run_id, id) WHERE run_id IS NO
 CREATE INDEX audit_events_actor ON audit_events (actor, id);
 CREATE INDEX audit_events_workspace_action ON audit_events (workspace, action, id);
 
--- The log is append-only: no event is changed or removed, one by one or all
--- at once. An owner of the table can still drop these triggers; the hash
+-- The log is append-only (trust-model guarantee 9): no event is changed or
+-- removed, one by one or all at once. Row triggers catch UPDATE and DELETE;
+-- TRUNCATE fires no row triggers, so a statement trigger catches it. An owner of the table can still drop these triggers; the hash
 -- chain, held against an anchor kept elsewhere, shows what was done then.
 -- +goose StatementBegin
 CREATE FUNCTION audit_events_refuse() RETURNS trigger LANGUAGE plpgsql AS $$

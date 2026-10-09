@@ -1,3 +1,9 @@
+/**
+ * The mocked API for unit tests: an MSW server intercepting the typed
+ * client's fetches to apiUrl, and helpers for the handlers most tests need.
+ * Responses are typed with the spec's schemas (re-exported as Schemas), so a
+ * mock that drifts from the API fails tsc.
+ */
 import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
 import type { Schemas } from "@/api/client";
@@ -26,6 +32,7 @@ export function conversationsHandler(
 // the user's conversations, none unless a test says otherwise.
 export const server = setupServer(conversationsHandler({ "": { conversations: [] } }));
 
+/** The token tests sign in with; meHandler accepts it alone. */
 export const TOKEN = "a-test-token-of-at-least-32-characters";
 
 // Answers GET /v1/me with me, no auditor unless it says so, for TOKEN and 401
@@ -40,7 +47,12 @@ export function meHandler(me: Omit<Schemas["Me"], "auditor"> & { auditor?: boole
   });
 }
 
-// A server-sent event stream that tests write to as the run goes.
+/**
+ * A server-sent event stream that tests write to as the run goes, so they
+ * can check what the chat shows between events. send writes one event in
+ * the wire format; close ends the stream as a server would, fail as a
+ * dropped connection would.
+ */
 export function liveEventStream() {
   const encoder = new TextEncoder();
   let controller: ReadableStreamDefaultController<Uint8Array> | undefined;

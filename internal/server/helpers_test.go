@@ -66,6 +66,8 @@ type fixture struct {
 	models []model.Model
 }
 
+// options configures the fixture's server; the zero value is the default
+// operator config with scripted models.
 type options struct {
 	policy   []policy.Module
 	newModel func(harness.Model) (model.Model, error)
@@ -83,6 +85,8 @@ type options struct {
 	workspaces map[string]config.Workspace
 }
 
+// newFixture returns a fixture on a fresh database from storetest, its files
+// server offering files_read and files_write, served as opts configures.
 func newFixture(t *testing.T, opts options) *fixture {
 	t.Helper()
 	f := &fixture{
@@ -188,6 +192,8 @@ func (f *fixture) script(steps ...modeltest.Step) *modeltest.Scripted {
 	return m
 }
 
+// nextModel is the server's NewModel: it hands out the models script queued,
+// in order, one per run, and an empty scripted model once none is left.
 func (f *fixture) nextModel(harness.Model) (model.Model, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -283,6 +289,7 @@ type stream struct {
 	events chan sse
 }
 
+// events reads a run of home's events as alice.
 func (f *fixture) events(t *testing.T, runID string) *stream {
 	t.Helper()
 	return f.eventsAs(t, aliceToken, runID)
@@ -315,6 +322,9 @@ func (f *fixture) eventsAfter(t *testing.T, bearer, runID, lastID string) *strea
 	return s
 }
 
+// read parses the response body into events, sent on s.events, until the
+// body ends, then closes s.events. It runs in its own goroutine, so next and
+// rest can time out instead of blocking on the body.
 func (s *stream) read() {
 	defer close(s.events)
 	var e sse
@@ -367,6 +377,7 @@ func (s *stream) rest() []sse {
 	}
 }
 
+// decodeAs decodes an event's JSON data as a T.
 func decodeAs[T any](t *testing.T, e sse) T {
 	t.Helper()
 	var v T
@@ -380,12 +391,14 @@ type syncBuffer struct {
 	buf bytes.Buffer
 }
 
+// Write appends p under the lock.
 func (b *syncBuffer) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.Write(p)
 }
 
+// String returns what was written so far.
 func (b *syncBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()

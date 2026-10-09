@@ -7,10 +7,20 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { type ThemeChoice, themeChoices, useTheme } from "@/theme/theme";
 
+/**
+ * The theme menu, at the foot of the sidebar and on the sign-in page. The
+ * choice is a per-browser preference kept by theme/theme.ts, which applies
+ * it as the data-theme attribute of the page's root element.
+ */
+
+/** The menu's name for each choice. */
 const labels: Record<ThemeChoice, string> = { light: "Light", dark: "Dark", system: "System" };
 
-// ThemeMenu chooses the light or dark theme, or the operating system's. Not
-// modal, so the page stays usable while it is open.
+/**
+ * ThemeMenu chooses the light or dark theme, or the operating system's. Not
+ * modal, so the page stays usable while it is open. A radio group shows the
+ * current choice; choosing tells the theme, which keeps it and applies it.
+ */
 export function ThemeMenu() {
   const { theme, choice } = useTheme();
   return (
@@ -22,6 +32,8 @@ export function ThemeMenu() {
       <DropdownMenuContent align="end" className="min-w-32">
         <DropdownMenuRadioGroup
           value={choice}
+          // Radix hands the value back as a plain string: only one of the
+          // known choices is passed on.
           onValueChange={(value) => {
             const chosen = themeChoices.find((option) => option === value);
             if (chosen !== undefined) {

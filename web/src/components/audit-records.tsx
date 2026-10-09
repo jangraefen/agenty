@@ -2,15 +2,27 @@ import type { Schemas } from "@/api/client";
 import { Json } from "@/components/json";
 import { formatTime } from "@/lib/format";
 
+/**
+ * What the gateway recorded for a run's tool calls, as an auditor's run page
+ * (routes/_authed/audit/runs.$runId.tsx) shows it: for each call its policy
+ * decision, its approval if it needed one, and its result.
+ */
+
+/** The name of each kind of record, for people. */
 const eventLabels: Record<Schemas["AuditEvent"], string> = {
   decision: "Policy decision",
   approval: "Approval",
   result: "Result",
 };
 
-// AuditRecords lists what the gateway recorded for a run's tool calls, in
-// the order it recorded them. Arguments and results come from the model and
-// tools, so they are shown as text only.
+/**
+ * AuditRecords lists what the gateway recorded for a run's tool calls, in
+ * the order it recorded them. Arguments and results come from the model and
+ * tools, so they are shown as text only.
+ *
+ * The arguments show with the decision record, the first of a call's, and
+ * not again with its approval or result; an approval names who answered it.
+ */
 export function AuditRecords({ records }: { records: Schemas["AuditRecord"][] }) {
   if (records.length === 0) {
     return <p className="text-sm text-muted-foreground">No tool calls.</p>;

@@ -4,12 +4,22 @@ import { harnessesQuery } from "@/api/queries";
 import { buttonVariants } from "@/components/ui/button";
 import { formatTime } from "@/lib/format";
 
+/**
+ * The harnesses of a workspace, at `/w/{ws}/harnesses`, from the sidebar's
+ * Harnesses link: each harness's latest version, with its model, its number
+ * of granted tools and when it last changed, linking to its page.
+ *
+ * The loader fills harnessesQuery before the page shows, the same query the
+ * overview and the new chat page's picker read, so a harness saved through
+ * useSaveHarness, which invalidates it, shows in all three.
+ */
 export const Route = createFileRoute("/_authed/w/$workspace/harnesses/")({
   loader: ({ context: { queryClient, api }, params }) =>
     queryClient.ensureQueryData(harnessesQuery(api, params.workspace)),
   component: Harnesses,
 });
 
+/** The harness list: a table, or a note on how to make the first harness. */
 function Harnesses() {
   const { workspace } = Route.useParams();
   const { api } = Route.useRouteContext();

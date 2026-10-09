@@ -2,6 +2,14 @@
 // development. Variables that are already set win, so the real environment
 // always overrides the file. The file usually holds credentials: never log
 // what it loads.
+//
+// `agenty` (cmd/agenty) calls Load for the working directory at start, so
+// `task serve` and the CLI find credentials such as ANTHROPIC_API_KEY or
+// AGENTY_TOKEN without exporting them. Tests that need one, such as the
+// optional real-model smoke test, call LoadModuleRoot. Values loaded become
+// ordinary environment variables; the operator config reads them as
+// {env: NAME}, which treats them as secrets and redacts them everywhere
+// (trust-model guarantee 5). The file itself is git-ignored.
 package dotenv
 
 import (
@@ -15,7 +23,9 @@ import (
 )
 
 // Load loads the .env file in dir, if there is one. A missing file is not an
-// error.
+// error, as a deployment sets its environment directly; any other failure
+// to read it is, so a broken file is never mistaken for an absent one.
+// godotenv.Load leaves variables that are already set alone.
 func Load(dir string) error {
 	path := filepath.Join(dir, ".env")
 	if _, err := os.Stat(path); err != nil {
@@ -38,6 +48,8 @@ func LoadModuleRoot() error {
 	if err != nil {
 		return fmt.Errorf("dotenv: %w", err)
 	}
+	// Walk up from the working directory to the first directory with a
+	// go.mod; reaching the file system's root without one is an error.
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
 			return Load(dir)

@@ -1,10 +1,3 @@
-// Package server is Agenty's HTTP API: it stores harnesses, runs them, and
-// streams each run's events, approval requests included, to its clients.
-// Runs execute in the server's own process. schema/openapi.yaml defines the
-// routes, which oapi-codegen generates the gin interface of into this package.
-//
-// Every request signs in with a configured user's bearer token, and sees
-// only the workspaces that user is a member of.
 package server
 
 import (
@@ -34,7 +27,10 @@ import (
 	"github.com/jangraefen/agenty/internal/toolgateway"
 )
 
-// Config configures a Server.
+// Config configures a Server: the store it keeps its state in, the operator
+// config read once at the start, and the two seams tests replace, the model
+// and the tool servers. New checks that the required fields are set and fills
+// in the seams left nil.
 type Config struct {
 	Store    *store.Store
 	Operator *config.Config
@@ -52,14 +48,26 @@ type Config struct {
 }
 
 // Server serves the API. Close it to stop its runs.
+//
+// It is the centre of the package: the handlers embed it, the workers and
+// the expire goroutine run on it, and runs holds the job, a cancellable
+// context, of every run it has not finished. Its state is the operator
+// config, fixed for its life, and the store; what it holds in memory is only
+// what a restart may lose: the jobs, rebuilt from the store by New, and the
+// MCP servers kept for conversations, which a conversation's next run starts
+// anew. A run's events live in the audit log, not here.
 type Server struct {
-	cfg    Config
+	// cfg is the Config New was given, its seams filled in and its logger
+	// redacting.
+	cfg Config
+	// engine is the gin engine routes built, which Handler returns.
 	engine *gin.Engine
 
 	// ctx is the context of every run; Close cancels it.
 	ctx    context.Context
 	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	// wg waits for the workers and the expire goroutine.
+	wg sync.WaitGroup
 
 	// tokens maps each user's token, as a SHA-256 hash, to the user.
 	tokens []userToken
@@ -91,6 +99,13 @@ var errClosed = errors.New("the server is stopping")
 // New returns a Server for cfg and starts its workers. Runs left running by an
 // earlier server cannot continue, so New marks them as failed; the runs it
 // left queued are taken up.
+//
+// In order, it checks cfg, wraps the logger in the redactor, compiles central
+// policy, records server.started, fails the runs left running, rebuilds the
+// jobs of queued and waiting runs (cancelling those of users who left), and
+// only then starts the workers and the expire goroutine, so no worker claims
+// a run that has no job yet. ctx bounds only this start: the
+// server's runs live on a context of their own, which Close cancels.
 func New(ctx context.Context, cfg Config) (*Server, error) {
 	switch {
 	case cfg.Store == nil:
@@ -104,6 +119,8 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	}
 	// Whatever logger the server is given, it logs no credentials.
 	cfg.Logger = slog.New(cfg.Resolved.Redactor.Handler(cfg.Logger.Handler()))
+	// The seams default to production: the configured Anthropic provider,
+	// the only one so far, and MCP servers started as subprocesses.
 	if cfg.NewModel == nil {
 		cfg.NewModel = func(m harness.Model) (model.Model, error) {
 			if m.Provider != "anthropic" {
@@ -126,9 +143,15 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	if _, err := policy.New(ctx, policy.Layer{Name: "central", Modules: cfg.Operator.Policy}); err != nil {
 		return nil, fmt.Errorf("server: %w", err)
 	}
+	// The config in force is recorded before anything acts under it, so every
+	// later event is read against the latest server.started before it. A
+	// server that cannot record it does not start.
 	if _, err := cfg.Store.AppendEvent(ctx, serverStarted(cfg)); err != nil {
 		return nil, fmt.Errorf("server: %w", err)
 	}
+	// One server serves a database, so a run still marked running was the
+	// earlier server's, and its goroutine is gone. It is failed, never
+	// retried: a tool may not be idempotent.
 	n, err := cfg.Store.FailRunningRuns(ctx, errStopped)
 	if err != nil {
 		return nil, fmt.Errorf("server: %w", err)
@@ -137,6 +160,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		cfg.Logger.Warn("marked runs of an earlier server as failed", "runs", n)
 	}
 
+	// The pool keeps each MCP server for its own idle timeout.
 	idleTimeout := make(map[string]time.Duration, len(cfg.Operator.MCPServers))
 	for name, srv := range cfg.Operator.MCPServers {
 		idleTimeout[name] = srv.IdleTimeoutOrDefault()
@@ -145,6 +169,8 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("server: %w", err)
 	}
+	// Runs outlive the start's context, which may be a request's or a
+	// signal's; only Close ends them.
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	workers := cfg.Operator.Runs.WorkersOrDefault()
 	s := &Server{
@@ -175,6 +201,8 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 			queued++
 		}
 	}
+	// The workers wait for a signal, so one is sent for each run left
+	// queued, up to one per worker: a woken worker claims until none is left.
 	for range workers {
 		s.wg.Go(s.work)
 	}
@@ -186,7 +214,8 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	return s, nil
 }
 
-// Handler returns the API's HTTP handler.
+// Handler returns the API's HTTP handler: the gin engine routes built, with
+// its middleware. `agenty serve` serves it on a loopback address.
 func (s *Server) Handler() http.Handler {
 	return s.engine
 }
@@ -195,6 +224,9 @@ func (s *Server) Handler() http.Handler {
 // finished, then stops the MCP servers kept for conversations. No run is
 // queued after it. Event streams end with it; those of queued and waiting
 // runs, which the next server takes up, end without the run's end.
+//
+// Setting closed under the lock first means register refuses new runs, so
+// no worker is left with a run after Wait returns.
 func (s *Server) Close() {
 	s.mu.Lock()
 	closed := s.closed
@@ -210,6 +242,10 @@ func (s *Server) Close() {
 	}
 }
 
+// routes builds the gin engine: the global middleware every request passes,
+// a 404 for unknown routes, and the generated routes, each behind the
+// membership check and with parameter errors answered through fail like
+// every other error.
 func (s *Server) routes() *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -282,6 +318,10 @@ func isLocalHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// logRequests logs every request once it is answered: method, path, user,
+// status and duration. It logs the path, not the query or body, and the
+// server's logger redacts what it is given, so a credential in a request is
+// not logged.
 func (s *Server) logRequests(c *gin.Context) {
 	start := time.Now()
 	c.Next()
@@ -289,7 +329,10 @@ func (s *Server) logRequests(c *gin.Context) {
 }
 
 // fail responds with an error, redacted. Errors the client did not cause are
-// logged.
+// logged. It aborts the gin chain, so middleware that fails stops the request
+// there. Every error answer of the package goes through it, so no error text,
+// which may quote a tool's output or a configured value, reaches a client
+// unredacted.
 func (s *Server) fail(c *gin.Context, status int, err error) {
 	msg := s.cfg.Resolved.Redactor.String(err.Error())
 	if status >= http.StatusInternalServerError {
@@ -312,6 +355,8 @@ func (s *Server) failStore(c *gin.Context, err error) {
 // preflight, out.
 var errNotJSON = errors.New("the request body must be application/json")
 
+// failDecode responds to an error of decode: 415 for a body not declared as
+// JSON, 400 for one that does not decode.
 func (s *Server) failDecode(c *gin.Context, err error) {
 	if errors.Is(err, errNotJSON) {
 		s.fail(c, http.StatusUnsupportedMediaType, err)
@@ -320,7 +365,9 @@ func (s *Server) failDecode(c *gin.Context, err error) {
 	s.fail(c, http.StatusBadRequest, err)
 }
 
-// decode reads the JSON body into v, rejecting unknown fields.
+// decode reads the JSON body into v, rejecting unknown fields, so a
+// misspelt field is an error rather than silently ignored. The body must be
+// declared as application/json; see errNotJSON.
 func decode(c *gin.Context, v any) error {
 	if mt, _, err := mime.ParseMediaType(c.GetHeader("Content-Type")); err != nil || mt != "application/json" {
 		return errNotJSON

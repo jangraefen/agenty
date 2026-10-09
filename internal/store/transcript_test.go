@@ -146,6 +146,8 @@ func TestTranscript_KeepsUsage(t *testing.T) {
 	assert.Zero(t, r2.Usage)
 }
 
+// TestTranscript_StoreDown: with the database gone, appending and reading a
+// transcript are errors, never a silent loss or an empty transcript.
 func TestTranscript_StoreDown(t *testing.T) {
 	ctx := context.Background()
 	s := storetest.New(t)

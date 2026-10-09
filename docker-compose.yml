@@ -16,5 +16,11 @@ services:
       timeout: 5s
       retries: 30
 
+  # Development identity provider (OIDC); the issuer is http://localhost:8080/agenty.
+  mock-oidc:
+    image: ghcr.io/navikt/mock-oauth2-server:6.0.5
+    ports:
+      - "127.0.0.1:8080:8080"
+
 volumes:
   postgres-data:

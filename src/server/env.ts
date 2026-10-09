@@ -2,9 +2,15 @@ import "server-only";
 import { z } from "zod";
 
 const postgresUrl = z.url({ protocol: /^postgres(ql)?$/, error: "must be a postgres:// URL" });
+const httpUrl = z.url({ protocol: /^https?$/, error: "must be an http(s) URL" });
 
 const envSchema = z.object({
   DATABASE_URL: postgresUrl,
+  BETTER_AUTH_SECRET: z.string().min(32, "must be at least 32 characters"),
+  BETTER_AUTH_URL: httpUrl,
+  OIDC_DISCOVERY_URL: httpUrl,
+  OIDC_CLIENT_ID: z.string().min(1, "must be set"),
+  OIDC_CLIENT_SECRET: z.string().min(1, "must be set"),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
 });
 

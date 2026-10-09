@@ -78,14 +78,15 @@ flowchart TB
     server --> agent
     server --> mcptool
     server --> config
-    server -- "builds the run's model" --> model
 
     agent["internal/agent<br/>the agent loop, suspend and resume"] --> model
     agent --> toolgateway
     agent --> policy
     agent --> harness["internal/harness<br/>the builder's YAML"]
 
-    model["internal/model<br/>provider-neutral messages"] --> anthropic["internal/model/anthropic<br/>official SDK adapter"]
+    model["internal/model<br/>provider-neutral messages"]
+    anthropic["internal/model/anthropic<br/>official SDK adapter"] -. "implements Model" .-> model
+    server -- "builds the run's model" --> anthropic
 
     toolgateway["internal/toolgateway<br/>grant · limit · policy · record · execute · redact"] --> secret
     mcptool["internal/mcptool<br/>MCP servers as ToolServers"] -. "implements ToolServer" .-> toolgateway
@@ -158,7 +159,7 @@ stateDiagram-v2
     cancelled --> [*]
 ```
 
-Queued and waiting runs outlive a restart; a running one does not, and is failed by the next server's start. A follow-up starts a new run of the harness version the conversation started with, so a conversation is a chain of runs, each of which stays its own unit of audit, limits and approvals. A conversation's MCP servers stay running between its runs, kept in a pool keyed by conversation and never shared with another one.
+Queued and waiting runs outlive a restart; a running one does not: it is failed when the server stops, or by the next server's start if the last one crashed. A follow-up starts a new run of the harness version the conversation started with, so a conversation is a chain of runs, each of which stays its own unit of audit, limits and approvals. A conversation's MCP servers stay running between its runs, kept in a pool keyed by conversation and never shared with another one.
 
 ### Inside `agenty serve`
 
@@ -219,7 +220,7 @@ erDiagram
         int position PK
         text role
         json provider_data "the model's own form, never shown"
-        bool altered "redaction changed it"
+        bool altered "stored other than as the model saw it"
     }
     approvals {
         text id PK
@@ -234,7 +235,7 @@ erDiagram
         text actor
         text action
         text workspace
-        jsonb details "canonical"
+        json details "canonical text, as hashed"
         bytea prev_hash
         bytea hash "SHA-256 over prev_hash and the event"
     }

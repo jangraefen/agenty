@@ -10,8 +10,8 @@ import (
 // thing everywhere.
 type Decision string
 
-// The decisions, from loosest to strictest. Policy layers combine to the
-// strictest one (guarantee 4).
+// The three decisions. Policy layers combine to the strictest one,
+// deny > require_approval > allow (guarantee 4).
 const (
 	Allow           Decision = "allow"
 	Deny            Decision = "deny"
@@ -21,8 +21,9 @@ const (
 // Event says which step of a call a Record describes.
 type Event string
 
-// The events of a call, in the order they are recorded. The first two are
-// written before the tool runs, so a call that executed always has them.
+// The events of a call, in the order they are recorded. The decision, and the
+// approval where policy required one, are written before the tool runs, so a
+// call that executed always has them.
 const (
 	// EventDecision is recorded for every call, before anything executes.
 	EventDecision Event = "decision"

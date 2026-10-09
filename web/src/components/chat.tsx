@@ -29,7 +29,7 @@ export function ConversationChat({ id, focus }: { id: string; focus?: string | u
   // The chat of a workspace the user left is read-only.
   const readOnly = !me.workspaces.includes(workspace);
   const latest = latestRun(conversation.data);
-  const events = useQuery(runEventsQuery(api, workspace, latest.id));
+  const events = useQuery(runEventsQuery(api, workspace, id, latest.id));
 
   useEffect(() => {
     if (focus !== undefined) {

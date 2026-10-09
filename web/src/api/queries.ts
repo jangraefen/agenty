@@ -79,7 +79,7 @@ export function recentChatsQuery(api: Api) {
 }
 
 /** The key under which the user's conversations, each with its runs, are cached. */
-export function conversationsKey() {
+function conversationsKey() {
   return ["conversations"] as const;
 }
 

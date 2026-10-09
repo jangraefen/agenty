@@ -180,11 +180,9 @@ func (q *Queries) FailRunningRuns(ctx context.Context, error string) ([]FailRunn
 
 const findConversation = `-- name: FindConversation :one
 SELECT first.id, harness_versions.workspace, harness_versions.name AS harness,
-       left(first.input, 100)::text AS title, latest.status
+       left(first.input, 100)::text AS title
 FROM runs first
 JOIN harness_versions ON harness_versions.id = first.harness_version_id
-JOIN runs latest ON latest.conversation_id = first.id
- AND NOT EXISTS (SELECT 1 FROM runs n WHERE n.follows = latest.id)
 WHERE first.id = $1 AND first.id = first.conversation_id
   AND first.started_by = $2
 `
@@ -199,10 +197,10 @@ type FindConversationRow struct {
 	Workspace string
 	Harness   string
 	Title     string
-	Status    string
 }
 
 // The conversation named by id, if started_by started it, in any workspace.
+// Its status is its latest run's, which OwnConversation reads with its runs.
 func (q *Queries) FindConversation(ctx context.Context, arg FindConversationParams) (FindConversationRow, error) {
 	row := q.db.QueryRow(ctx, findConversation, arg.ID, arg.StartedBy)
 	var i FindConversationRow
@@ -211,7 +209,6 @@ func (q *Queries) FindConversation(ctx context.Context, arg FindConversationPara
 		&i.Workspace,
 		&i.Harness,
 		&i.Title,
-		&i.Status,
 	)
 	return i, err
 }

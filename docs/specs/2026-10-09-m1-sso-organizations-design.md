@@ -181,7 +181,7 @@ a cookie jar; unique users, deleted afterwards):
 - Signed-out access to an app page redirects to `/sign-in`.
 - A `corp` user with `org: acme` and group `agenty-admins` signs in, sees
   "Acme" and the members page; a `corp` user in `acme` without the group sees
-  no members link and gets 404 on the page.
+  no members link and sees the not-found page.
 - A `corp` user with `org: globex` sees only Globex and its members.
 - A `partner` user asserting `org: acme` (created by `corp`) is rejected with
   a readable error.
@@ -214,7 +214,11 @@ same dev database do not collide; E2E users are not deleted (documented).
 - Signed-in shell with a header: organization name, user menu (name, email,
   role, sign out).
 - `/settings/members`: read-only member list (name, email, role)
-  of the user's organization; admins only (others get 404).
+  of the user's organization; admins only. Others see the not-found page
+  (no member data is loaded). Under Cache Components the response status stays
+  200 (the static shell streams first; Next adds `noindex`); a real 404 status
+  would need a database-backed role check in `proxy.ts`, which stays an
+  optimistic cookie check.
 - `src/proxy.ts`: optimistic redirect to `/sign-in` when no session cookie is
   present; pages and route handlers always validate the session themselves.
 - Client calls go through `src/lib/auth-client.ts` (`createAuthClient` +

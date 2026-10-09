@@ -30,7 +30,7 @@ All commands go through `Taskfile.yml` (go-task), identically locally and in CI.
 | `task setup` | Check tools, `pnpm install`, Playwright Chromium, `.env` from `.env.example` |
 | `task tools:check` | Check node, pnpm, docker and opa are installed; warn if the opa version differs from `OPA_VERSION` |
 | `task playwright:install` | Install Playwright's Chromium (with OS dependencies when `CI=true`) |
-| `task dev` | Postgres up, policy build, `next dev` (the server applies migrations on start) |
+| `task dev` | Postgres and mock IdP up, policy build, `next dev` (the server applies migrations on start) |
 | `task db:up` / `db:down` / `db:reset` | Local Postgres and the mock IdP (compose; the IdP listens on port 8080); `db:reset` deletes data (needed after editing `docker/postgres/init.sql`) |
 | `task db:check` | Fail fast if `DATABASE_URL` is unreachable (prints the error code, never the URL) |
 | `task auth:generate` | Regenerate `src/server/db/auth-schema.ts` from the Better Auth config (never edit it by hand) |
@@ -78,8 +78,8 @@ Folders `src/server/{agents,tools,workflows,crypto}` are created by the mileston
 - Two roles, created by `docker/postgres/init.sql` (compose runs it on an empty volume; CI via psql):
   - `agenty_owner`: owns schema `app` and all its tables, runs migrations (`DATABASE_MIGRATION_URL`).
   - `agenty_app`: runtime role (`DATABASE_URL`); no superuser, no `BYPASSRLS`, owns nothing, cannot
-    create objects. Gets table/sequence access through default privileges. It cannot bypass RLS, so any RLS added later
-    (e.g. with tenancy) applies to it; there is none today.
+    create objects. Gets table/sequence access through default privileges. It cannot bypass RLS,
+    so any RLS added later (e.g. with tenancy) applies to it; there is none today.
 - Schema `app` and grants come from migrations (0000, 0001), not from init.sql. Prefer migrations
   for future role/grant changes; init.sql only runs on an empty data directory.
 - Drizzle's bookkeeping lives in schema `drizzle` (owner only).
@@ -101,10 +101,14 @@ no organizations, roles, email/password or rate limiting. Defined in `src/server
   `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`; all via `getEnv()`. Scopes `openid email profile`; the ID
   token is verified (`requireIdTokenVerification`). Callback: `<BETTER_AUTH_URL>/api/auth/callback/oidc`.
 - **Discovery** happens when the auth instance is created, at the first request (`getAuth()`, so
-  `next build` needs no env). Better Auth skips a provider whose discovery failed, so `getAuth()`
-  keeps such an instance for 30 seconds and then recreates it (`memoizeUntil`): an IdP outage heals
-  itself, and an unreachable IdP does not stall every request (discovery has no timeout). Meanwhile
-  sign-in answers `PROVIDER_NOT_FOUND`, which the sign-in page shows as "unavailable".
+  `next build` needs no env). Better Auth's discovery fetch has no timeout and every `getSession()`
+  waits for it, so `getAuth()` first fetches the discovery document itself with a 5 s timeout and
+  leaves the provider out if that fails. Better Auth also skips a provider whose own discovery
+  failed. `getAuth()` keeps an instance without the provider for 30 seconds and then recreates it
+  (`memoizeUntil`): an IdP outage heals itself, and a hanging IdP delays pages by at most 5 s per
+  attempt. Remaining race: an IdP that answers the check and then hangs before Better Auth's own
+  fetch still stalls requests. Meanwhile sign-in answers `PROVIDER_NOT_FOUND`, which the sign-in
+  page shows as "unavailable".
 - **Sessions:** database sessions, 12 hours absolute, no refresh, so a user removed at the IdP
   loses access within 12 hours. Sign-out is local only (`disableProviderLogout`): it ends the
   Agenty session, not the IdP session. Default account linking is kept.
@@ -112,7 +116,9 @@ no organizations, roles, email/password or rate limiting. Defined in `src/server
   `idToken`. Better Auth would accept such a bare ID token (with a client-chosen nonce) as a
   sign-in, so a leaked or replayed token could start a session. Only the code flow signs in.
 - **Tokens:** `account.encryptOAuthTokens` encrypts access and refresh tokens; the ID token stays
-  plain text (Better Auth limitation; replay is blocked by the hook).
+  plain text (Better Auth limitation; replay is blocked by the hook). `BETTER_AUTH_SECRET` is the
+  encryption key and signs sessions: rotating it signs everyone out and makes stored tokens
+  unreadable.
 - **Errors:** `onAPIError.errorURL` is `/sign-in`, so state errors land on the sign-in page. The page
   maps `?error=` to fixed messages and never shows IdP text.
 - **Use in code:** `getCurrentUser()` (`{ id, name, email }` or null, once per request) and

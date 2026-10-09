@@ -44,11 +44,13 @@ Set these environment variables:
 | `OIDC_CLIENT_SECRET` | client secret from the IdP |
 
 Register Agenty at the IdP as a confidential client with redirect URI
-`<BETTER_AUTH_URL>/api/auth/callback/oidc` and scopes `openid email profile`. The ID token must
-contain `email`.
+`<BETTER_AUTH_URL>/api/auth/callback/oidc` and scopes `openid email profile`. The ID token or the
+userinfo endpoint must provide `email` (and `name`).
 
 Access is controlled in the IdP: everyone it authenticates can sign in. Sessions last 12 hours, so
 users removed at the IdP lose access within 12 hours. Signing out ends only the Agenty session.
+`BETTER_AUTH_SECRET` also encrypts stored OAuth tokens and signs sessions: rotating it signs
+everyone out and makes stored tokens unreadable.
 
 ## Troubleshooting
 
@@ -58,5 +60,7 @@ users removed at the IdP lose access within 12 hours. Signing out ends only the 
 - **Port 5432 is already in use:** set `POSTGRES_PORT` in `.env` to a free port and use the same
   port in `DATABASE_URL` and `DATABASE_MIGRATION_URL`. Then run `task db:up` again.
 - **`Database not reachable (ECONNREFUSED)`:** run `task db:up`.
+- **A returning user's sign-in fails with the generic message:** Better Auth may have refused to
+  link a new IdP subject to an existing email (`account_not_linked` in the server log).
 - **Roles are missing after editing `docker/postgres/init.sql`:** it only runs on an empty volume;
   run `task db:reset` (deletes local data) and `task db:up`.

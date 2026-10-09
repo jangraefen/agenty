@@ -28,7 +28,7 @@ tasks:
           opa version | head -n 1 | grep -qx "Version: {{trimPrefix "v" .OPA_VERSION}}" || echo "warning - opa {{.OPA_VERSION}} expected, found $(opa version | head -n 1)" >&2
 
   dev:
-    desc: Run the app in development mode (starts Postgres; the app applies migrations on start)
+    desc: Run the app in development mode (starts Postgres and the mock IdP; the app applies migrations on start)
     cmds:
       - task: db:up
       - task: policy:build

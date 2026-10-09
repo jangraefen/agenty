@@ -1,6 +1,7 @@
 import "server-only";
 import { eq } from "drizzle-orm";
 import { headers } from "next/headers";
+import { cache } from "react";
 import { member, organization, ssoProvider } from "@/server/db/auth-schema";
 import { type Db, getDb } from "@/server/db/client";
 import { type Auth, getAuth } from "./auth";
@@ -41,6 +42,12 @@ export async function getSignedIn(deps: Deps = {}) {
   });
   return { ctx, user: { name: session.user.name, email: session.user.email } };
 }
+
+/**
+ * getSignedIn() for the current request, looked up once per request even when the layout and the
+ * page both ask (React cache).
+ */
+export const getCurrentSignedIn = cache(() => getSignedIn());
 
 export async function getTenantContext(deps: Deps = {}): Promise<TenantContext> {
   return (await getSignedIn(deps)).ctx;

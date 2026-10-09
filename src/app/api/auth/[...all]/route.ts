@@ -2,12 +2,9 @@ import { toNextJsHandler } from "better-auth/next-js";
 import { connection } from "next/server";
 import { getAuth } from "@/server/auth/auth";
 
-export async function GET(request: Request) {
+// The auth instance is created on the first request, not at import: `next build` runs without
+// runtime configuration. connection() keeps Next from trying to prerender the handler.
+export const { GET, POST } = toNextJsHandler(async (request: Request) => {
   await connection();
-  return toNextJsHandler(getAuth()).GET(request);
-}
-
-export async function POST(request: Request) {
-  await connection();
-  return toNextJsHandler(getAuth()).POST(request);
-}
+  return getAuth().handler(request);
+});

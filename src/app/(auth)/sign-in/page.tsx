@@ -8,19 +8,17 @@ export const metadata: Metadata = { title: "Sign in · Agenty" };
 
 export default function SignInPage({ searchParams }: PageProps<"/sign-in">) {
   return (
-    <main className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center p-8">
-      <Card>
-        <CardHeader>
-          <h1 className="font-semibold text-2xl tracking-tight">Sign in to Agenty</h1>
-          <CardDescription>Use your organization's single sign-on.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Suspense fallback={<SignInForm />}>
-            <SignInFormWithError searchParams={searchParams} />
-          </Suspense>
-        </CardContent>
-      </Card>
-    </main>
+    <Card>
+      <CardHeader>
+        <h1 className="font-semibold text-2xl tracking-tight">Sign in to Agenty</h1>
+        <CardDescription>Use your organization's single sign-on.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Suspense fallback={<SignInForm />}>
+          <SignInFormWithError searchParams={searchParams} />
+        </Suspense>
+      </CardContent>
+    </Card>
   );
 }
 

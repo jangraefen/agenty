@@ -1,10 +1,9 @@
 import Link from "next/link";
 import { Suspense } from "react";
-import { AppHeader } from "@/components/app-header";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { SignOutButton } from "@/components/user-menu";
-import { ForbiddenError, getSignedIn, UnauthorizedError } from "@/server/auth/tenant";
+import { ForbiddenError, getCurrentSignedIn, UnauthorizedError } from "@/server/auth/tenant";
 
 export default function HomePage() {
   return (
@@ -15,25 +14,26 @@ export default function HomePage() {
 }
 
 async function Home() {
-  try {
-    const signedIn = await getSignedIn();
-    return (
-      <>
-        <AppHeader signedIn={signedIn} />
-        <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 p-8">
-          <Card>
-            <CardHeader>
-              <CardTitle>Agents arrive in the next milestone</CardTitle>
-            </CardHeader>
-          </Card>
-        </main>
-      </>
-    );
-  } catch (error) {
-    if (error instanceof UnauthorizedError) return <Landing />;
-    if (error instanceof ForbiddenError) return <NoOrganization />;
-    throw error;
-  }
+  const access = await getCurrentSignedIn().then(
+    () => "member" as const,
+    (error: unknown) => {
+      if (error instanceof UnauthorizedError) return "signed-out" as const;
+      if (error instanceof ForbiddenError) return "no-organization" as const;
+      throw error;
+    },
+  );
+  if (access === "signed-out") return <Landing />;
+  if (access === "no-organization") return <NoOrganization />;
+
+  return (
+    <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 p-8">
+      <Card>
+        <CardHeader>
+          <CardTitle>Agents arrive in the next milestone</CardTitle>
+        </CardHeader>
+      </Card>
+    </main>
+  );
 }
 
 function Landing() {

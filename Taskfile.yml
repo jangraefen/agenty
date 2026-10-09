@@ -11,10 +11,11 @@ env:
 
 tasks:
   setup:
-    desc: Check required tools, install dependencies, create .env
+    desc: Check required tools, install dependencies and Playwright Chromium, create .env
     cmds:
       - task: tools:check
       - pnpm install --frozen-lockfile
+      - task: playwright:install
       - cmd: test -f .env || cp .env.example .env
 
   tools:check:
@@ -51,16 +52,27 @@ tasks:
       - pnpm exec tsc --noEmit
 
   build:
-    desc: Production build (standalone)
+    desc: Production build (.next/standalone, self-contained)
     run: once
     cmds:
-      - pnpm exec next build
+      - sh scripts/build.sh
 
   test:
     desc: Run unit and integration tests (integration needs `task db:up`)
     deps: [policy:build]
     cmds:
       - pnpm exec vitest run {{.CLI_ARGS}}
+
+  test:e2e:
+    desc: Run Playwright E2E tests against the standalone production build
+    deps: [build]
+    cmds:
+      - pnpm exec playwright test {{.CLI_ARGS}}
+
+  playwright:install:
+    desc: Install Playwright's Chromium (with OS dependencies in CI)
+    cmds:
+      - pnpm exec playwright install {{if eq (env "CI") "true"}}--with-deps {{end}}chromium
 
   db:up:
     desc: Start local Postgres and wait until healthy
@@ -107,3 +119,15 @@ tasks:
     run: once
     cmds:
       - sh scripts/build-policy.sh
+
+  ci:
+    desc: Everything CI checks (needs a reachable database; locally run `task db:up` first)
+    cmds:
+      - task: policy:test
+      - task: lint
+      - task: typecheck
+      - task: db:check
+      - task: db:migrate
+      - task: test
+      - task: build
+      - task: test:e2e

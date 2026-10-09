@@ -22,6 +22,7 @@ export default defineConfig({
       NODE_ENV: "production",
       DATABASE_URL: process.env.DATABASE_URL ?? "",
       DATABASE_MIGRATION_URL: process.env.DATABASE_MIGRATION_URL ?? "",
+      BETTER_AUTH_URL: `http://127.0.0.1:${port}`,
     },
   },
 });

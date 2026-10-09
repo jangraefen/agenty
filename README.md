@@ -87,6 +87,35 @@ delete from auth.sso_provider where provider_id = 'keycloak';
 Its organizations and data stay but are orphaned: their users cannot use them until an operator
 sets a new `provider_id` on the organization.
 
+### Change an organization's identity provider
+
+Existing users cannot move to another provider: an organization belongs to the provider that
+created it, and a user whose email already exists is never linked to a new provider's account
+(sign-in fails with "account not linked", even when the user has no accounts left). So the users
+of the old provider are deleted and recreated on their first sign-in through the new one; their
+user ids change. Their memberships, sessions and accounts are deleted with them.
+
+1. Add the new provider with a **new** provider id (see above). Never change the old row's issuer
+   and never re-use an id.
+2. Hand the organizations over (use `where provider_id is null` after a removal):
+
+   ```sql
+   update auth.organization set provider_id = 'new-id' where provider_id = 'old-id';
+   ```
+
+3. Delete the old provider's users, which cascades to their accounts, sessions and memberships:
+
+   ```sql
+   delete from auth."user"
+   where id in (select user_id from auth.account where provider_id = 'old-id');
+   ```
+
+4. Delete the old provider row (and any leftover accounts) as described under "Remove a provider".
+
+Domain data is keyed by organization, so it stays; whatever references a user id (later
+milestones) must be dealt with before step 3. Users then sign in through the new provider, which
+must assert the same organization claim; they are added to the existing organization.
+
 ### Rules
 
 - Never change an existing provider's `issuer` and never re-use a deleted provider id: accounts

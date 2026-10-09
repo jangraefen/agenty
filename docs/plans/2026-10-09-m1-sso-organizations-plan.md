@@ -31,7 +31,7 @@
 1. **Email case:** an IdP returning `Alice@CORP.Test` must select `corp.test`, map to the same user as `alice@corp.test` and not trip the domain check → Task 2 (`selectProvider`, `decideSignIn` unit tests) and Task 3 (sign-in with mixed-case email reuses the user).
 2. **Odd claims:** `org` as a number, array, empty string, upper-case or too long, and `groups` as a string, non-string array or object must never throw: invalid `org` → `organization_claim_missing`, odd `groups` → `member` → Task 2 `decideSignIn` tests.
 3. **Process restart between redirect and callback:** the callback arrives at a fresh process; it must complete without re-discovery → Task 3 test (finish callback with a new `createAuth` instance).
-4. **Seed during in-flight sign-ins:** integration test files run in parallel and seed in `beforeAll`; the seed must never modify an existing provider row (that would change the provider fingerprint and fail other files' callbacks) → Task 1 seed uses insert-if-absent, test asserts a second seed leaves `oidc_config` untouched.
+4. **Seed during in-flight sign-ins:** integration test files run in parallel and seed in `beforeAll`; the seed must never modify an existing provider row (that would change the provider fingerprint and fail other files' callbacks) → Task 1 seed uses insert-if-absent and its test only touches its own random providers.
 5. **One IdP down:** while one provider's IdP is unreachable, users of another provider still sign in, and the broken one gets the readable `idp_unavailable` → Task 2 integration test.
 
 ---
@@ -73,8 +73,8 @@ tests/e2e/auth.spec.ts, tests/e2e/support/mock-idp.ts
 ### Task 1: Dependencies, env, schema `auth`, mock IdP and seed
 
 **Files:**
-- Modify: `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml` (only if pnpm asks), `src/server/env.ts`, `src/server/env.test.ts`, `.env.example`, `drizzle.config.ts`, `src/server/db/client.ts`, `src/server/db/roles.int.test.ts`, `docker-compose.yml`, `.github/workflows/ci.yml` (job `ci`), `Taskfile.yml`
-- Create: `src/server/db/auth-schema.ts`, migrations `0002_*`–`0004_*`, `src/server/db/seed.ts`, `src/server/db/seed.int.test.ts`, `scripts/seed.ts`, `scripts/wait-for-url.sh`, `scripts/auth-generate.config.ts`
+- Modify: `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml` (only if pnpm asks), `src/server/env.ts`, `src/server/env.test.ts`, `.env.example`, `drizzle.config.ts`, `src/server/db/client.ts`, `src/server/db/roles.int.test.ts`, `docker-compose.yml`, `.github/workflows/ci.yml` (jobs `ci` and `docker`), `Taskfile.yml`
+- Create: `src/server/db/auth-schema.ts`, migrations `0002_*`–`0003_*`, `src/server/db/seed.ts`, `src/server/db/seed.int.test.ts`, `scripts/seed.ts`, `scripts/wait-for-url.sh`, `scripts/auth-generate.config.ts`
 
 **Interfaces:**
 - Produces:
@@ -87,7 +87,7 @@ tests/e2e/auth.spec.ts, tests/e2e/support/mock-idp.ts
   export function createDb(url: string, options?: { max?: number }): Db; export type Db; export function getDb(): Db;
   // seed.ts
   export const DEV_PROVIDERS: readonly { providerId: "corp" | "partner"; issuer: string; domain: string }[];
-  export async function seedDevProviders(db: PostgresJsDatabase<…>): Promise<void>; // insert-if-absent
+  export async function seedDevProviders<S extends Record<string, unknown>>(db: PostgresJsDatabase<S>, providers?: readonly DevProvider[]): Promise<void>; // insert-if-absent
   ```
 
 - [ ] **Step 1: Install** — `pnpm add better-auth@1.7.7 @better-auth/sso@1.7.7 @better-auth/core@1.7.7`. Pin exact versions in `package.json` (no `^`). If pnpm reports blocked build scripts, allow only what is needed in `pnpm-workspace.yaml` and say why in the commit. Run `pnpm exec tsc --noEmit`; if Better Auth's types fail under TypeScript 7, stop and report DONE_WITH_CONCERNS with the errors.
@@ -182,11 +182,15 @@ Run it (a "Drizzle schema mismatch" log line is expected).
     ```
   - Imports are package imports only (no `@/`), and no `server-only`.
 
-- [ ] **Step 5: Migrations in three steps** (drizzle-kit emits `CREATE SCHEMA`; default privileges must exist before the tables):
-  1. `drizzle.config.ts`: `schema: ["./src/server/db/schema.ts", "./src/server/db/auth-schema.ts"]`, `schemaFilter: ["app", "auth"]`. Temporarily reduce `auth-schema.ts` to `export const authSchema = pgSchema("auth");` and run `task db:generate -- --name auth_schema` → `CREATE SCHEMA "auth";`.
-  2. `task db:generate -- --custom --name auth_grants`, mirroring `0001_app_grants.sql`:
+- [ ] **Step 5: Migrations** —
+  1. `drizzle.config.ts`: `schema: ["./src/server/db/schema.ts", "./src/server/db/auth-schema.ts"]`, `schemaFilter: ["app", "auth"]`. `task db:generate -- --name auth_tables` → `CREATE SCHEMA "auth"` plus the tables. Review the SQL (uuid ids, FKs incl. `on delete set null`, unique `member.user_id`, the check).
+  2. `task db:generate -- --custom --name auth_grants` (tables already exist, so grant on them explicitly and set default privileges for later ones):
      ```sql
      GRANT USAGE ON SCHEMA "auth" TO agenty_app;
+     --> statement-breakpoint
+     GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA "auth" TO agenty_app;
+     --> statement-breakpoint
+     GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA "auth" TO agenty_app;
      --> statement-breakpoint
      ALTER DEFAULT PRIVILEGES FOR ROLE agenty_owner IN SCHEMA "auth"
        GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO agenty_app;
@@ -194,7 +198,7 @@ Run it (a "Drizzle schema mismatch" log line is expected).
      ALTER DEFAULT PRIVILEGES FOR ROLE agenty_owner IN SCHEMA "auth"
        GRANT USAGE, SELECT ON SEQUENCES TO agenty_app;
      ```
-  3. Restore the full file; `task db:generate -- --name auth_tables`. Review the SQL (schema `auth`, uuid ids, FKs incl. `on delete set null`, unique `member.user_id`, the check). `task db:migrate`.
+  `task db:migrate`.
 
 - [ ] **Step 6: Client** — `src/server/db/client.ts`:
 
@@ -245,17 +249,20 @@ export function getDb(): Db {
       - docker compose up --detach mock-oidc
       - sh scripts/wait-for-url.sh http://localhost:8080/isalive
 ```
-Update `db:down`/`db:reset` descriptions. CI job `ci`: service `mock-oidc` (`image: ghcr.io/navikt/mock-oauth2-server:6.0.5`, `ports: ["8080:8080"]`, no health options: the image has no curl) and a step `sh scripts/wait-for-url.sh http://localhost:8080/isalive` before `task setup`.
+Update `db:down`/`db:reset` descriptions. CI job `docker`: the `docker run` gains `-e BETTER_AUTH_SECRET=ci-only-secret-0123456789abcdef0123 -e BETTER_AUTH_URL=http://localhost:3000` now (`getEnv()` requires them from this task on; the smoke test needs no providers). CI job `ci`: service `mock-oidc` (`image: ghcr.io/navikt/mock-oauth2-server:6.0.5`, `ports: ["8080:8080"]`, no health options: the image has no curl) and a step `sh scripts/wait-for-url.sh http://localhost:8080/isalive` before `task setup`.
 
-- [ ] **Step 9: Seed (test first)** — `src/server/db/seed.int.test.ts` (owner-free: `createDb(DATABASE_URL)` would import server-only code; build the Drizzle instance in the test with `drizzle({ client: postgres(DATABASE_URL, { max: 1 }), schema: authSchema })`):
-  - after `seedDevProviders`, rows `corp` and `partner` exist with the spec's values (`organization_claim` `org`, `role_claim` `groups`, `admin_values` `agenty-admins`, `oidc_config` parses to `{ clientId: "agenty", clientSecret: "dev-secret", pkce: true, scopes: ["openid","email","profile"] }`, `user_id` null);
-  - a second call is a no-op: it does not touch an existing row (update `corp`'s `oidc_config` in the test to add a marker key, seed again, the marker is still there; restore afterwards).
+- [ ] **Step 9: Seed (test first)** — `src/server/db/seed.int.test.ts` (Vitest aliases `server-only`, so `createDb(process.env.DATABASE_URL!, { max: 1 })` works here). The test **never touches `corp`/`partner`** (other test files sign in through them in parallel; changing their row changes the provider fingerprint and fails those callbacks). It seeds two providers with random ids (`seed-<random>-a`, issuer `http://localhost:8080/seed-<random>-a`, domain `seed-<random>-a.test`, …) through the `providers` parameter and asserts:
+  - both rows exist with `organization_claim` `org`, `role_claim` `groups`, `admin_values` `agenty-admins`, `oidc_config` parsing to `{ clientId: "agenty", clientSecret: "dev-secret", pkce: true, scopes: ["openid","email","profile"] }`, `user_id` null;
+  - a second call does not modify an existing row (add a marker key to one of *these* rows, seed again, the marker is still there);
+  - cleanup deletes the random rows.
 
   `src/server/db/seed.ts`:
 
 ```ts
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import * as authSchema from "./auth-schema.ts";
+import { ssoProvider } from "./auth-schema.ts";
+
+export type DevProvider = { providerId: string; issuer: string; domain: string };
 
 const oidcConfig = JSON.stringify({
   clientId: "agenty",
@@ -264,25 +271,29 @@ const oidcConfig = JSON.stringify({
   scopes: ["openid", "email", "profile"],
 });
 
-export const DEV_PROVIDERS = [
+export const DEV_PROVIDERS: readonly DevProvider[] = [
   { providerId: "corp", issuer: "http://localhost:8080/corp", domain: "corp.test" },
   { providerId: "partner", issuer: "http://localhost:8080/partner", domain: "partner.test" },
-] as const;
+];
 
 /**
  * Registers the mock IdP's providers. Never modifies an existing row: Better Auth binds a
  * fingerprint of the provider row into each sign-in, so changing it would fail sign-ins in flight.
  */
-export async function seedDevProviders(db: PostgresJsDatabase<typeof authSchema>): Promise<void> {
+export async function seedDevProviders<S extends Record<string, unknown>>(
+  db: PostgresJsDatabase<S>,
+  providers: readonly DevProvider[] = DEV_PROVIDERS,
+): Promise<void> {
   await db
-    .insert(authSchema.ssoProvider)
-    .values(DEV_PROVIDERS.map((p) => ({
+    .insert(ssoProvider)
+    .values(providers.map((p) => ({
       ...p, oidcConfig, organizationClaim: "org", roleClaim: "groups", adminValues: "agenty-admins",
     })))
-    .onConflictDoNothing({ target: authSchema.ssoProvider.providerId });
+    .onConflictDoNothing({ target: ssoProvider.providerId });
 }
 ```
-`scripts/seed.ts` (plain Node, run as `node scripts/seed.ts`): reads `DATABASE_URL` from `process.env` (Taskfile loads `.env`), creates a `max: 1` postgres.js client, calls `seedDevProviders`, ends the client, prints `Seeded development identity providers (corp, partner).`; on error prints the message only and exits 1. Taskfile: `db:seed` ("Register the mock IdP's development providers (insert-if-absent)"); `dev` runs `task: db:seed` after `db:up`; `ci` runs `task: db:seed` after `db:migrate`. If the relative `.ts` import chain does not load in plain Node (tsconfig `allowImportingTsExtensions` is already on), fix it there, not with a bundler.
+(If the generic does not type-check against both `getDb()` and a schema-less instance, type the parameter as the minimal `{ insert: … }` shape it needs; record the choice.)
+`scripts/seed.ts` (plain Node, run as `node scripts/seed.ts`): reads `DATABASE_URL` from `process.env` (Taskfile loads `.env`), creates a `max: 1` postgres.js client, calls `seedDevProviders`, ends the client, prints `Seeded development identity providers (corp, partner).`; on error prints the message only and exits 1. Taskfile: `db:seed` ("Register the mock IdP's development providers (insert-if-absent)"). `dev` runs `db:up`, `db:migrate`, `db:seed`, `policy:build`, `next dev` (the seed needs the tables, and the server would only migrate on start); `ci` runs `task: db:seed` after `db:migrate`. If the relative `.ts` import chain does not load in plain Node (tsconfig `allowImportingTsExtensions` is already on), fix it there, not with a bundler.
 
 - [ ] **Step 10: Verify and commit** — `task db:up`, `task ci` → green. `git commit -m "feat(db): schema auth, Better Auth tables, mock IdP and dev seed"` (explicit paths).
 
@@ -305,7 +316,8 @@ This and Task 3 prove the spec's risky mechanisms before anything builds on them
   export type ProviderRow = typeof ssoProvider.$inferSelect;
   export type ValidProvider = { providerId: string; issuer: string; domains: string[]; organizationClaim: string;
     roleClaim?: string; adminValues: string[]; oidc: OidcConfig; hasEndpoints: boolean };
-  export function parseProvider(row: ProviderRow): { ok: true; provider: ValidProvider } | { ok: false; fields: string[] };
+  export function parseProvider(row: unknown): { ok: true; provider: ValidProvider } | { ok: false; fields: string[] }; // Drizzle row or BA adapter row
+  export function isAllowedIdpUrl(url: string, isTrustedOrigin: (url: string) => boolean): boolean;
   export function emailDomain(email: string): string | undefined;          // requires exactly one "@", lower-cased
   export function domainMatches(emailDomainValue: string, domain: string): boolean;
   export function selectProvider<T extends { domain: string; providerId: string }>(rows: T[], email: string): T | undefined;
@@ -317,7 +329,7 @@ This and Task 3 prove the spec's risky mechanisms before anything builds on them
     { ok: true; decision: SignInDecision } | { ok: false; code: RejectCode };
   // auth.ts
   export const ALLOWED_ENDPOINTS: ReadonlySet<string>;  // "/sign-in/sso", "/sso/callback/:providerId", "/get-session", "/sign-out"
-  export function createAuth(deps?: { db?: Db; baseURL?: string; secret?: string; trustedOrigins?: string[]; resolveSignIn?: ResolveSignIn }): Auth; // resolveSignIn: Task 3
+  export function createAuth(deps?: { db?: Db; baseURL?: string; secret?: string; trustedOrigins?: string[] }): Auth;
   export function getAuth(): Auth;                      // memoised createAuth() from getEnv()
   export type Auth;                                     // ReturnType of betterAuth(...)
   // tests/support/sso.ts
@@ -405,7 +417,7 @@ const oidcConfigSchema = z.strictObject({
   jwksEndpoint: z.url({ protocol: /^https?$/ }).optional(),
 });
 ```
-(If Better Auth itself stores extra keys in rows it writes — e.g. after the plugin's own runtime discovery, which we prevent — extend the allowlist only with keys that are provably harmless, and record why.) `parseProvider` checks the row fields (`issuer` http(s) URL; `domain` = comma-separated, each lower-case domain name matching `/^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}$/`; `samlConfig` null; `organizationId` null; `organizationClaim` non-empty claim name; optional `roleClaim`; `adminValues` split by comma, trimmed, non-empty entries) and returns field paths of all failures (`issue.path` joined with `.`, prefixed with `oidcConfig.` for config issues), never values. `hasEndpoints` = all three endpoint keys present. `emailDomain`: exactly one `@`, non-empty local part and domain, lower-cased. `domainMatches`: `value === domain || value.endsWith("." + domain)`. `selectProvider`: first an exact match over all rows (sorted by `providerId` for determinism), then a subdomain match.
+`parseProvider` Zod-parses the whole row (`unknown` in: it receives Drizzle rows and Better Auth adapter rows); `oidcConfig` may arrive as a JSON string (Drizzle) or already parsed (check what the adapter returns) — accept both. (If Better Auth itself stores extra keys in rows it writes — e.g. after the plugin's own runtime discovery, which we prevent — extend the allowlist only with keys that are provably harmless, and record why.) `parseProvider` checks the row fields (`issuer` http(s) URL; `domain` = comma-separated, each lower-case domain name matching `/^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}$/`; `samlConfig` null; `organizationId` null; `organizationClaim` non-empty claim name; optional `roleClaim`; `adminValues` split by comma, trimmed, non-empty entries) and returns field paths of all failures (`issue.path` joined with `.`, prefixed with `oidcConfig.` for config issues), never values. `hasEndpoints` = all three endpoint keys present. `emailDomain`: exactly one `@`, non-empty local part and domain, lower-cased. `domainMatches`: `value === domain || value.endsWith("." + domain)`. `selectProvider`: first an exact match over all rows (sorted by `providerId` for determinism), then a subdomain match. `isAllowedIdpUrl(url, isTrustedOrigin)`: `isPublicRoutableHost(new URL(url).hostname) || isTrustedOrigin(url)` (`isPublicRoutableHost` from `@better-auth/core/utils/host`; verify the export). The plugin's own discovery accepts only trusted origins, which would reject every public IdP with an empty `BETTER_AUTH_TRUSTED_ORIGINS`; this predicate mirrors the plugin's endpoint validation, and fetches still pass its DNS-based private-address check. Unit tests: a public https host → true; `http://localhost:8080` → only when trusted; `http://10.0.0.5` → only when trusted.
 
 - [ ] **Step 3: Claims tests** (`claims.test.ts`), with a `ValidProvider` fixture (domains `["corp.test"]`, `organizationClaim: "org"`, `roleClaim: "groups"`, `adminValues: ["agenty-admins"]`):
   - `{ org: "acme" }` → `{ organizationSlug: "acme", role: "member" }`; with `groups: ["agenty-admins"]` → `admin`; `groups: "agenty-admins"` → `admin`.
@@ -441,17 +453,17 @@ export function decideSignIn({ provider, email, claims }: { provider: ValidProvi
   - `session: { expiresIn: 43_200, disableSessionRefresh: true, cookieCache: { enabled: false } }`.
   - `account: { encryptOAuthTokens: true, accountLinking: { disableImplicitLinking: true } }`; `rateLimit: { enabled: false }`; `onAPIError: { errorURL: "/sign-in" }`. No `emailAndPassword`, no `socialProviders`.
   - `plugins`:
-    1. `sso({ providersLimit: 0, organizationProvisioning: { disabled: true }, schema: { ssoProvider: { additionalFields: { organizationClaim: { type: "string", required: true, fieldName: "organizationClaim" }, roleClaim: { type: "string", required: false }, adminValues: { type: "string", required: false } } } } })` (check the exact option shape for plugin `schema`/`additionalFields` in `@better-auth/sso`'s types; `domainVerification` stays unset). Leave `resolveUser` as a placeholder returning `{ action: "reject", code: "not_ready" }` until Task 3.
-    2. A local plugin declaring our tables so Better Auth's schema check and its adapter accept them: `{ id: "agenty-organizations", schema: { organization: { fields: { slug: { type: "string", required: true, unique: true }, providerId: { type: "string", required: false, references: { model: "ssoProvider", field: "providerId", onDelete: "set null" } }, createdAt: { type: "date", required: true }, updatedAt: { type: "date", required: true } } }, member: { fields: { userId: { type: "string", required: true, unique: true, references: { model: "user", field: "id", onDelete: "cascade" } }, organizationId: { type: "string", required: true, references: { model: "organization", field: "id", onDelete: "cascade" } }, role: { type: "string", required: true }, createdAt: { type: "date", required: true }, updatedAt: { type: "date", required: true } } } } } satisfies BetterAuthPlugin` (every NOT NULL column without default must be declared, otherwise Better Auth's per-request schema diff throws). Type it with `BetterAuthPlugin` from `better-auth`.
+    1. `sso({ providersLimit: 0, schema: { ssoProvider: { additionalFields: { organizationClaim: { type: "string", required: true }, roleClaim: { type: "string", required: false }, adminValues: { type: "string", required: false } } } } })` (`domainVerification` stays unset). Leave `resolveUser` as a placeholder returning `{ action: "reject", code: "not_ready" }` until Task 3.
+    2. A local plugin declaring our tables so Better Auth's schema check and its adapter accept them: `{ id: "agenty-organizations", schema: { organization: { fields: { slug: { type: "string", required: true, unique: true }, providerId: { type: "string", required: false }, createdAt: { type: "date", required: true }, updatedAt: { type: "date", required: true } } }, member: { fields: { userId: { type: "string", required: true, unique: true }, organizationId: { type: "string", required: true }, role: { type: "string", required: true }, createdAt: { type: "date", required: true }, updatedAt: { type: "date", required: true } } } } } satisfies BetterAuthPlugin` (the adapter needs the models to read and write them; `references` are only used by Better Auth's own migrations, which we don't run). Type it with `BetterAuthPlugin` from `better-auth`.
   - `hooks.before: createAuthMiddleware(async (ctx) => { … })` (`createAuthMiddleware`, `APIError` from `better-auth/api`; `ctx.path` is the route pattern, verified):
     1. `!ALLOWED_ENDPOINTS.has(ctx.path)` → `throw new APIError("NOT_FOUND")`.
     2. `/sign-in/sso`:
-       - body keys ⊆ `{email, callbackURL, errorCallbackURL}`, `callbackURL`/`errorCallbackURL` (if present) match `^/(?!/)` → else `APIError("BAD_REQUEST", { code: "invalid_request" })`; `email` must yield an `emailDomain`, else `invalid_request`.
-       - load all provider rows (`db.select().from(ssoProvider)`), `selectProvider(rows, email)`; none → `APIError("BAD_REQUEST", { code: "unknown_domain" })`.
+       - validate the client body with one schema: `z.strictObject({ email: z.email(), callbackURL: relativePath, errorCallbackURL: relativePath.optional() })` where `relativePath = z.string().regex(/^\/(?![\/\\])/)` (no `//host` or `/\host`); failure (including a non-object body) → `APIError("BAD_REQUEST", { code: "invalid_request" })`; `emailDomain(email)` undefined → `invalid_request`.
+       - load all provider rows the way the plugin does (`ctx.context.adapter.findMany({ model: "ssoProvider" })`), `selectProvider(rows, email)`; none → `APIError("BAD_REQUEST", { code: "unknown_domain" })`.
        - `parseProvider(row)`; invalid → log `Identity provider "<id>" is misconfigured: <fields>` and `APIError("SERVICE_UNAVAILABLE", { code: "idp_unavailable" })`.
-       - if `!hasEndpoints`: `discoverOIDCConfig` (exported from `@better-auth/sso`; check its signature) with the row's issuer and optional `discoveryEndpoint`, `isTrustedOrigin` = `ctx.context.isTrustedOrigin`; on success write `{ ...oidc, authorizationEndpoint, tokenEndpoint, jwksEndpoint }` (never `userInfoEndpoint`) to the row with `update … where provider_id = … and oidc_config = <old value>` (no clobbering a concurrent write); any error → log the error class/code (not the IdP's text) and `idp_unavailable`.
+       - if `!hasEndpoints`: `discoverOIDCConfig({ issuer, discoveryEndpoint, isTrustedOrigin: (url) => isAllowedIdpUrl(url, (u) => ctx.context.isTrustedOrigin(u)) })` (an arrow function: `isTrustedOrigin` uses `this`); on success write `{ ...oidc, authorizationEndpoint, tokenEndpoint, jwksEndpoint }` (never `userInfoEndpoint`) to the row with the app pool (`update … where provider_id = … and oidc_config = <old value>`, so a concurrent first sign-in cannot clobber it), then continue with the written values; any error → log the error class/code (not the IdP's text) and `idp_unavailable`.
        - inject the provider: `return { context: { body: { ...ctx.body, providerId: row.providerId } } }` (verify the before-hook context-merge shape in Better Auth's types; the injected key must not be re-checked against the client allowlist).
-    3. `/sso/callback/:providerId`: `ctx.params.providerId` must name an existing row, else `APIError("NOT_FOUND")` (verify `ctx.params` is populated in before-hooks; if not, parse it from `ctx.request.url`). No discovery here.
+    3. `/sso/callback/:providerId`: `ctx.params.providerId` (populated in before-hooks, verified) must name an existing row, else `APIError("NOT_FOUND")`. No discovery here.
   - `export function getAuth()` memoises `createAuth()`.
 
 - [ ] **Step 6: Route handler** — `src/app/api/auth/[...all]/route.ts`:
@@ -472,7 +484,7 @@ export async function POST(request: Request) {
 }
 ```
 
-- [ ] **Step 7: Biome restriction** — override for all files except `src/server/auth/**`, `src/server/db/**`, `scripts/**`, `tests/**` and `**/*.test.ts`: `noRestrictedImports` (check group/name for Biome 2.5) on `@/server/db/auth-schema` ("Only src/server/auth may use the auth tables"). Second override for all files except `src/server/auth/**` and tests: restrict `@/server/auth/tenant-context` ("Use getTenantContext(); import the TenantContext type from @/server/auth/tenant"). Prove each with a scratch import that makes `task lint` fail; remove it.
+- [ ] **Step 7: Biome restriction** — override for all files except `src/server/auth/**`, `src/server/db/**`, `scripts/**`, `tests/**` and `**/*.test.ts`: `noRestrictedImports` (check the rule's group and options in Biome 2.5) on `@/server/db/auth-schema` and relative paths ending in `db/auth-schema` (pattern), message "Only src/server/auth may use the auth tables". A second restriction, for all files except `src/server/auth/**` and tests: the import name `createTenantContext` from `@/server/auth/tenant-context` (type imports stay allowed, so `src/server/db/tenant.ts` can import the `TenantContext` type); if Biome cannot restrict a single import name, restrict the module and let `src/server/db/tenant.ts` define its parameter as `Pick<TenantContext, "organizationId">` instead — record the choice. Prove each rule with a scratch import that makes `task lint` fail; remove it.
 
 - [ ] **Step 8: HTTP helper** `tests/support/sso.ts` (mock form facts: `infra-facts.md` §1):
   1. `auth.handler(new Request(`${baseURL}/api/auth/sign-in/sso`, { method: "POST", headers: { "content-type": "application/json", origin: baseURL }, body: JSON.stringify({ email, callbackURL: "/", errorCallbackURL: "/sign-in" }) }))`; non-200 → return `{ status, location: "", cookie: "" }` with the JSON code available to the caller (return the parsed body too). Read `{ url }` and keep `set-cookie` (state) in a small jar (`response.headers.getSetCookie()`).
@@ -481,12 +493,13 @@ export async function POST(request: Request) {
   Also export `finishCallback(auth, callbackUrl, cookie)` for the restart test.
 
 - [ ] **Step 9: Integration tests** (`auth.int.test.ts`; `beforeAll`: `seedDevProviders`; instance `createAuth({ baseURL: "http://localhost:3000" })`; a dedicated provider row per test that needs to break or change rows, with a random `provider_id`/domain, deleted in `afterAll` — never modify `corp`/`partner`):
-  - **endpoints**: for every `Object.values(auth.api)` with a `path`, a request with the endpoint's own method (`e.options.method`, first if array; params replaced by `x`): allowed → not 404, others → 404 (`expect.soft` per path).
+  - **endpoints**: for every `Object.values(auth.api)` with a `path`, a request with the endpoint's own method (`e.options.method`, first if array; `:providerId` replaced by `corp`, other params by `x`): allowed → not 404, others → 404 (`expect.soft` per path).
   - **wiring**: `auth.options.plugins.map(p => p.id).sort()` equals `["agenty-organizations", "sso"]`; `domainVerification` not configured.
-  - **body allowlist**: `scopes`, `additionalParams`, `providerId`, `organizationSlug`, `requestSignUp` → 400 `invalid_request`; `callbackURL: "https://evil.test/"` and `"//evil.test"` → 400.
+  - **body allowlist**: `scopes`, `additionalParams`, `providerId`, `organizationSlug`, `requestSignUp` → 400 `invalid_request`; `callbackURL` `"https://evil.test/"`, `"//evil.test"`, `"/\\evil.test"` → 400; a JSON array body → 400 (not 500).
   - **unknown domain** → 400 `unknown_domain`; `a@b@corp.test` → 400 `invalid_request`.
   - **authorize redirect**: `alice@corp.test` → `{ url }` starts with `http://localhost:8080/corp/authorize`, has `code_challenge`, `scope=openid email profile` (no `offline_access`), `redirect_uri` ends `/api/auth/sso/callback/corp`.
   - **discovery write**: a fresh provider row (issuer `http://localhost:8080/<random>`, domain `<random>.test`) has no endpoints; after one sign-in request its `oidc_config` has the three endpoint keys and no `userInfoEndpoint`; a second sign-in request leaves the row byte-identical.
+  - **issuer mismatch**: a fresh row whose `discoveryEndpoint` is another mock issuer's discovery URL (`http://localhost:8080/other-<random>/.well-known/openid-configuration`) → 503 `idp_unavailable`; the row stays without endpoints.
   - **misconfigured row** (`pkce` missing) → 503 `idp_unavailable`; the log line names `oidcConfig.pkce` and not the secret (spy on `console.error`/the logger used).
   - **unreachable IdP** (issuer `http://localhost:1/x`, its origin added to the instance's `trustedOrigins` via deps) → 503 `idp_unavailable`; `alice@corp.test` on the same instance still gets an authorize URL (Review Focus 5).
   - **callback for unknown provider** → 404.
@@ -508,7 +521,8 @@ export async function POST(request: Request) {
   export type ProvisioningDecision = SignInDecision & { providerId: string };
   export function rememberDecision(endpointContext: object, decision: ProvisioningDecision): void;
   export function takeDecision(endpointContext: object | null | undefined): ProvisioningDecision | undefined;
-  export async function provisionMembership(adapter: DBAdapter, userId: string, decision: ProvisioningDecision): Promise<void>; // throws APIError with code
+  export async function provisionMembership(adapter: DBTransactionAdapter, userId: string, decision: ProvisioningDecision): Promise<void>; // throws APIError with code
+  export async function resolveSignIn(input: ResolveUserInput, database: DBTransactionAdapter): Promise<ResolveUserDecision>; // the resolveUser body, exported for unit tests
   ```
 
 - [ ] **Step 1: Unit tests** (`provisioning.test.ts`) for the hand-over: remembered decision is returned once, then `undefined`; `takeDecision(null)` → `undefined`; different context objects don't see each other's decisions. And for `provisionMembership` with an in-memory fake adapter (`findOne`/`create`/`update` recording calls): creates organization (slug, providerId) and member (role) when absent; updates only `role`/`updatedAt` for an existing member of the same organization; throws `APIError` code `organization_owned_by_other_provider` when the slug's organization has another `providerId` (including `null`, i.e. orphaned); throws `organization_changed` when the member row points to another organization.
@@ -516,12 +530,11 @@ export async function POST(request: Request) {
 - [ ] **Step 2: Implement `provisioning.ts`** (server-only): the `WeakMap` hand-over as in the interface; `provisionMembership` uses `adapter.findOne({ model: "organization", where: [{ field: "slug", value }] })`, `adapter.create({ model: "organization", data: { slug, providerId, createdAt, updatedAt } })`, `adapter.findOne({ model: "member", where: [{ field: "userId", value: userId }] })`, `adapter.create`/`adapter.update` for the member. Map a Postgres unique violation (`code === "23505"`, on the error or its `cause`) to `APIError("CONFLICT", { code: "try_again" })`. Every other failure → `APIError("FORBIDDEN"|"INTERNAL_SERVER_ERROR", { code: "provisioning_failed" })`, logging the error class only.
 
 - [ ] **Step 3: Wire the hooks in `auth.ts`**:
-  - `sso({ …, resolveUser: async (input, { database }) => { … } })` — never throws:
+  - `sso({ …, resolveUser: (input, { database }) => resolveSignIn(input, database) })`; `resolveSignIn` returns a decision for every expected case (an unexpected throw is mapped by the plugin to its generic `SSO_USER_RESOLUTION_FAILED` and logged):
     1. Load the provider row by `input.providerId` (through `database`, model `ssoProvider`) and `parseProvider` it; invalid → `{ action: "reject", code: "idp_unavailable" }`.
     2. `decideSignIn({ provider, email: input.providerUser.email, claims: input.verifiedIdTokenClaims })`; failure → `{ action: "reject", code }`.
     3. Binding: find the user by lower-cased email (`database.findOne({ model: "user", where: [{ field: "email", value }] })`); if found, `database.findMany({ model: "account", where: [{ field: "userId", value: user.id }] })`; any account whose `providerId !== input.providerId` → `{ action: "reject", code: "account_bound_to_other_provider" }`. Check how Better Auth stores emails (lower-cased?) and match it.
     4. `rememberDecision(getCurrentAuthEndpointContext(), { ...decision, providerId: input.providerId })` (from `@better-auth/core/context`; verify the export name) → `{ action: "continue" }`.
-    5. Wrap 1–4 in `try/catch`; any exception → log the class and `{ action: "reject", code: "provisioning_failed" }`.
   - `databaseHooks.session.create.before: async (session, ctx) => { const decision = takeDecision(ctx); if (!decision) throw new APIError("FORBIDDEN", { code: "provisioning_missing" }); const adapter = await getCurrentAdapter(ctx.context.adapter); await provisionMembership(adapter, session.userId, decision); }` (`ctx` may be `null` → same `provisioning_missing`; `getCurrentAdapter` from `better-auth`, awaited).
 
 - [ ] **Step 4: Integration tests** (`sign-in.int.test.ts`; `beforeAll` seed; users `t-<random>@corp.test`; organization slugs `org-<random>`; `afterAll` deletes the created users (members cascade) and organizations by slug):
@@ -529,13 +542,11 @@ export async function POST(request: Request) {
   - **admin and demotion**: `groups: ["agenty-admins"]` → `admin`; next sign-in without groups → `member`.
   - **mixed-case email** `T-x@CORP.Test` at the IdP for an existing `t-x@corp.test` → same user id, one user row (Review Focus 1).
   - **claim missing** → location `/sign-in?error=organization_claim_missing`; no user/account/session rows for that email.
-  - **other provider's organization**: `partner` user (`x@partner.test`) asserting an `org` created by `corp` → `organization_owned_by_other_provider`; no rows.
   - **organization changed**: same user signs in again with a different `org` → `organization_changed`; the member row is unchanged.
   - **email outside domains**: sign-in email `x@partner.test`, `idpEmail` `x@corp.test` → `email_domain_mismatch`; no rows.
-  - **account bound elsewhere**: not reachable end-to-end (the domain check runs first and domains do not overlap), so it is covered by a unit test: export the `resolveUser` implementation as `resolveSignIn(input, database)` and call it with a fake `database` whose user has an account with another `providerId` → `{ action: "reject", code: "account_bound_to_other_provider" }`. Add the same style of unit tests for the reject paths and for "an exception becomes `provisioning_failed`".
+  - **account bound elsewhere**: not reachable end-to-end (the domain check runs first and domains do not overlap), so it is covered by a unit test: export the `resolveUser` implementation as `resolveSignIn(input, database)` and call it with a fake `database` whose user has an account with another `providerId` → `{ action: "reject", code: "account_bound_to_other_provider" }`. Same style: the reject paths, and **role from the ID token, not userinfo**: `providerClaims` carries `groups: ["agenty-admins"]`, `verifiedIdTokenClaims` has none → decision role `member`.
   - **missing hand-over fails closed**: call `auth.options.databaseHooks.session.create.before` with a session and a fresh context object → throws `APIError` code `provisioning_missing`.
-  - **rollback when the session hook fails** (deterministic): `createAuth` accepts `deps.resolveSignIn` (defaults to the real implementation). A test instance passes one that returns `{ action: "continue" }` without remembering a decision; the real sign-in then fails in `session.create.before` → callback redirects to `/sign-in?error=provisioning_missing`, and there are no user, account or session rows for that email.
-  - **concurrent first sign-ins**: two different new users, same new slug, `Promise.all`: either both succeed with members in the same organization, or one ends at `/sign-in?error=try_again` and leaves no user, account or session rows.
+  - **rollback when the session hook fails**: a *new* `partner` user (`n-<random>@partner.test`) asserting an organization created by `corp` passes `resolveUser` (it only checks claims and binding) and fails in `session.create.before` with `organization_owned_by_other_provider` → callback redirects with that code, and there are no user, account or session rows for that email.
   - **restart between redirect and callback** (Review Focus 3): `signInViaMock(authA, { stopAfterIdp: true })`, then `finishCallback(createAuth({ baseURL }), callbackUrl, cookie)` → success.
   - **access token encrypted**: the `account.access_token` of a fresh sign-in is not JWT-shaped (`/^ey[\w-]+\.[\w-]+\.[\w-]+$/` does not match).
 
@@ -636,7 +647,7 @@ export async function withTenant<T>(ctx: TenantContext, fn: (tx: Tx) => Promise<
   });
 }
 ```
-(`src/server/db/**` is exempt from the tenant-context import restriction only for the type; it must not call `createTenantContext` — adjust the Biome override so `src/server/db/tenant.ts` may import the type, e.g. via `import type` allowed by the rule's options, or re-export the type from `@/server/auth/tenant` (Task 5) and import it from there.)
+(Follows the Biome choice recorded in Task 2 Step 7: `import type { TenantContext }`, or a `Pick<TenantContext, "organizationId">` parameter.)
 
 - [ ] **Step 4: Isolation tests** (`tenant.int.test.ts`). Setup as owner (`postgres(DATABASE_MIGRATION_URL, { max: 1 })`): two organizations in `auth.organization` with random slugs and `provider_id` null (`orgA`, `orgB`); schema `rls_fixture_<random>`, `grant usage … to agenty_app`; the fixture table **built from the helpers**:
 
@@ -646,7 +657,7 @@ const notes = fixtureSchema.table("notes", {
   id: uuid("id").primaryKey().defaultRandom(), tenantId: tenantId(), body: text("body").notNull(),
 }, (t) => [tenantIsolation(t)]);
 ```
-DDL via `drizzle-kit/api` (`generateDrizzleJson({ notes })` against an empty snapshot → `generateMigration`), executed as owner, then `grant select, insert, update, delete on all tables in schema … to agenty_app`. If `drizzle-kit/api` cannot produce it (e.g. the FK to a table outside the snapshot), write the DDL by hand using the SQL text of `tenantIdSetting` rendered with `new PgDialect().sqlToQuery(...)`, and add a unit assertion on `getTableConfig(notes).policies[0]`; record the ruling in the report. Seed as owner: two rows for A, one for B. `afterAll`: drop the schema cascade, delete both organizations, end pools. App-role instance `appDb = createDb(DATABASE_URL, { max: 1 })`; contexts via `createTenantContext`.
+DDL written by hand in the test, using the helpers' SQL so it cannot drift: render `tenantIdSetting` with `new PgDialect().sqlToQuery(tenantIdSetting).sql` and build `create table … (id uuid primary key default gen_random_uuid(), tenant_id uuid not null references auth.organization(id) on delete cascade, body text not null)`, `alter table … enable row level security`, `create policy tenant_isolation on … as permissive for all to agenty_app using (tenant_id = <rendered>) with check (tenant_id = <rendered>)`; execute as owner, then `grant select, insert, update, delete on all tables in schema … to agenty_app`. A unit assertion on `getTableConfig(notes).policies[0]` pins the helper's policy (name, `for`, `to`, `using`/`withCheck` SQL containing `app.tenant_id`). Seed as owner: two rows for A, one for B. `afterAll`: drop the schema cascade, delete both organizations, end pools. App-role instance `appDb = createDb(DATABASE_URL, { max: 1 })`; contexts via `createTenantContext`.
 
 ```ts
 it("shows only the current organization's rows", async () => {
@@ -755,16 +766,17 @@ it("the guard reports missing tenant_id, disabled RLS and an open policy", async
   export type { TenantContext } from "./tenant-context";
   export class UnauthorizedError extends Error {}
   export class ForbiddenError extends Error {}
-  export async function getTenantContext(deps?: { headers?: Headers; auth?: Auth; db?: Db }): Promise<TenantContext>;
+  export async function getSignedIn(deps?: { headers?: Headers; auth?: Auth; db?: Db }): Promise<{ ctx: TenantContext; user: { name: string; email: string } }>;
+  export async function getTenantContext(deps?: { headers?: Headers; auth?: Auth; db?: Db }): Promise<TenantContext>; // (await getSignedIn(deps)).ctx
   // members.ts
   export async function listMembers(ctx: TenantContext, db?: Db): Promise<{ name: string; email: string; role: Role }[]>;
   export async function getOrganizationSlug(ctx: TenantContext, db?: Db): Promise<string>;
   ```
 
-- [ ] **Step 1: Implement `getTenantContext`**
+- [ ] **Step 1: Implement `getSignedIn` / `getTenantContext`** (one session lookup serves both the context and the header's name/email)
 
 ```ts
-export async function getTenantContext(deps: { headers?: Headers; auth?: Auth; db?: Db } = {}): Promise<TenantContext> {
+export async function getSignedIn(deps: { headers?: Headers; auth?: Auth; db?: Db } = {}) {
   const auth = deps.auth ?? getAuth();
   const session = await auth.api.getSession({ headers: deps.headers ?? (await headers()) });
   if (!session) throw new UnauthorizedError("Not signed in");
@@ -777,7 +789,12 @@ export async function getTenantContext(deps: { headers?: Headers; auth?: Auth; d
     .where(eq(member.userId, session.user.id));
   if (!row) throw new ForbiddenError("No organization membership");
   if (!row.providerId) throw new ForbiddenError("The organization has no identity provider");
-  return createTenantContext({ userId: session.user.id, organizationId: row.organizationId, role: row.role });
+  const ctx = createTenantContext({ userId: session.user.id, organizationId: row.organizationId, role: row.role });
+  return { ctx, user: { name: session.user.name, email: session.user.email } };
+}
+
+export async function getTenantContext(deps: { headers?: Headers; auth?: Auth; db?: Db } = {}): Promise<TenantContext> {
+  return (await getSignedIn(deps)).ctx;
 }
 ```
 `members.ts`: `listMembers` selects `user.name`, `user.email`, `member.role` where `member.organizationId = ctx.organizationId`, ordered by name; `getOrganizationSlug` by `ctx.organizationId`.
@@ -834,9 +851,9 @@ import { createAuthClient } from "better-auth/react";
 export const authClient = createAuthClient({ plugins: [ssoClient()] });
 ```
 
-- [ ] **Step 3: Sign-in page** — `page.tsx` (server): heading "Sign in to Agenty"; reads `searchParams.error` inside `<Suspense>` and passes `signInErrorMessage(error)` to `SignInForm`. `sign-in-form.tsx` (client): `Label` "Work email" + `Input type="email"`, `Button` "Continue with SSO"; validates with `z.email()` ("Enter a valid email address."); calls `authClient.signIn.sso({ email, callbackURL: "/", errorCallbackURL: "/sign-in" })`; on `{ error }` shows `signInErrorMessage(error.code)`; button disabled while pending; messages in an element with `role="alert"`.
+- [ ] **Step 3: Sign-in page** — `page.tsx` (server): heading "Sign in to Agenty"; reads `searchParams.error` inside `<Suspense>` (normalise: a string array → its first entry) and passes `signInErrorMessage(error)` to `SignInForm`. `sign-in-form.tsx` (client): `Label` "Work email" + `Input type="email"`, `Button` "Continue with SSO"; validates with `z.email()` ("Enter a valid email address."); calls `authClient.signIn.sso({ email, callbackURL: "/", errorCallbackURL: "/sign-in" })`; on `{ error }` shows `signInErrorMessage(error.code)`; button disabled while pending; messages in an element with `role="alert"`.
 
-- [ ] **Step 4: Header and user menu** — `AppHeader` (async server component, rendered inside `<Suspense>`): `getTenantContext()`, the session user's name/email (`getAuth().api.getSession`), `getOrganizationSlug(ctx)`; shows the slug as organization name, a "Members" link for admins, and `UserMenu` (client: name, email, role badge, "Sign out" → `authClient.signOut()` then `router.push("/sign-in")`).
+- [ ] **Step 4: Header and user menu** — `AppHeader` (async server component, rendered inside `<Suspense>`): `getSignedIn()` (context plus name/email from one session lookup), `getOrganizationSlug(ctx)`; shows the slug as organization name, a "Members" link for admins, and `UserMenu` (client: name, email, role badge, "Sign out" → `authClient.signOut()` then `router.push("/sign-in")`).
 
 - [ ] **Step 5: Home `/`** — static shell; inside `<Suspense>` an async component: `UnauthorizedError` → the M0 landing (keep the `h1` "Agenty" and description) with a "Sign in" link to `/sign-in`; signed in → `AppHeader` plus a card "Agents arrive in the next milestone"; `ForbiddenError` → card "Your account has no active organization. Contact your administrator." plus sign-out.
 
@@ -867,9 +884,9 @@ export const config = { matcher: ["/settings/:path*"] };
 
 **Files:**
 - Create: `tests/e2e/auth.spec.ts`, `tests/e2e/support/mock-idp.ts`
-- Modify: `playwright.config.ts`, `tests/e2e/home.spec.ts` (if the landing changed), `.github/workflows/ci.yml` (job `docker`)
+- Modify: `playwright.config.ts`, `tests/e2e/home.spec.ts` (if the landing changed), `Taskfile.yml`
 
-- [ ] **Step 1: Playwright env** — `webServer.env` adds `BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET ?? ""`, `BETTER_AUTH_URL: \`http://127.0.0.1:${port}\``, `BETTER_AUTH_TRUSTED_ORIGINS: "http://localhost:8080"`. (`task test:e2e` depends on seeded providers: add `db:seed` to its `deps` or document that `task ci` seeds first; prefer the dependency.)
+- [ ] **Step 1: Playwright env** — `webServer.env` adds `BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET ?? ""`, `BETTER_AUTH_URL: \`http://127.0.0.1:${port}\``, `BETTER_AUTH_TRUSTED_ORIGINS: "http://localhost:8080"`. `task test:e2e` keeps `deps: [build]` and runs `task: db:migrate`, `task: db:seed`, then Playwright in `cmds` (seeding needs the tables; deps would run in parallel with nothing ordering them).
 
 - [ ] **Step 2: IdP helper** `tests/e2e/support/mock-idp.ts`:
 
@@ -915,7 +932,7 @@ test("an admin sees the organization and its members", async ({ page }) => {
 ```
 Add, following the same pattern: a member of the same org has no Members link and sees the 404 page at `/settings/members`; a user in another org (`uniqueOrg("globex")`) sees only their org and only their members; a `partner.test` user asserting the admin test's org (create it first in that test via a `corp` sign-in in a separate browser context) gets the `organization_owned_by_other_provider` message (`role=alert`); `eve@evil.test` gets the unknown-domain message; sign-out (user menu → "Sign out") returns to `/sign-in` and `/settings/members` redirects to `/sign-in` again. E2E users are not deleted (documented in AGENTS.md).
 
-- [ ] **Step 4: Docker CI job** — add the env to the `docker run`: `-e BETTER_AUTH_SECRET=ci-only-secret-0123456789abcdef0123 -e BETTER_AUTH_URL=http://localhost:3000`. No providers or mock IdP needed: the smoke test only checks health.
+- [ ] **Step 4: Watch for a split context store** — if E2E sign-ins fail with `provisioning_missing` while the integration tests pass, the Next build has duplicated `@better-auth/core/context` (its async-local storage must be a single instance); fix by making the package external (`serverExternalPackages`) and record it in AGENTS.md.
 
 - [ ] **Step 5: `task ci`** (E2E included) → green; commit `git commit -m "test(e2e): SSO sign-in flows against the mock IdP"`.
 
@@ -931,7 +948,7 @@ Add, following the same pattern: a member of the same org has no Members link an
   - Commands: `task db:up` also starts the mock IdP; `task db:seed`; `task auth:generate`.
   - Architecture tree: `src/server/auth/` modules, `src/proxy.ts`, `tests/support/sso.ts`; the list of server modules without `server-only` (and why).
   - Database: schema `auth` (tables, no RLS, why, import restriction, accepted risks: session tokens and **plain-text provider client secrets** readable by `agenty_app`); remove the "M1 must decide" notes; E2E users accumulate in the dev database.
-  - New section "Auth": providers in `auth.sso_provider` with our columns, strict row validation (why: no plugin defaults for SQL-written rows), one-off discovery and the provider fingerprint (never modify a provider row while sign-ins may be in flight; the seed is insert-if-absent), endpoint and body allowlists, provisioning (`resolveUser` → hand-over → `session.create.before` through the transaction adapter, no fallback), organization rules, 12 h sessions, `getTenantContext()`.
+  - New section "Auth": providers in `auth.sso_provider` with our columns, strict row validation (why: no plugin defaults for SQL-written rows), one-off discovery (public IdP hosts allowed, private ones only via `BETTER_AUTH_TRUSTED_ORIGINS`) and the provider fingerprint (never modify a provider row while sign-ins may be in flight; the seed is insert-if-absent), endpoint and body allowlists, provisioning (`resolveUser` → hand-over → `session.create.before` through the transaction adapter, no fallback), organization rules, first sign-ins through the same provider are serialised by the plugin's provider row lock, 12 h sessions, `getTenantContext()`.
   - Non-negotiable rule 1 concretised: every domain table uses `tenantId()` + `tenantIsolation()`, all access through `withTenant(getTenantContext())`; the catalog guard enforces it. Rule 4 gets the recorded exception for provider client secrets.
   - Version notes: Better Auth packages pinned to the same exact version; mock IdP tag.
 - [ ] **Step 2: README** — production setup: env vars (`BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `BETTER_AUTH_TRUSTED_ORIGINS` for IdPs on internal networks); registering Agenty at an IdP (redirect URI `<BETTER_AUTH_URL>/api/auth/sso/callback/<provider id>`, required **ID-token** claims: `email`, `name`, the organization claim, optionally the groups claim); SQL to add a provider (the Keycloak example with `pkce` and `scopes`), to re-discover (remove the three endpoint keys), and to remove one (delete its `auth.account` rows and the provider row; its organizations stay, orphaned); rules: never change an issuer, never re-use a provider id, non-overlapping domains without commas; the 12-hour deprovisioning lag; development sign-in with the mock IdP (claims JSON example). Troubleshooting: port 8080 in use; existing `.env` lacks the new keys (copy them from `.env.example`).

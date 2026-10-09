@@ -16,7 +16,16 @@ export type AuthConfig = {
 /** The one OIDC connector; also the path segment of its callback (/api/auth/callback/oidc). */
 export const OIDC_PROVIDER_ID = "oidc";
 
-export function createAuth(config: AuthConfig) {
+/** How long a hanging IdP may delay the first auth instance (and every page with it). */
+const DISCOVERY_TIMEOUT_MS = 5 * 1000;
+/** How long an instance without the OIDC provider is kept before it is created again. */
+const RETRY_AFTER_MS = 30 * 1000;
+
+/**
+ * Without `withOidc` the instance has no OIDC provider: sessions keep working and sign-in answers
+ * PROVIDER_NOT_FOUND.
+ */
+export function createAuth(config: AuthConfig, { withOidc = true } = {}) {
   return betterAuth({
     database: drizzleAdapter(getDb(), {
       provider: "pg",
@@ -31,22 +40,24 @@ export function createAuth(config: AuthConfig) {
     session: { expiresIn: 12 * 60 * 60, disableSessionRefresh: true },
     account: { encryptOAuthTokens: true },
     onAPIError: { errorURL: "/sign-in" },
-    plugins: [
-      genericOAuth({
-        config: [
-          {
-            providerId: OIDC_PROVIDER_ID,
-            discoveryUrl: config.oidc.discoveryUrl,
-            clientId: config.oidc.clientId,
-            clientSecret: config.oidc.clientSecret,
-            scopes: ["openid", "email", "profile"],
-            requireIdTokenVerification: true,
-            // Sign-out is local only: it ends the app session, not the session at the IdP.
-            disableProviderLogout: true,
-          },
-        ],
-      }),
-    ],
+    plugins: withOidc
+      ? [
+          genericOAuth({
+            config: [
+              {
+                providerId: OIDC_PROVIDER_ID,
+                discoveryUrl: config.oidc.discoveryUrl,
+                clientId: config.oidc.clientId,
+                clientSecret: config.oidc.clientSecret,
+                scopes: ["openid", "email", "profile"],
+                requireIdTokenVerification: true,
+                // Sign-out is local only: it ends the app session, not the session at the IdP.
+                disableProviderLogout: true,
+              },
+            ],
+          }),
+        ]
+      : [],
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
         // Both endpoints would accept a bare ID token with a nonce the client chooses as a sign-in,
@@ -117,15 +128,34 @@ function configFromEnv(): AuthConfig {
 }
 
 /**
+ * Creates the auth instance, with the OIDC provider only if the discovery document answers within
+ * DISCOVERY_TIMEOUT_MS. Better Auth's own discovery fetch has no timeout, and every getSession()
+ * waits for it, so a hanging IdP would otherwise stall every page.
+ */
+export async function createAuthIfIdpAnswers(config: AuthConfig): Promise<Auth> {
+  let withOidc = false;
+  try {
+    const response = await fetch(config.oidc.discoveryUrl, {
+      signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
+    });
+    await response.body?.cancel();
+    withOidc = response.ok;
+  } catch {
+    // Unreachable or timed out: create the instance without the provider.
+  }
+  return createAuth(config, { withOidc });
+}
+
+/**
  * The app's auth instance, created on first use. If the IdP's discovery failed (the provider is
- * missing and sign-in answers PROVIDER_NOT_FOUND), the instance is recreated after 30 s.
+ * missing and sign-in answers PROVIDER_NOT_FOUND), the instance is recreated after RETRY_AFTER_MS.
  */
 export const getAuth: () => Promise<Auth> = memoizeUntil(
-  () => Promise.resolve(createAuth(configFromEnv())),
+  () => createAuthIfIdpAnswers(configFromEnv()),
   async (auth) => {
     const ok = await hasOidcProvider(auth);
-    if (!ok) console.error("OIDC discovery failed; retrying in 30 s");
+    if (!ok) console.error(`OIDC discovery failed; retrying in ${RETRY_AFTER_MS / 1000} s`);
     return ok;
   },
-  30 * 1000,
+  RETRY_AFTER_MS,
 );

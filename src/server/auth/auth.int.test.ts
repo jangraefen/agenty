@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
+import { createServer, type Socket } from "node:net";
 import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { account, session, user } from "@/server/db/auth-schema";
 import { getDb } from "@/server/db/client";
 import { getEnv } from "@/server/env";
 import { signInViaMock, startSignIn } from "../../../tests/support/oidc";
-import { type AuthConfig, createAuth, hasOidcProvider } from "./auth";
+import { type AuthConfig, createAuth, createAuthIfIdpAnswers, hasOidcProvider } from "./auth";
 import { getCurrentUser, requireUser } from "./session";
 
 const request = vi.hoisted(() => ({ cookie: "" }));
@@ -197,6 +198,39 @@ describe("IdP discovery failure", () => {
 
   it("has the provider when discovery succeeds", async () => {
     expect(await hasOidcProvider(auth)).toBe(true);
+  });
+});
+
+describe("hanging IdP", () => {
+  it(
+    "answers getSession within seconds, without the provider",
+    async () => {
+      // Accepts connections and never answers.
+      const sockets: Socket[] = [];
+      const server = createServer((socket) => sockets.push(socket));
+      await new Promise<void>((resolve) => server.listen(0, "localhost", resolve));
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      try {
+        const started = Date.now();
+        const hanging = await createAuthIfIdpAnswers({
+          ...config,
+          oidc: { ...config.oidc, discoveryUrl: `http://localhost:${port}/x` },
+        });
+
+        expect(await hanging.api.getSession({ headers: new Headers() })).toBeNull();
+        expect(await hasOidcProvider(hanging)).toBe(false);
+        expect(Date.now() - started).toBeLessThan(8 * 1000);
+      } finally {
+        for (const socket of sockets) socket.destroy();
+        await new Promise((resolve) => server.close(resolve));
+      }
+    },
+    15 * 1000,
+  );
+
+  it("keeps the provider when the IdP answers", async () => {
+    expect(await hasOidcProvider(await createAuthIfIdpAnswers(config))).toBe(true);
   });
 });
 

@@ -234,6 +234,13 @@ test("the sidebar's switcher lists the user's workspaces and switches between th
   await page.getByRole("menuitem", { name: "Create workspace", exact: true }).click();
   await expect(page).toHaveURL(/\/workspaces#create-workspace$/);
   await expect(page.getByLabel("Name", { exact: true })).toBeVisible();
+
+  // Outside a workspace the trigger names none and the menu marks none.
+  await expect(switcher(page)).toContainText("Workspaces");
+  await expect(switcher(page)).not.toContainText("Personal");
+  await switcher(page).click();
+  await expect(items.filter({ hasText: team })).toBeVisible();
+  await expect(items.and(page.locator("[aria-current]"))).toHaveCount(0);
 });
 
 test("an invitation shows as a badge in the sidebar's switcher", async ({ browser }) => {

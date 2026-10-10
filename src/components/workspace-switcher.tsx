@@ -17,9 +17,9 @@ import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/components/ui
 export type SwitcherWorkspace = { id: string; name: string; personal: boolean };
 
 /**
- * The workspace in the URL (/w/[workspaceId]); elsewhere the personal workspace. The list comes
- * from the server (personal first); the URL is read here, because the root layout that renders
- * the sidebar does not re-render on client navigations.
+ * The workspace in the URL (/w/[workspaceId]); elsewhere (e.g. /workspaces) the trigger says
+ * "Workspaces" and no entry is marked. The list comes from the server (personal first); the URL is
+ * read here, because the layout that renders the sidebar does not re-render on client navigations.
  */
 export function WorkspaceSwitcher({
   workspaces,
@@ -29,8 +29,7 @@ export function WorkspaceSwitcher({
   pendingInvitations: number;
 }) {
   const { workspaceId } = useParams<{ workspaceId?: string }>();
-  const current =
-    workspaces.find((ws) => ws.id === workspaceId) ?? workspaces.find((ws) => ws.personal);
+  const current = workspaces.find((ws) => ws.id === workspaceId);
 
   return (
     <SidebarMenu>

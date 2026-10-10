@@ -181,7 +181,7 @@ Settings is a disabled, focusable link with the tooltip "Your personal
 workspace can't be changed." (on hover and focus). Signed-in pages have a
 left sidebar instead of a header (signed-out pages have neither): "Agenty" (link to
 `/`) at the top, and pinned to the bottom a workspace switcher (trigger: the
-workspace in the URL, elsewhere the personal one; menu: all the user's workspaces,
+workspace in the URL, elsewhere "Workspaces"; menu: all the user's workspaces,
 personal first and the current one marked, then "All workspaces & invitations" →
 `/workspaces` with the number of pending invitations, and "Create workspace" →
 the create form), a separator, and the user menu (name, email, sign out). On

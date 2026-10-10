@@ -1,26 +1,13 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { connection } from "next/server";
-import { Suspense } from "react";
 import { buttonVariants } from "@/components/ui/button";
 import { getCurrentUser } from "@/server/auth/session";
 import { ensurePersonalWorkspace } from "@/server/workspaces/workspaces";
 
-export default function HomePage() {
-  return (
-    <Suspense>
-      <Home />
-    </Suspense>
-  );
-}
-
-async function Home() {
+export default async function HomePage() {
   const user = await getCurrentUser();
   if (!user) return <Landing />;
-
-  // Sign-in already ensured the personal workspace; this covers users without one (e.g. a failed
-  // setup at an earlier sign-in). After connection(): Partial Prefetching renders twice per request.
-  await connection();
+  // Sign-in created the personal workspace, so this only looks its id up.
   redirect(`/w/${await ensurePersonalWorkspace(user.id)}`);
 }
 

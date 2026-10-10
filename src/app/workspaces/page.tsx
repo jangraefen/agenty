@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Suspense } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -13,21 +12,9 @@ import { workspaceErrorMessage } from "./error-messages";
 
 export const metadata: Metadata = { title: "Workspaces · Agenty" };
 
-export default function WorkspacesPage({ searchParams }: PageProps<"/workspaces">) {
-  return (
-    <Suspense>
-      <Workspaces searchParams={searchParams} />
-    </Suspense>
-  );
-}
-
 const first = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value);
 
-async function Workspaces({
-  searchParams,
-}: {
-  searchParams: PageProps<"/workspaces">["searchParams"];
-}) {
+export default async function WorkspacesPage({ searchParams }: PageProps<"/workspaces">) {
   const user = await requireUser();
   const [workspaces, invitations, params] = await Promise.all([
     listWorkspaces(user.id),

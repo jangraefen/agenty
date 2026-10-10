@@ -5,9 +5,10 @@ import { WorkspaceError } from "@/server/workspaces/errors";
 
 /** `path` with `?error=<code>` added (other query parameters, like `q`, are kept). */
 export function withError(path: string, code: string): string {
-  const url = new URL(path, "http://localhost");
-  url.searchParams.set("error", code);
-  return `${url.pathname}${url.search}`;
+  const [pathname, query = ""] = path.split("?", 2);
+  const params = new URLSearchParams(query);
+  params.set("error", code);
+  return `${pathname}?${params}`;
 }
 
 /**

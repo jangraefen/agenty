@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { Suspense } from "react";
 import { workspaceErrorMessage } from "@/app/workspaces/error-messages";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,19 +22,11 @@ export const metadata: Metadata = { title: "Workspace settings · Agenty" };
 
 type Props = PageProps<"/w/[workspaceId]/settings">;
 
-export default function SettingsPage({ params, searchParams }: Props) {
-  return (
-    <Suspense>
-      <Settings params={params} searchParams={searchParams} />
-    </Suspense>
-  );
-}
-
 const first = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value);
 const displayName = (person: { name: string; email: string }) => person.name || person.email;
 const selectClass = "h-8 rounded-md border border-input bg-transparent px-2 text-sm";
 
-async function Settings({ params, searchParams }: Pick<Props, "params" | "searchParams">) {
+export default async function SettingsPage({ params, searchParams }: Props) {
   const { workspaceId } = await params;
   const access = await requireWorkspaceMember(workspaceId);
   const query = await searchParams;

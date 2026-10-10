@@ -177,7 +177,7 @@ are logged server-side by class only and shown as a generic message.
 | `/w/[workspaceId]/settings` | Admin: rename; members table (Name, Email, Role with a role select that saves on change (disabled while saving; a rejected change shows the error and the stored role again), an actions column with Remove on every row but the admin's own); invite (live search as you type, lists matching users with an Invite button, or "Member"/"Invited" for those already in or invited); pending invitations with Cancel; a "Danger zone" card with Leave and Delete (confirmation by typing the workspace name; the trimmed input must equal the name exactly, checked server-side). Member: members table with read-only roles, Danger zone with Leave only. Personal workspace: redirects to the workspace home. Names fall back to the email when empty. |
 
 `src/app/(signed-in)/w/[workspaceId]/layout.tsx` shows the workspace name with links
-Home / Settings (presentation only, see *Access*). For a personal workspace
+Start / Settings (presentation only, see *Access*). For a personal workspace
 Settings is a disabled, focusable link with the tooltip "Your personal
 workspace can't be changed." (on hover and focus). Signed-in pages have a
 left sidebar instead of a header (signed-out pages have neither): "Agenty" (link to

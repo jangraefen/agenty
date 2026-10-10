@@ -150,7 +150,7 @@ test.describe("client navigations commit at once and keep the sidebar", () => {
     await page.goto(`${teamUrl}/settings`);
     await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
     await instant(page, async () => {
-      await workspaceNav(page).getByRole("link", { name: "Home", exact: true }).click();
+      await workspaceNav(page).getByRole("link", { name: "Start", exact: true }).click();
       await page.waitForURL((url) => url.pathname === teamUrl, { timeout: navigationTimeout });
       await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeHidden();
       await expect(sidebar(page)).toBeVisible();

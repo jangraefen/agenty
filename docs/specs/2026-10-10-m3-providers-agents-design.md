@@ -1,6 +1,6 @@
 # M3 – Providers and agents: design
 
-Status: revised after maintainer feedback (several providers per workspace, base URLs), reviewed, awaiting maintainer approval · Date: 2026-10-10 · Branch: `feat/m3-providers-agents`
+Status: approved by the maintainer · Date: 2026-10-10 · Branch: `feat/m3-providers-agents`
 
 ## Goal
 

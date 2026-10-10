@@ -1,0 +1,195 @@
+import { eq } from "drizzle-orm";
+import { afterAll, describe, expect, it } from "vitest";
+import { getDb } from "@/server/db/client";
+import { workspaceInvitation } from "@/server/db/schema";
+import { testUsers } from "../../../tests/support/users";
+import { WorkspaceError } from "./errors";
+import { getMembership } from "./internal";
+import {
+  acceptInvitation,
+  cancelInvitation,
+  declineInvitation,
+  inviteUser,
+  listInvitationsForUser,
+  listInvitationsForWorkspace,
+  searchUsersToInvite,
+} from "./invitations";
+import {
+  changeRole,
+  createWorkspace,
+  deleteWorkspace,
+  ensurePersonalWorkspace,
+} from "./workspaces";
+
+const users = testUsers();
+const db = getDb();
+afterAll(() => users.cleanup());
+
+const rejectsWith = (promise: Promise<unknown>, code: string) =>
+  expect(promise).rejects.toSatisfy((e) => e instanceof WorkspaceError && e.code === code);
+
+async function setup() {
+  const admin = await users.create("Admin");
+  const invitee = await users.create("Invitee");
+  const id = await createWorkspace(admin.id, "Team");
+  return { id, admin, invitee };
+}
+
+const invitationIdFor = async (userId: string) => {
+  const [first] = await listInvitationsForUser(userId);
+  if (!first) throw new Error("no invitation");
+  return first.id;
+};
+
+describe("R6: inviting existing users", () => {
+  it("finds users by name or email, without members, invitees or more than 10 results", async () => {
+    const { id, admin, invitee } = await setup();
+    const tag = invitee.id.slice(0, 8);
+    await Promise.all(Array.from({ length: 11 }, (_, i) => users.create(`Bulk ${tag} ${i}`)));
+
+    expect(await searchUsersToInvite(admin.id, id, invitee.email)).toEqual([
+      { id: invitee.id, name: "Invitee", email: invitee.email },
+    ]);
+    expect(await searchUsersToInvite(admin.id, id, admin.email)).toEqual([]);
+    expect(await searchUsersToInvite(admin.id, id, `Bulk ${tag}`)).toHaveLength(10);
+
+    await inviteUser(admin.id, id, invitee.id);
+    expect(await searchUsersToInvite(admin.id, id, invitee.email)).toEqual([]);
+  });
+
+  it("matches wildcards literally", async () => {
+    const { id, admin } = await setup();
+    const odd = await users.create(`100%_${admin.id.slice(0, 8)}`);
+    expect(await searchUsersToInvite(admin.id, id, `100%_${admin.id.slice(0, 8)}`)).toEqual([
+      { id: odd.id, name: odd.name, email: odd.email },
+    ]);
+    expect(await searchUsersToInvite(admin.id, id, "%%")).toEqual([]);
+    const tag = admin.id.slice(0, 8);
+    await users.create(`ab_cd ${tag}`);
+    expect(await searchUsersToInvite(admin.id, id, `abXcd ${tag}`)).toEqual([]);
+  });
+
+  it("is only for admins of shared workspaces", async () => {
+    const { id, admin, invitee } = await setup();
+    await inviteUser(admin.id, id, invitee.id);
+    await acceptInvitation(invitee.id, await invitationIdFor(invitee.id));
+    await rejectsWith(searchUsersToInvite(invitee.id, id, "Admin"), "forbidden");
+
+    const personal = await ensurePersonalWorkspace(admin.id);
+    await rejectsWith(searchUsersToInvite(admin.id, personal, "Invitee"), "personal_workspace");
+    await rejectsWith(inviteUser(admin.id, personal, invitee.id), "personal_workspace");
+  });
+
+  it("rejects short queries and unknown users", async () => {
+    const { id, admin } = await setup();
+    await rejectsWith(searchUsersToInvite(admin.id, id, " a "), "invalid_query");
+    await rejectsWith(
+      inviteUser(admin.id, id, "6f1c1f7e-3d4b-4c55-9a43-1b2a5c6d7e8f"),
+      "user_not_found",
+    );
+    await rejectsWith(inviteUser(admin.id, id, "nope"), "user_not_found");
+  });
+
+  it("rejects duplicates and members", async () => {
+    const { id, admin, invitee } = await setup();
+    await inviteUser(admin.id, id, invitee.id);
+    await rejectsWith(inviteUser(admin.id, id, invitee.id), "already_invited");
+    await rejectsWith(inviteUser(admin.id, id, admin.id), "already_member");
+  });
+});
+
+describe("R4/R5: who may invite", () => {
+  it("lets members neither invite nor cancel", async () => {
+    const { id, admin, invitee } = await setup();
+    const member = await users.create();
+    const other = await users.create();
+    await inviteUser(admin.id, id, member.id);
+    await acceptInvitation(member.id, await invitationIdFor(member.id));
+    await inviteUser(admin.id, id, invitee.id);
+    const invitationId = await invitationIdFor(invitee.id);
+
+    await rejectsWith(inviteUser(member.id, id, other.id), "forbidden");
+    await rejectsWith(cancelInvitation(member.id, id, invitationId), "forbidden");
+  });
+
+  it("answers not_found to non-members", async () => {
+    const { id, admin, invitee } = await setup();
+    const stranger = await users.create();
+    await inviteUser(admin.id, id, invitee.id);
+    const invitationId = await invitationIdFor(invitee.id);
+
+    await rejectsWith(searchUsersToInvite(stranger.id, id, "Invitee"), "not_found");
+    await rejectsWith(inviteUser(stranger.id, id, invitee.id), "not_found");
+    await rejectsWith(cancelInvitation(stranger.id, id, invitationId), "not_found");
+  });
+
+  it("stops a demoted admin from inviting", async () => {
+    const { id, admin, invitee } = await setup();
+    const second = await users.create();
+    await inviteUser(admin.id, id, second.id);
+    await acceptInvitation(second.id, await invitationIdFor(second.id));
+    await changeRole(admin.id, id, second.id, "admin");
+    await changeRole(admin.id, id, second.id, "member");
+
+    await rejectsWith(inviteUser(second.id, id, invitee.id), "forbidden");
+  });
+});
+
+describe("R7: answering invitations", () => {
+  it("makes the invitee a member and removes the invitation", async () => {
+    const { id, admin, invitee } = await setup();
+    await inviteUser(admin.id, id, invitee.id);
+    expect(await listInvitationsForUser(invitee.id)).toEqual([
+      { id: expect.any(String), workspaceId: id, workspaceName: "Team", invitedBy: "Admin" },
+    ]);
+
+    expect(await acceptInvitation(invitee.id, await invitationIdFor(invitee.id))).toBe(id);
+    expect((await getMembership(invitee.id, id))?.role).toBe("member");
+    expect(await listInvitationsForUser(invitee.id)).toEqual([]);
+  });
+
+  it("can only be answered by the invitee", async () => {
+    const { id, admin, invitee } = await setup();
+    await inviteUser(admin.id, id, invitee.id);
+    const invitationId = await invitationIdFor(invitee.id);
+    await rejectsWith(acceptInvitation(admin.id, invitationId), "not_found");
+    await rejectsWith(declineInvitation(admin.id, invitationId), "not_found");
+  });
+
+  it("declining deletes the invitation, so the user can be invited again", async () => {
+    const { id, admin, invitee } = await setup();
+    await inviteUser(admin.id, id, invitee.id);
+    await declineInvitation(invitee.id, await invitationIdFor(invitee.id));
+    expect(await listInvitationsForWorkspace(admin.id, id)).toEqual([]);
+    await inviteUser(admin.id, id, invitee.id);
+  });
+
+  it("accepting a cancelled invitation fails without a membership", async () => {
+    const { id, admin, invitee } = await setup();
+    await inviteUser(admin.id, id, invitee.id);
+    const invitationId = await invitationIdFor(invitee.id);
+    await cancelInvitation(admin.id, id, invitationId);
+
+    await rejectsWith(acceptInvitation(invitee.id, invitationId), "not_found");
+    expect(await getMembership(invitee.id, id)).toBeNull();
+  });
+
+  it("lists a workspace's invitations to admins only", async () => {
+    const { id, admin, invitee } = await setup();
+    await inviteUser(admin.id, id, invitee.id);
+    expect(await listInvitationsForWorkspace(admin.id, id)).toEqual([
+      { id: expect.any(String), userId: invitee.id, name: "Invitee", email: invitee.email },
+    ]);
+    const stranger = await users.create();
+    await rejectsWith(listInvitationsForWorkspace(stranger.id, id), "not_found");
+  });
+});
+
+describe("R8: deleting a workspace", () => {
+  it("removes its invitations", async () => {
+    const { id, admin, invitee } = await setup();
+    await inviteUser(admin.id, id, invitee.id);
+    await deleteWorkspace(admin.id, id, "Team");
+    expect(await db.$count(workspaceInvitation, eq(workspaceInvitation.workspaceId, id))).toBe(0);
+  });
+});

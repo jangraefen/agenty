@@ -34,9 +34,9 @@ maintainer has approved the merge.
 | P1 | A workspace (personal ones included) has any number of providers. A provider has a name (1–80 characters, unique per workspace ignoring case), a type (`openai`, `anthropic`, `google`, fixed after creation), a base URL and an API key. |
 | P2 | Only admins create, edit and delete providers. Members see name, type, base URL and status, never the key hint. |
 | P3 | The key is verified against the provider's base URL before it is stored (see *Verification*), on creation and whenever key or base URL change; a provider that fails is not stored or not changed. Renaming alone doesn't verify. |
-| P4 | Keys are stored encrypted (AES-256-GCM, `AGENTS.md` rule 4). The plain key never leaves `src/server/providers` except as a header of the provider's HTTP call through `src/server/net`, and never appears in responses, logs, error messages, action state or the UI. Admins see a hint: the first 6 and the last 4 characters (`sk-ant…abcd`), or only the last 4 for keys shorter than 24 characters. |
+| P4 | Keys are stored encrypted (AES-256-GCM, `AGENTS.md` rule 4). The plain key never leaves `src/server/providers` except as a header of the provider's HTTP call, and never appears in responses, logs, error messages, action state or the UI. Admins see a hint: the first 6 and the last 4 characters (`sk-ant…abcd`), or only the last 4 for keys shorter than 24 characters. |
 | P5 | Changing a provider's base URL requires entering the key again (otherwise an admin, who can't read the key, could point the provider at their own server and receive it). |
-| P6 | Base URLs are checked against SSRF (see *Outbound requests*): https, and every address the host resolves to must be public, unless the host is on the operator's allowlist. The syntax is checked when saved; addresses at every connection (verification included). |
+| P6 | Base URLs are only checked for syntax (see *Outbound requests*). Hosts and addresses are not restricted (maintainer decision; can be added later): an admin, i.e. any user through their personal workspace, can make the server send requests to internal addresses. |
 | P7 | Deleting a provider is always allowed. Its agents stay and show as "Provider removed" until an admin picks another provider. |
 | A1 | Only admins create, edit and delete agents. Members see the agent list and every agent's settings read-only, including the system prompt. |
 | A2 | Agent names are unique per workspace, ignoring case. |
@@ -96,48 +96,20 @@ expects in M4: `https://api.openai.com/v1`, `https://api.anthropic.com/v1`,
 `https://generativelanguage.googleapis.com/v1beta`. Request paths below are
 relative to the provider's base URL.
 
-### Outbound requests (`src/server/net`)
+### Outbound requests
 
-Every request to a provider base URL (model listing now, model calls in M4 via
-the AI SDK's `fetch` option) goes through `providerFetch(url, init)`. Nothing in
-`src/server/providers` calls the global `fetch` (a unit test greps for it).
+Requests to a provider base URL use plain `fetch` (`cache: "no-store"`).
 
-- **Implementation:** `undici` (new dependency, in `serverExternalPackages` or
-  verified in the standalone trace) with its own `fetch` and one module-level
-  `Agent` whose `connect.lookup` enforces P6 at connection time, so DNS changes
-  between save and request don't help. Not the global `fetch` with an npm
-  `Agent` (Node's bundled undici differs in version; undici's `fetch` also
-  avoids Next's patched `fetch`). `ipaddr.js@^2` is a new direct dependency.
-- **IP literals:** Node doesn't call `lookup` for IP literal hosts, so
-  `providerFetch` first parses the URL (the URL parser already canonicalises
-  `2130706433`, `0x7f.1` …), strips IPv6 brackets, and classifies an IP literal
-  host itself before any connection.
-- **Lookup:** handles `options.all` true (array) and false (address, family);
-  resolves with `dns.lookup(host, { ...options, all: true })`, refuses the whole
-  answer if any address is not public, and answers in the requested shape.
-- **Public:** `ipaddr.process()` (unwraps IPv4-mapped IPv6), then
-  `range() === "unicast"`; IPv6 must also be in `2000::/3`. NAT64 addresses
-  (`64:ff9b::/96`) are allowed when the embedded IPv4 address is public (so
-  IPv6-only hosts with DNS64 work). Everything else (loopback, private,
-  link-local incl. `169.254.169.254`, CGNAT, unique-local, multicast, reserved,
-  6to4, Teredo, …) is refused.
-- **Allowlist:** env `AGENTY_ALLOWED_PROVIDER_HOSTS`, comma-separated hostnames
-  or IP literals, exact match ignoring case and port. Allowlisted hosts skip the
-  address check and may use `http:` (internal company gateways). The checking
-  functions take the allowlist as a parameter (`providerFetch` reads
-  `getEnv()`), so tests cover both cases in one process. The E2E servers set it
-  to `127.0.0.1`, where the fake provider runs.
-- **Base URL syntax** (Zod, on save; `base_url_not_allowed`): `https:` (or
-  `http:` only for allowlisted hosts), no username/password, no query or
-  fragment, at most 500 characters; stored normalised (trailing slash removed)
-  and compared normalised. No DNS lookup at save time.
-- **No oracle:** a refused address, NXDOMAIN, redirect (`redirect: "error"`),
-  connection error or timeout all fail as `provider_unreachable`; only the error
-  class is logged. A user can't tell an internal hostname that exists from one
-  that doesn't.
-- **Proxies:** not supported (the custom `Agent` ignores `HTTPS_PROXY` and
-  `NODE_USE_ENV_PROXY`; with a proxy the address check would apply to the proxy
-  instead of the target). Documented for operators.
+- **Base URL syntax** (Zod, on save; `base_url_not_allowed`): `http:` or
+  `https:`, no username/password, no query or fragment, at most 500 characters;
+  stored normalised (trailing slash removed) and compared normalised.
+- **No host or address restrictions** (P6). Accepted risk, recorded in
+  *Review focus*; a later milestone can add an address check and an operator
+  allowlist in one place, since all provider requests go through the listing
+  module now and the AI SDK's `fetch` option in M4.
+- **Little to learn from failures:** `redirect: "error"`; DNS errors,
+  connection errors, redirects and timeouts all fail as `provider_unreachable`,
+  only the error class is logged, and response bodies are never shown.
 
 ### Listing models
 
@@ -290,7 +262,7 @@ Drizzle, schema `app`, one generated migration, uuid ids, `timestamptz`.
 The services throw `WorkspaceError` with new codes, so delete actions keep
 using `runWorkspaceAction`, and `error-messages.ts` gains fixed messages:
 `invalid_provider` (name, type, base URL fields), `base_url_not_allowed`
-(syntax only; address checks report `provider_unreachable`), `provider_changed`, `key_invalid`,
+(syntax), `provider_changed`, `key_invalid`,
 `key_required`, `key_rejected`, `provider_unreachable`, `key_unverified`,
 `provider_name_taken`, `agent_name_taken`, `provider_removed`,
 `provider_key_unreadable`, `model_unavailable`, `invalid_parameters`
@@ -353,12 +325,7 @@ non-members get the not-found page; ids are lookup keys only.
     provider's AAD (other id, type or base URL) fails; unknown key id fails;
     decrypting with an older key works; `ENCRYPTION_KEYS` parsing (wrong
     length, duplicate id, bad base64, error text contains no value);
-  - outbound: base URL syntax; address classification (loopback, private,
-    link-local, metadata, CGNAT, IPv6 unique-local and link-local, IPv4-mapped
-    IPv6, deprecated `::a.b.c.d`, 6to4, NAT64 with public and private embedded
-    IPv4, public) and the allowlist (case, port ignored, http only for
-    allowlisted hosts); no module in `src/server/providers` calls global
-    `fetch`;
+  - base URL syntax and normalisation;
   - each type's list parsing, paging, limits and chat filter (fixtures);
     verification outcome mapping including Google's 400 `API_KEY_INVALID`;
   - key hint (long and short keys); agent and provider input validation.
@@ -374,12 +341,9 @@ non-members get the not-found page; ids are lookup keys only.
     doesn't decrypt;
   - P5: changing the base URL without a key fails with `key_required` and makes
     no request; with a key it verifies against the new URL;
-  - P6 through `providerFetch` itself: IP literal hosts `127.0.0.1`,
-    `[::ffff:127.0.0.1]`, `2130706433`, `169.254.169.254` are refused without a
-    connection; a hostname whose lookup (stubbed) returns a mixed public/private
-    answer, for `all: true` and `all: false`, is refused; a redirect is refused;
-    an allowlisted host works over http; all of these surface as
-    `provider_unreachable` on save;
+  - P6: an invalid base URL (credentials, query, other scheme) is refused
+    without a request; a redirect from the provider gives
+    `provider_unreachable`;
   - concurrent edits: a rename racing another admin's base URL + key change
     leaves a row that decrypts (one of them fails with `provider_changed`);
   - P7/availability: deleting a provider keeps its agents with
@@ -397,7 +361,7 @@ non-members get the not-found page; ids are lookup keys only.
   - a non-admin's create/update sends zero requests to the fake provider; an
     admin demoted between verification and save gets `forbidden` and nothing is
     stored.
-- E2E (fake provider server started by Playwright on `127.0.0.1`, allowlisted):
+- E2E (fake provider server started by Playwright on `127.0.0.1`):
   admin adds an OpenAI provider with the fake server's base URL (hint shown)
   and a second one of the same type; a rejected key shows the fixed message and
   keeps name and base URL; changing the base URL without the key is refused;
@@ -412,9 +376,10 @@ non-members get the not-found page; ids are lookup keys only.
 
 - Accepted (maintainer decision): no rate limit on key verification, although
   every user can verify keys through their personal workspace.
-- SSRF: IPv6 forms, IPv4-mapped addresses, decimal/octal IP literals, DNS
-  answers with mixed public and private addresses, redirects, the AI SDK in M4
-  bypassing `providerFetch`.
+- Accepted (maintainer decision): no SSRF protection for base URLs; any user
+  can make the server send requests (with a key they entered) to internal
+  addresses and learn whether they answer like a provider. Revisit before
+  exposing an instance to untrusted users.
 - Key leakage: logs, error messages, redirects with `?error=`, action state,
   React props sent to the client (no form ever receives a key), provider error
   bodies, a base URL changed without re-entering the key.
@@ -434,7 +399,7 @@ non-members get the not-found page; ids are lookup keys only.
   unencrypted in the workflow tables. Use a model wrapper that serializes only
   `(workspaceId, providerId, modelId)` and calls `getProviderSecret` inside the
   step; test that no key reaches the `workflow` schemas.
-- Pass `apiKey`, `baseURL` and `fetch: providerFetch` explicitly; the SDKs fall
+- Pass `apiKey` and `baseURL` explicitly; the SDKs fall
   back to `OPENAI_API_KEY`/`OPENAI_BASE_URL` and similar env vars.
 - `openai(id)` uses the Responses API, which some gateways don't offer; decide
   there (probably `.chat(id)`).
@@ -442,8 +407,8 @@ non-members get the not-found page; ids are lookup keys only.
 
 ## Docs
 
-`AGENTS.md`: architecture (`src/server/crypto`, `net`, `providers`, `agents`,
-routes), the Providers and Agents rules in short, outbound request rules (P6),
+`AGENTS.md`: architecture (`src/server/crypto`, `providers`, `agents`,
+routes), the Providers and Agents rules in short, the accepted SSRF risk (P6),
 encryption and rotation, the M4 notes on key handling, new env vars
-(`ENCRYPTION_KEYS`, `AGENTY_ALLOWED_PROVIDER_HOSTS`). README: providers and
-agents from the user's view, rotation and the allowlist for operators.
+(`ENCRYPTION_KEYS`). README: providers and agents from the user's view,
+rotation for operators.

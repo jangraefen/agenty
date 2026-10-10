@@ -72,11 +72,11 @@ describe("R2: personal workspace limits", () => {
     await rejectsWith(removeMember(u.id, id, u.id), "last_admin");
   });
 
-  it("can be renamed", async () => {
+  it("cannot be renamed", async () => {
     const u = await users.create();
     const id = await ensurePersonalWorkspace(u.id);
-    await renameWorkspace(u.id, id, "  Mine  ");
-    expect((await getMembership(u.id, id))?.workspace.name).toBe("Mine");
+    await rejectsWith(renameWorkspace(u.id, id, "Mine"), "personal_workspace");
+    expect((await getMembership(u.id, id))?.workspace.name).toBe("Personal");
   });
 });
 
@@ -88,6 +88,12 @@ describe("R3/R4: creating and managing", () => {
       workspace: { id, name: "Team", personal: false },
       role: "admin",
     });
+  });
+
+  it("lets admins rename shared workspaces", async () => {
+    const { id, admin } = await sharedWorkspace();
+    await renameWorkspace(admin.id, id, "  Renamed  ");
+    expect((await getMembership(admin.id, id))?.workspace.name).toBe("Renamed");
   });
 
   it("rejects invalid names", async () => {

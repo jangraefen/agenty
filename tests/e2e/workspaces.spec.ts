@@ -27,7 +27,7 @@ const settingsLink = (page: Page) =>
     .getByRole("navigation", { name: "Workspace" })
     .getByRole("link", { name: "Settings", exact: true });
 
-test("the first sign-in lands in a personal workspace that can only be renamed", async ({
+test("the first sign-in lands in a personal workspace that can't be changed", async ({
   browser,
 }) => {
   const page = await signedIn(browser, uniqueIdpUser("wspers", "Pat Personal"));
@@ -39,12 +39,7 @@ test("the first sign-in lands in a personal workspace that can only be renamed",
   await expect(page.getByText("This is your personal workspace.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Delete workspace", exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Search users", { exact: true })).toHaveCount(0);
-
-  await page.getByLabel("Workspace name", { exact: true }).fill("My corner");
-  await page.getByRole("button", { name: "Rename", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { level: 1, name: "My corner", exact: true }),
-  ).toBeVisible();
+  await expect(page.getByLabel("Workspace name", { exact: true })).toHaveCount(0);
 });
 
 test("admins share a workspace with an invited user", async ({ browser }) => {
@@ -54,13 +49,18 @@ test("admins share a workspace with an invited user", async ({ browser }) => {
   const adaPage = await signedIn(browser, ada);
   const team = `Team ${ada.sub}`;
 
-  // Ada creates a workspace and invites Bob.
+  // Ada creates a workspace, renames it and invites Bob.
   await adaPage.goto("/workspaces");
-  await adaPage.getByLabel("Name", { exact: true }).fill(team);
+  await adaPage.getByLabel("Name", { exact: true }).fill(`Draft ${ada.sub}`);
   await adaPage.getByRole("button", { name: "Create", exact: true }).click();
-  await expect(adaPage.getByRole("heading", { level: 1, name: team, exact: true })).toBeVisible();
+  await expect(
+    adaPage.getByRole("heading", { level: 1, name: `Draft ${ada.sub}`, exact: true }),
+  ).toBeVisible();
   const teamUrl = adaPage.url();
   await settingsLink(adaPage).click();
+  await adaPage.getByLabel("Workspace name", { exact: true }).fill(team);
+  await adaPage.getByRole("button", { name: "Rename", exact: true }).click();
+  await expect(adaPage.getByRole("heading", { level: 1, name: team, exact: true })).toBeVisible();
   await adaPage.getByLabel("Search users", { exact: true }).fill(bob.email);
   await adaPage.getByRole("button", { name: "Search", exact: true }).click();
   const results = adaPage.getByRole("list", { name: "Search results" });
@@ -123,8 +123,8 @@ test("non-members see the not-found page", async ({ browser }) => {
 
   const settings = `${owner.url()}/settings`;
   await owner.goto(settings);
-  await expect(owner.getByLabel("Workspace name", { exact: true })).toBeVisible();
+  await expect(owner.getByText("This is your personal workspace.")).toBeVisible();
   await stranger.goto(settings);
   await expect(stranger.getByText("This page could not be found.")).toBeVisible();
-  await expect(stranger.getByLabel("Workspace name", { exact: true })).toHaveCount(0);
+  await expect(stranger.getByText("This is your personal workspace.")).toHaveCount(0);
 });

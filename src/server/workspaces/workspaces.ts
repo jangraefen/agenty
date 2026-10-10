@@ -76,6 +76,7 @@ export async function renameWorkspace(
   const validName = parseName(name);
   await getDb().transaction(async (tx) => {
     const { workspace: ws } = await lockForAdmin(tx, workspaceId, actorId);
+    if (ws.personal) throw new WorkspaceError("personal_workspace");
     await tx.update(workspace).set({ name: validName }).where(eq(workspace.id, ws.id));
   });
 }

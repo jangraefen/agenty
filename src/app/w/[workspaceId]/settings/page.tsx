@@ -51,13 +51,13 @@ async function Settings({ params, searchParams }: Pick<Props, "params" | "search
           {error}
         </p>
       ) : null}
-      {isAdmin ? <RenameCard access={access} /> : null}
       {personal ? (
         <p className="text-muted-foreground text-sm">
-          This is your personal workspace. You can rename it, but not share or delete it.
+          This is your personal workspace. It can't be renamed, shared or deleted.
         </p>
       ) : (
         <>
+          {isAdmin ? <RenameCard access={access} /> : null}
           <MembersCard access={access} />
           {isAdmin ? <InviteCard access={access} q={first(query.q)?.trim() ?? ""} /> : null}
           <LeaveCard access={access} />

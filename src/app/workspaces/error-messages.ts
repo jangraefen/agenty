@@ -1,6 +1,6 @@
 const MESSAGES: Record<string, string> = {
   forbidden: "Only admins can do that.",
-  personal_workspace: "Your personal workspace can't be shared or deleted.",
+  personal_workspace: "Your personal workspace can't be renamed, shared or deleted.",
   last_admin:
     "A workspace needs at least one admin. Make someone else an admin first, or delete the workspace.",
   already_member: "That user is already a member.",

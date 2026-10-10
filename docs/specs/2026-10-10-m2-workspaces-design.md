@@ -31,7 +31,7 @@ maintainer has approved the merge.
 | # | Rule |
 |---|---|
 | R1 | Every user has exactly one **personal workspace**, created at sign-in if missing. |
-| R2 | A personal workspace has exactly one member, its user, as `admin`. It cannot be deleted or left, nobody can be invited to it, and its member's role cannot change. It can be renamed. |
+| R2 | A personal workspace has exactly one member, its user, as `admin`. It cannot be renamed, deleted or left, nobody can be invited to it, and its member's role cannot change (maintainer decision, changed after the first review). |
 | R3 | Any user can create a workspace; the creator becomes its `admin`. |
 | R4 | Admins rename and delete the workspace, invite users, cancel any invitation, remove members and change roles, including other admins' (subject to R5). Later milestones add: create and edit agents, tools and provider keys. Members only use the workspace (later: chat with its agents) and can leave. |
 | R5 | A workspace has at least one admin at all times: the last admin cannot leave, be removed or be demoted. To get out, they promote someone else first or delete the workspace. |
@@ -40,9 +40,9 @@ maintainer has approved the merge.
 | R8 | Deleting a workspace deletes its memberships and invitations (later: its agents, tools, keys, policies). |
 | R9 | Users are never deleted in M2 (Better Auth's `deleteUser` stays off); the cascades below only keep the database consistent. Offboarding users is decided later, together with what happens to workspaces whose last admin goes. |
 
-R2 needs explicit checks only for invite and delete: a personal workspace has
+R2 needs explicit checks only for rename, invite and delete: a personal workspace has
 a single member who is admin, so R5 already blocks leaving, removing and
-demoting. The R2 tests still cover all four.
+demoting. The R2 tests still cover all of them.
 
 ## Data model
 
@@ -162,7 +162,7 @@ are logged server-side by class only and shown as a generic message.
 | `/` | Signed in: redirect to the personal workspace. Signed out: landing (unchanged). |
 | `/workspaces` | The user's workspaces (name, role, "Personal" badge), a create form, and pending invitations to the user (workspace name, invited by) with Accept/Decline. |
 | `/w/[workspaceId]` | Workspace home: name, the user's role, placeholder "Agents arrive in the next milestone". |
-| `/w/[workspaceId]/settings` | Admin: rename; members with role select and Remove; invite (a search form `?q=` lists matching users, each with an Invite button); pending invitations with Cancel; Delete (confirmation by typing the workspace name; the trimmed input must equal the name exactly, checked server-side). Member: workspace name, member list, Leave. Personal workspace: rename only, with a short note why there is nothing else. |
+| `/w/[workspaceId]/settings` | Admin: rename; members with role select and Remove; invite (a search form `?q=` lists matching users, each with an Invite button); pending invitations with Cancel; Delete (confirmation by typing the workspace name; the trimmed input must equal the name exactly, checked server-side). Member: workspace name, member list, Leave. Personal workspace: only a short note that it can't be renamed, shared or deleted. |
 
 `src/app/w/[workspaceId]/layout.tsx` shows the workspace name with links
 Home / Settings (presentation only, see *Access*). The header gains a
@@ -180,7 +180,7 @@ leaving a workspace the user lands on `/workspaces`. Session reads stay inside
     `ensurePersonalWorkspace` calls create one; a failing ensure redirects the
     callback to `/sign-in?error=sign_in_failed` and leaves no session row.
   - R2: personal workspace cannot be deleted, left, invited to, or have its
-    role changed; it can be renamed.
+    role changed, or be renamed.
   - R3/R4: creator is admin; a member cannot rename, delete, invite, cancel,
     remove or change roles; a non-member gets `not_found` for everything,
     including reads.
@@ -199,7 +199,7 @@ leaving a workspace the user lands on `/workspaces`. Session reads stay inside
   create a workspace; invite the second user via search; second user accepts
   on `/workspaces` and sees the workspace as member (no admin controls);
   admin promotes them; first admin leaves; personal workspace settings show
-  only rename; deleting a workspace requires typing its name.
+  only a note; deleting a workspace requires typing its name.
 
 ## Docs
 

@@ -157,7 +157,7 @@ Own tables (`workspace`, `workspace_member`, `workspace_invitation`), not Better
 organization plugin. Rules (spec: `docs/specs/2026-10-10-m2-workspaces-design.md`):
 
 - Every user has one personal workspace (`personal_user_id`), ensured at every sign-in in
-  `databaseHooks.session.create.before` and by `/`. It can be renamed, not deleted or shared.
+  `databaseHooks.session.create.before` and by `/`. It can't be renamed, deleted or shared.
 - Roles `admin` and `member`. Admins rename, delete, invite, cancel invitations, remove members
   and change roles (later: manage agents, tools, keys). Members use the workspace and can leave.
 - At least one admin at all times (the last admin can't leave, be removed or be demoted).

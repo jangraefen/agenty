@@ -17,8 +17,16 @@ services:
       retries: 30
 
   # Development identity provider (OIDC); the issuer is http://localhost:8080/agenty.
+  # A username that is an email address (alice@example.com) gets it as email and name, so the
+  # login form needs no claims. Other usernames (the tests') keep the claims typed in the form.
+  # `$$` escapes compose interpolation: the server sees ${subject}.
   mock-oidc:
     image: ghcr.io/navikt/mock-oauth2-server:6.0.5
+    environment:
+      JSON_CONFIG: >-
+        {"interactiveLogin": true, "tokenCallbacks": [{"issuerId": "agenty", "requestMappings": [{
+        "requestParam": "subject", "match": "[^@]+@[^@]+", "claims": {"email": "$${subject}",
+        "name": "$${subject}", "email_verified": true}}]}]}
     ports:
       - "127.0.0.1:8080:8080"
 

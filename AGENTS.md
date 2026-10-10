@@ -149,7 +149,10 @@ see Workspaces). Defined in `src/server/auth/auth.ts`.
   `scripts/auth-generate.config.ts`); never edit it. After a Better Auth upgrade, rerun it, then
   `task db:generate`.
 - **Dev/CI IdP:** `mock-oauth2-server` on `http://localhost:8080`, issuer `/agenty`. Always use
-  `localhost` (its issuer follows the Host header).
+  `localhost` (its issuer follows the Host header). In docker-compose, `JSON_CONFIG` turns a
+  username that is an email address into the `email`/`name` claims; such mapped claims override the
+  login form's, so tests use usernames without `@` and pass their claims in the form. The CI service
+  runs without it.
 
 ### Workspaces
 

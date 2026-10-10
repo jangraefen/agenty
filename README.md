@@ -11,7 +11,8 @@ Node 24, pnpm, [go-task](https://taskfile.dev), Docker, and [opa](https://www.op
     task setup     # tool check, dependencies, Playwright browser, .env
     task dev       # Postgres + mock IdP + dev server on http://localhost:3000 (migrates on start)
 
-Sign in at the mock IdP with any username and this claims JSON:
+Sign in at the mock IdP with an email address as the username (e.g. `alice@example.test`) and an
+empty claims field; it becomes your email and name. Any other username needs a claims JSON:
 
     {"email":"alice@example.test","name":"Alice"}
 

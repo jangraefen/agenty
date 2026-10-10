@@ -166,7 +166,7 @@ organization plugin. Rules (spec: `docs/specs/2026-10-10-m2-workspaces-design.md
 - Users are never deleted for now (Better Auth's `deleteUser` is off).
 
 Code: service functions in `src/server/workspaces/` take the acting user's id explicitly and throw
-`WorkspaceError` with a fixed code. Every mutating function runs in one transaction that locks the
+`WorkspaceError` with a fixed code. Every mutating function (except create, ensure and decline, which need no lock) runs in one transaction that locks the
 workspace row first, then reads the actor's role. Pages use `requireWorkspaceMember` /
 `requireWorkspaceAdmin` (`access.ts`); non-members get the not-found page (a soft 404, since pages
 stream). Server actions go through `runWorkspaceAction` (`src/app/workspaces/run-action.ts`):

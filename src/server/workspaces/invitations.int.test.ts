@@ -19,6 +19,7 @@ import {
   createWorkspace,
   deleteWorkspace,
   ensurePersonalWorkspace,
+  removeMember,
 } from "./workspaces";
 
 const users = testUsers();
@@ -65,8 +66,8 @@ describe("R6: inviting existing users", () => {
     ]);
     expect(await searchUsersToInvite(admin.id, id, "%%")).toEqual([]);
     const tag = admin.id.slice(0, 8);
-    await users.create(`ab_cd ${tag}`);
-    expect(await searchUsersToInvite(admin.id, id, `abXcd ${tag}`)).toEqual([]);
+    await users.create(`abXcd ${tag}`);
+    expect(await searchUsersToInvite(admin.id, id, `ab_cd ${tag}`)).toEqual([]);
   });
 
   it("is only for admins of shared workspaces", async () => {
@@ -132,6 +133,28 @@ describe("R4/R5: who may invite", () => {
     await changeRole(admin.id, id, second.id, "member");
 
     await rejectsWith(inviteUser(second.id, id, invitee.id), "forbidden");
+  });
+});
+
+describe("workspace scoping", () => {
+  it("ignores targets from another workspace", async () => {
+    const adminA = await users.create("Admin A");
+    const adminB = await users.create("Admin B");
+    const memberB = await users.create("Member B");
+    const invitee = await users.create("Invitee");
+    const a = await createWorkspace(adminA.id, "Team A");
+    const b = await createWorkspace(adminB.id, "Team B");
+    await inviteUser(adminB.id, b, memberB.id);
+    await acceptInvitation(memberB.id, await invitationIdFor(memberB.id));
+    await inviteUser(adminB.id, b, invitee.id);
+    const invitationOfB = await invitationIdFor(invitee.id);
+
+    await rejectsWith(cancelInvitation(adminA.id, a, invitationOfB), "not_found");
+    expect(await db.$count(workspaceInvitation, eq(workspaceInvitation.id, invitationOfB))).toBe(1);
+    await rejectsWith(changeRole(adminA.id, a, memberB.id, "admin"), "not_found");
+    expect((await getMembership(memberB.id, b))?.role).toBe("member");
+    await rejectsWith(removeMember(adminA.id, a, memberB.id), "not_found");
+    expect(await getMembership(memberB.id, b)).not.toBeNull();
   });
 });
 

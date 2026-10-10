@@ -127,6 +127,10 @@ name, then email; returns `{ id, name, email }` only. Names can be empty
   membership (`requireWorkspace*`, or the service's own check inside its
   transaction). The acting user always comes from the session.
 - A malformed id (not a uuid) is treated as not found, before any query.
+- Input validation (names, roles, search queries, invitee ids) runs before the
+  membership check, so a non-member sending invalid input gets the validation
+  error instead of `not_found`. The answer doesn't depend on the workspace, so
+  nothing leaks; rule tests for non-members use valid input.
 - A user who is not a member gets the not-found page (`notFound()`), never a
   "forbidden" page, so a workspace they don't belong to looks like one that
   doesn't exist. Because pages stream inside `<Suspense>`, this is a soft 404

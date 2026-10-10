@@ -217,7 +217,7 @@ Expected: PASS (7 tests).
 
 - [ ] **Step 7: Full check and commit**
 
-Run: `task ci` → all green.
+Run: `task format`, then `task ci` → all green.
 
 ```bash
 git add src/server/db/schema.ts src/server/db/migrations src/server/workspaces/validation.ts src/server/workspaces/validation.test.ts
@@ -406,6 +406,9 @@ describe("R3/R4: creating and managing", () => {
     await rejectsWith(listMembers(stranger.id, id), "not_found");
     await rejectsWith(renameWorkspace(stranger.id, id, "Mine"), "not_found");
     await rejectsWith(leaveWorkspace(stranger.id, id), "not_found");
+    await rejectsWith(deleteWorkspace(stranger.id, id, "Team"), "not_found");
+    await rejectsWith(changeRole(stranger.id, id, stranger.id, "admin"), "not_found");
+    await rejectsWith(removeMember(stranger.id, id, stranger.id), "not_found");
     expect(await getMembership(stranger.id, id)).toBeNull();
   });
 
@@ -828,7 +831,7 @@ Expected: PASS (all tests). If the concurrent-demotion test fails with a deadloc
 
 - [ ] **Step 8: Full check and commit**
 
-Run: `task ci` → all green.
+Run: `task format`, then `task ci` → all green.
 
 ```bash
 git add src/server/workspaces/errors.ts src/server/workspaces/internal.ts src/server/workspaces/workspaces.ts src/server/workspaces/workspaces.int.test.ts tests/support/users.ts
@@ -875,7 +878,7 @@ import {
   listInvitationsForWorkspace,
   searchUsersToInvite,
 } from "./invitations";
-import { createWorkspace, deleteWorkspace, ensurePersonalWorkspace } from "./workspaces";
+import { changeRole, createWorkspace, deleteWorkspace, ensurePersonalWorkspace } from "./workspaces";
 
 const users = testUsers();
 const db = getDb();
@@ -920,6 +923,9 @@ describe("R6: inviting existing users", () => {
       { id: odd.id, name: odd.name, email: odd.email },
     ]);
     expect(await searchUsersToInvite(admin.id, id, "%%")).toEqual([]);
+    const tag = admin.id.slice(0, 8);
+    await users.create(`ab_cd ${tag}`);
+    expect(await searchUsersToInvite(admin.id, id, `abXcd ${tag}`)).toEqual([]);
   });
 
   it("is only for admins of shared workspaces", async () => {
@@ -948,6 +954,43 @@ describe("R6: inviting existing users", () => {
     await inviteUser(admin.id, id, invitee.id);
     await rejectsWith(inviteUser(admin.id, id, invitee.id), "already_invited");
     await rejectsWith(inviteUser(admin.id, id, admin.id), "already_member");
+  });
+});
+
+describe("R4/R5: who may invite", () => {
+  it("lets members neither invite nor cancel", async () => {
+    const { id, admin, invitee } = await setup();
+    const member = await users.create();
+    const other = await users.create();
+    await inviteUser(admin.id, id, member.id);
+    await acceptInvitation(member.id, await invitationIdFor(member.id));
+    await inviteUser(admin.id, id, invitee.id);
+    const invitationId = await invitationIdFor(invitee.id);
+
+    await rejectsWith(inviteUser(member.id, id, other.id), "forbidden");
+    await rejectsWith(cancelInvitation(member.id, id, invitationId), "forbidden");
+  });
+
+  it("answers not_found to non-members", async () => {
+    const { id, admin, invitee } = await setup();
+    const stranger = await users.create();
+    await inviteUser(admin.id, id, invitee.id);
+    const invitationId = await invitationIdFor(invitee.id);
+
+    await rejectsWith(searchUsersToInvite(stranger.id, id, "Invitee"), "not_found");
+    await rejectsWith(inviteUser(stranger.id, id, invitee.id), "not_found");
+    await rejectsWith(cancelInvitation(stranger.id, id, invitationId), "not_found");
+  });
+
+  it("stops a demoted admin from inviting", async () => {
+    const { id, admin, invitee } = await setup();
+    const second = await users.create();
+    await inviteUser(admin.id, id, second.id);
+    await acceptInvitation(second.id, await invitationIdFor(second.id));
+    await changeRole(admin.id, id, second.id, "admin");
+    await changeRole(admin.id, id, second.id, "member");
+
+    await rejectsWith(inviteUser(second.id, id, invitee.id), "forbidden");
   });
 });
 
@@ -1208,7 +1251,7 @@ Expected: PASS.
 
 - [ ] **Step 5: Full check and commit**
 
-Run: `task ci` → all green.
+Run: `task format`, then `task ci` → all green.
 
 ```bash
 git add src/server/workspaces/invitations.ts src/server/workspaces/invitations.int.test.ts
@@ -1485,7 +1528,7 @@ Expected: PASS. If the failing-setup test sees status 500 instead of 302, Better
 
 - [ ] **Step 7: Full check and commit**
 
-Run: `task ci` → all green.
+Run: `task format`, then `task ci` → all green.
 
 ```bash
 git add src/server/workspaces/access.ts src/server/workspaces/access.int.test.ts src/server/auth/auth.ts src/server/auth/auth.int.test.ts
@@ -1606,8 +1649,9 @@ export async function runWorkspaceAction<T>(path: string, operation: () => Promi
   }
 }
 
-/** A form field as a string ("" when missing). */
-export const field = (formData: FormData, name: string) => String(formData.get(name) ?? "");
+/** A form field as a string ("" when missing, or when a tampered call sent no FormData). */
+export const field = (formData: unknown, name: string) =>
+  formData instanceof FormData ? String(formData.get(name) ?? "") : "";
 ```
 
 - [ ] **Step 5: `/workspaces` actions** — `src/app/workspaces/actions.ts`:
@@ -1736,8 +1780,11 @@ async function Workspaces({ searchParams }: { searchParams: PageProps<"/workspac
                   {ws.name}
                 </Link>
                 <span className="text-muted-foreground text-sm">
-                  {ws.personal ? "Personal" : ws.role === "admin" ? "Admin" : "Member"}
+                  {ws.role === "admin" ? "Admin" : "Member"}
                 </span>
+                {ws.personal ? (
+                  <span className="rounded-full border px-2 text-muted-foreground text-xs">Personal</span>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -1878,7 +1925,7 @@ export async function inviteUserAction(workspaceId: string, formData: FormData):
 
 export async function cancelInvitationAction(workspaceId: string, formData: FormData): Promise<never> {
   const user = await requireUser();
-  const path = settingsPath(workspaceId);
+  const path = settingsPath(workspaceId, field(formData, "q"));
   await runWorkspaceAction(path, () =>
     cancelInvitation(user.id, workspaceId, field(formData, "invitationId")),
   );
@@ -2130,6 +2177,7 @@ async function InviteCard({ access, q }: { access: Access; q: string }) {
                   </span>
                   <form action={cancelInvitationAction.bind(null, id)}>
                     <input name="invitationId" type="hidden" value={invitation.id} />
+                    <input name="q" type="hidden" value={q} />
                     <Button size="sm" type="submit" variant="outline">
                       Cancel
                     </Button>
@@ -2241,14 +2289,21 @@ and rename the second test to `"a signed-in user who opens the sign-in page land
 - [ ] **Step 13: New E2E spec** — `tests/e2e/workspaces.spec.ts`:
 
 ```ts
-import { type Browser, expect, type Page, test } from "@playwright/test";
+import { type Browser, type BrowserContext, expect, type Page, test } from "@playwright/test";
 import { loginAtMockIdp, uniqueIdpUser } from "./support/mock-idp";
 
 type IdpUser = ReturnType<typeof uniqueIdpUser>;
 
+const contexts: BrowserContext[] = [];
+test.afterEach(async () => {
+  await Promise.all(contexts.splice(0).map((context) => context.close()));
+});
+
 /** A fresh browser session signed in as `user`, on their personal workspace home. */
 async function signedIn(browser: Browser, user: IdpUser): Promise<Page> {
-  const page = await (await browser.newContext()).newPage();
+  const context = await browser.newContext();
+  contexts.push(context);
+  const page = await context.newPage();
   await page.goto("/sign-in");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await loginAtMockIdp(page, user);
@@ -2314,9 +2369,9 @@ test("admins share a workspace with an invited user", async ({ browser }) => {
   const bobRow = adaPage.getByRole("listitem").filter({ hasText: bob.email });
   await bobRow.getByLabel("Role of Bob Member", { exact: true }).selectOption("admin");
   await bobRow.getByRole("button", { name: "Save role", exact: true }).click();
-  await expect(
-    adaPage.getByRole("listitem").filter({ hasText: bob.email }).getByLabel("Role of Bob Member"),
-  ).toHaveValue("admin");
+  // Bob's own view proves the change was saved (the select alone keeps what the test chose).
+  await bobPage.reload();
+  await expect(bobPage.getByLabel("Search users", { exact: true })).toBeVisible();
   await adaPage.getByRole("button", { name: "Leave workspace", exact: true }).click();
   await expect(adaPage).toHaveURL(/\/workspaces$/);
   await expect(adaPage.getByRole("link", { name: team, exact: true })).toHaveCount(0);
@@ -2342,9 +2397,10 @@ test("non-members see the not-found page", async ({ browser }) => {
   const owner = await signedIn(browser, uniqueIdpUser("wsown", "Olive Owner"));
   const stranger = await signedIn(browser, uniqueIdpUser("wsstr", "Sam Stranger"));
 
-  await owner.goto(`${owner.url()}/settings`);
+  const settings = `${owner.url()}/settings`;
+  await owner.goto(settings);
   await expect(owner.getByLabel("Workspace name", { exact: true })).toBeVisible();
-  await stranger.goto(owner.url());
+  await stranger.goto(settings);
   await expect(stranger.getByText("This page could not be found.")).toBeVisible();
   await expect(stranger.getByLabel("Workspace name", { exact: true })).toHaveCount(0);
 });
@@ -2357,7 +2413,7 @@ Expected: all pass. Typical failures: a Cache Components build error "uncached d
 
 - [ ] **Step 15: Full check and commit**
 
-Run: `task ci` → all green.
+Run: `task format`, then `task ci` → all green.
 
 ```bash
 git add src/components/ui/input.tsx src/components/ui/label.tsx src/app/workspaces src/app/w src/app/page.tsx src/components/app-header.tsx tests/e2e/auth.spec.ts tests/e2e/workspaces.spec.ts
@@ -2439,7 +2495,7 @@ errors redirect back with `?error=<code>`, shown as fixed text (`error-messages.
 
 5. Rule 4: "provider keys and tool credentials are stored AES-256-GCM encrypted" stays; add "(per workspace)" after "provider keys".
 6. Conventions: replace any mention of TanStack Query (if present) and add: "UI: server components and server actions with plain `<form>`s; no client data-fetching library."
-7. Auth section, "Use in code" bullet: add "Workspace pages use `src/server/workspaces/access.ts` on top of these."
+7. Auth section, "Use in code" bullet: add "Workspace pages use `src/server/workspaces/access.ts` on top of these." Add an Auth bullet: "**Personal workspace hook:** `databaseHooks.session.create.before` ensures the personal workspace at every sign-in, before the session row exists; a failure is rethrown as `APIError` code `sign_in_failed`, so the callback redirects to `/sign-in?error=sign_in_failed` without a session (`createAuth`'s `ensureWorkspace` option replaces it in tests)."
 
 - [ ] **Step 3: README.md**
 
@@ -2461,7 +2517,7 @@ Expected: only the deliberate "not Better Auth's organization plugin" line. In t
 
 - [ ] **Step 5: Full check and commit**
 
-Run: `task ci` → all green.
+Run: `task format`, then `task ci` → all green.
 
 ```bash
 git add src/app/layout.tsx package.json pnpm-lock.yaml AGENTS.md README.md

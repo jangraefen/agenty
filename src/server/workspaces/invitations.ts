@@ -116,6 +116,11 @@ export async function listInvitationsForWorkspace(
     .orderBy(asc(user.name), asc(user.email));
 }
 
+/** Number of pending invitations to the user (the header's badge). */
+export async function countInvitationsForUser(userId: string): Promise<number> {
+  return getDb().$count(workspaceInvitation, eq(workspaceInvitation.userId, userId));
+}
+
 const inviter = alias(user, "inviter");
 
 export async function listInvitationsForUser(

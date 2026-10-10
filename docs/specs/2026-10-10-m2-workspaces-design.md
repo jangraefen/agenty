@@ -71,7 +71,7 @@ The existing grants and default privileges give `agenty_app` access.
   `workspaces.ts`: `ensurePersonalWorkspace(userId)`, `createWorkspace`, `renameWorkspace`,
   `deleteWorkspace`, `listWorkspaces(userId)` (with role and personal flag), `listMembers`,
   `changeRole`, `removeMember`, `leaveWorkspace`. `invitations.ts`: `searchUsersToInvite`,
-  `inviteUser`, `cancelInvitation`, `listInvitationsForWorkspace`, `listInvitationsForUser`,
+  `inviteUser`, `cancelInvitation`, `listInvitationsForWorkspace`, `listInvitationsForUser`, `countInvitationsForUser`,
   `acceptInvitation`, `declineInvitation`. Shared transaction helpers (workspace row lock, actor
   role) are in `internal.ts`; input validation in `validation.ts`.
 - `errors.ts`: `WorkspaceError` with a fixed `code` (e.g. `not_found`, `forbidden`,

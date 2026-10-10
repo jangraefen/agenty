@@ -8,6 +8,7 @@ import { getMembership } from "./internal";
 import {
   acceptInvitation,
   cancelInvitation,
+  countInvitationsForUser,
   declineInvitation,
   inviteUser,
   listInvitationsForUser,
@@ -166,9 +167,11 @@ describe("R7: answering invitations", () => {
       { id: expect.any(String), workspaceId: id, workspaceName: "Team", invitedBy: "Admin" },
     ]);
 
+    expect(await countInvitationsForUser(invitee.id)).toBe(1);
     expect(await acceptInvitation(invitee.id, await invitationIdFor(invitee.id))).toBe(id);
     expect((await getMembership(invitee.id, id))?.role).toBe("member");
     expect(await listInvitationsForUser(invitee.id)).toEqual([]);
+    expect(await countInvitationsForUser(invitee.id)).toBe(0);
   });
 
   it("can only be answered by the invitee", async () => {

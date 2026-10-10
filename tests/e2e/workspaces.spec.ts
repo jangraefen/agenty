@@ -165,8 +165,11 @@ test("admins share a workspace with an invited user", async ({ browser }) => {
   await expect(alertWith(bobPage, "A workspace needs at least one admin.")).toBeVisible();
   await expect(ownRole).toContainText("Admin");
   await expect(ownRole).toBeEnabled();
-  await bobPage.reload();
+  // Opened without ?error=, so the alert below proves Leave's redirect has rendered. Otherwise
+  // that redirect can land while the next form is filled, remount the page and empty the field.
+  await bobPage.goto(`${teamUrl}/settings`);
   await expect(ownRole).toContainText("Admin");
+  await expect(alertWith(bobPage, "A workspace needs at least one admin.")).toHaveCount(0);
   await bobPage.getByRole("button", { name: "Leave workspace", exact: true }).click();
   await expect(alertWith(bobPage, "A workspace needs at least one admin.")).toBeVisible();
   await bobPage.getByLabel("Type the workspace name to confirm", { exact: true }).fill("wrong");

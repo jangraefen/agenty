@@ -1,10 +1,10 @@
 import { expect, type Page, type Route, test } from "@playwright/test";
 import { loginAtMockIdp, uniqueIdpUser } from "./support/mock-idp";
 
-/** Opens the sign-in page once it is hydrated (the button is disabled until then). */
+/** Opens the sign-in page. The button submits a form to a server action: no wait for hydration. */
 async function gotoSignIn(page: Page, query = "") {
   await page.goto(`/sign-in${query}`);
-  await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
 }
 
 // Next's route announcer is also a role=alert element, so match the text.
@@ -105,6 +105,7 @@ test.describe("with an unreachable identity provider", () => {
     await gotoSignIn(page);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
 
+    await expect(page).toHaveURL(/\/sign-in\?error=sign_in_unavailable$/);
     await expect(
       alertWith(page, "Sign-in is temporarily unavailable. Please try again later."),
     ).toBeVisible();

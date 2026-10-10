@@ -2,6 +2,7 @@ import "server-only";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError, createAuthMiddleware } from "better-auth/api";
+import { nextCookies } from "better-auth/next-js";
 import { genericOAuth } from "better-auth/plugins";
 import { account, session, user, verification } from "@/server/db/auth-schema";
 import { getDb } from "@/server/db/client";
@@ -40,24 +41,29 @@ export function createAuth(config: AuthConfig, { withOidc = true } = {}) {
     session: { expiresIn: 12 * 60 * 60, disableSessionRefresh: true },
     account: { encryptOAuthTokens: true },
     onAPIError: { errorURL: "/sign-in" },
-    plugins: withOidc
-      ? [
-          genericOAuth({
-            config: [
-              {
-                providerId: OIDC_PROVIDER_ID,
-                discoveryUrl: config.oidc.discoveryUrl,
-                clientId: config.oidc.clientId,
-                clientSecret: config.oidc.clientSecret,
-                scopes: ["openid", "email", "profile"],
-                requireIdTokenVerification: true,
-                // Sign-out is local only: it ends the app session, not the session at the IdP.
-                disableProviderLogout: true,
-              },
-            ],
-          }),
-        ]
-      : [],
+    plugins: [
+      ...(withOidc
+        ? [
+            genericOAuth({
+              config: [
+                {
+                  providerId: OIDC_PROVIDER_ID,
+                  discoveryUrl: config.oidc.discoveryUrl,
+                  clientId: config.oidc.clientId,
+                  clientSecret: config.oidc.clientSecret,
+                  scopes: ["openid", "email", "profile"],
+                  requireIdTokenVerification: true,
+                  // Sign-out is local only: it ends the app session, not the session at the IdP.
+                  disableProviderLogout: true,
+                },
+              ],
+            }),
+          ]
+        : []),
+      // Last, as Better Auth requires: sets cookies of auth.api calls (e.g. the sign-in state in
+      // the sign-in server action) through Next's cookies().
+      nextCookies(),
+    ],
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
         // Both endpoints would accept a bare ID token with a nonce the client chooses as a sign-in,

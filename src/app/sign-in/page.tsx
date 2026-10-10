@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
 import { getCurrentUser } from "@/server/auth/session";
+import { signIn } from "./actions";
 import { signInErrorMessage } from "./error-messages";
-import { SignInButton } from "./sign-in-button";
 
 export const metadata: Metadata = { title: "Sign in · Agenty" };
 
@@ -17,18 +18,20 @@ export default function SignInPage({ searchParams }: PageProps<"/sign-in">) {
       </CardHeader>
       <CardContent>
         <Suspense>
-          <SignInButtonWithError searchParams={searchParams} />
+          <SignInForm searchParams={searchParams} />
         </Suspense>
       </CardContent>
     </Card>
   );
 }
 
+const first = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value);
+
 /**
  * Sends signed-in users home. Reads only `error`, never `error_description`: that is text from
  * the identity provider.
  */
-async function SignInButtonWithError({
+async function SignInForm({
   searchParams,
 }: {
   searchParams: PageProps<"/sign-in">["searchParams"];
@@ -36,6 +39,16 @@ async function SignInButtonWithError({
   if (await getCurrentUser()) redirect("/");
 
   const { error } = await searchParams;
-  const code = Array.isArray(error) ? error[0] : error;
-  return <SignInButton initialError={signInErrorMessage(code)} />;
+  const code = first(error);
+  const message = signInErrorMessage(code);
+  return (
+    <form action={signIn} className="flex flex-col gap-4">
+      {message ? (
+        <p className="text-destructive text-sm" role="alert">
+          {message}
+        </p>
+      ) : null}
+      <Button type="submit">Sign in</Button>
+    </form>
+  );
 }

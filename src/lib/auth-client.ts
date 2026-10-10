@@ -1,4 +1,4 @@
 import { createAuthClient } from "better-auth/react";
 
-/** Browser client for /api/auth; signIn.social also covers the genericOAuth provider. */
+/** Browser client for /api/auth (sign-out); sign-in starts in a server action. */
 export const authClient = createAuthClient();

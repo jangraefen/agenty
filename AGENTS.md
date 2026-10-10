@@ -190,8 +190,9 @@ has no `server-only` import because `scripts/migrate.ts` (`task db:migrate`) run
 - Configuration is read only via `getEnv()` (lazy, so `next build` needs no runtime env); the
   owner URL only via `takeMigrationUrl()`. `src/instrumentation.ts` calls `process.exit(1)` when
   startup fails, because Next only logs `register()` failures. This also stops `next dev`.
-- Route handlers that touch the database call `await connection()` first (Cache Components is on;
-  without it Next may try to prerender them at build time).
+- Route handlers that touch the database without reading the request (e.g. `/api/health`) call
+  `await connection()` first (Cache Components is on; otherwise Next may prerender them at build
+  time). Handlers that read the request, like the auth route, are dynamic anyway.
 - Error bodies never contain internal details; log them server-side. Never echo connection strings
   (`scripts/check-db.mjs` prints only the error code, e.g. `ECONNREFUSED`).
 - Shell scripts stay POSIX `sh` and must work with BSD/macOS tools (e.g. `scripts/build-policy.sh`

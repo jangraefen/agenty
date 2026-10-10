@@ -40,7 +40,7 @@ export async function startSignIn(
     new Request(`${baseURL}/api/auth/sign-in/social`, {
       method: "POST",
       headers: { "content-type": "application/json", origin: baseURL },
-      body: JSON.stringify({ provider: "oidc", callbackURL: "/", errorCallbackURL: "/sign-in" }),
+      body: JSON.stringify({ provider: "oidc", callbackURL: "/w", errorCallbackURL: "/sign-in" }),
     }),
   );
   if (response.status !== 200) {

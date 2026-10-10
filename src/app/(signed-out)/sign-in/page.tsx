@@ -29,7 +29,7 @@ export default function SignInPage({ searchParams }: PageProps<"/sign-in">) {
 const first = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value);
 
 /**
- * Sends signed-in users home. `error_description` is IdP text: it is logged on the server, never
+ * Sends signed-in users to /w (their workspace). `error_description` is IdP text: it is logged on the server, never
  * shown.
  */
 async function SignInForm({
@@ -37,7 +37,7 @@ async function SignInForm({
 }: {
   searchParams: PageProps<"/sign-in">["searchParams"];
 }) {
-  if (await getCurrentUser()) redirect("/");
+  if (await getCurrentUser()) redirect("/w");
 
   const params = await searchParams;
   const code = first(params.error);

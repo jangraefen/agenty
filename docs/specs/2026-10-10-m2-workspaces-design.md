@@ -171,6 +171,7 @@ are logged server-side by class only and shown as a generic message.
 | Route | Content |
 |---|---|
 | `/` | Signed in: redirect to the personal workspace. Signed out: landing (unchanged). |
+| `/w` | Where sign-in lands (`callbackURL`; also the sign-in page's redirect for signed-in users): redirect to the personal workspace, inside the signed-in layout. Signed out: to `/sign-in`. |
 | `/workspaces` | The user's workspaces (name, role, "Personal" badge), a create form, and pending invitations to the user (workspace name, invited by) with Accept/Decline. |
 | `/w/[workspaceId]` | Workspace home: name, the user's role, placeholder "Agents arrive in the next milestone". |
 | `/w/[workspaceId]/settings` | Admin: rename; members table (Name, Email, Role with a role select that saves on change (disabled while saving; a rejected change shows the error and the stored role again), an actions column with Remove on every row but the admin's own); invite (live search as you type, lists matching users with an Invite button, or "Member"/"Invited" for those already in or invited); pending invitations with Cancel; a "Danger zone" card with Leave and Delete (confirmation by typing the workspace name; the trimmed input must equal the name exactly, checked server-side). Member: members table with read-only roles, Danger zone with Leave only. Personal workspace: redirects to the workspace home. Names fall back to the email when empty. |

@@ -92,6 +92,23 @@ test.describe("initial page loads show the static shell first", () => {
   });
 });
 
+test("/w (where sign-in lands; redirects inside the signed-in layout)", async ({
+  page,
+  baseURL,
+}) => {
+  await instant(
+    page,
+    async () => {
+      await page.goto("/w");
+      // The sidebar frame is there from the first paint, before the redirect streams.
+      await expect(sidebar(page)).toBeVisible();
+    },
+    { baseURL },
+  );
+  await expect(page).toHaveURL(personalUrl);
+  await expect(homeCard(page)).toBeVisible();
+});
+
 test.describe("client navigations commit at once and keep the sidebar", () => {
   test("into /workspaces", async ({ page }) => {
     await page.goto(teamUrl);

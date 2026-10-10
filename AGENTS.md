@@ -59,6 +59,7 @@ src/app/            routes, pages, route handlers (thin: parse, call src/server,
     sign-in/        sign-in page, sign-in server action, fixed error messages
   (signed-in)/      layout with the sidebar frame and mobile top bar in the static shell, `<main>`
     workspaces/     workspace list, create form, invitations; shared action runner and error messages
+    w/page.tsx      `/w`: where sign-in lands; redirects to the personal workspace
     w/[workspaceId]/  workspace home and settings (every page checks membership itself)
   api/workspaces/   invite user search route (the only client-side read)
 src/components/     app sidebar (app-sidebar.tsx: server part; workspace switcher, user menu and
@@ -132,8 +133,10 @@ see Workspaces). Defined in `src/server/auth/auth.ts`.
   plain text (Better Auth limitation; replay is blocked by the hook). `BETTER_AUTH_SECRET` is the
   encryption key and signs sessions: rotating it signs everyone out and makes stored tokens
   unreadable.
-- **Sign-in:** the sign-in page is a plain `<form>` whose server action (`src/app/(signed-out)/sign-in/actions.ts`)
-  calls `auth.api.signInSocial` and redirects to the IdP. The `nextCookies()` plugin (last in
+- **Sign-in:** the sign-in page is a plain `<form>` whose server action
+  (`src/app/(signed-out)/sign-in/actions.ts`) calls `auth.api.signInSocial` with `callbackURL`
+  `/w` (it redirects to the personal workspace inside the signed-in layout, so no sidebar-less
+  page shows first) and redirects to the IdP. The `nextCookies()` plugin (last in
   `plugins`, as Better Auth requires) writes the cookies Better Auth sets in `auth.api` calls, here
   the signed state cookie, through Next's `cookies()`; without it the callback fails with
   `state_mismatch`. A missing provider (`PROVIDER_NOT_FOUND`) redirects to

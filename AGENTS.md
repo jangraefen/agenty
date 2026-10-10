@@ -215,7 +215,8 @@ contains `.next/standalone`.
 testing API that `@next/playwright`'s `instant()` needs) only when `EXPOSE_TESTING_API=1` at build
 time. `task build`, and so `task test:e2e` and `task ci`, set it; the Dockerfile runs
 `scripts/build.sh` without it, so the image never contains the testing API. Don't set it anywhere
-else.
+else. The CI `docker` job checks the built image: the flag must be `false` in `server.js` and
+`true` nowhere (also not in `.next/required-server-files.json`).
 
 ### Migrations on start
 

@@ -32,6 +32,7 @@ export const metadata: Metadata = { title: "Workspace settings · Agenty" };
 type Props = PageProps<"/w/[workspaceId]/settings">;
 type Member = Awaited<ReturnType<typeof listMembers>>[number];
 type Invitation = Awaited<ReturnType<typeof listInvitationsForWorkspace>>[number];
+type Access = WorkspaceAccess & { user: { id: string } };
 
 const first = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value);
 const displayName = (person: { name: string; email: string }) => person.name || person.email;
@@ -72,8 +73,6 @@ export default async function SettingsPage({ params, searchParams }: Props) {
     </div>
   );
 }
-
-type Access = WorkspaceAccess & { user: { id: string } };
 
 function RenameCard({ access }: { access: Access }) {
   return (

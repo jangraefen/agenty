@@ -63,7 +63,7 @@ src/app/            routes, pages, route handlers (thin: parse, call src/server,
     w/[workspaceId]/  workspace home and settings (every page checks membership itself)
   api/workspaces/   invite user search route (the only client-side read)
 src/components/     app sidebar (app-sidebar.tsx: server part; workspace switcher, user menu and
-                    mobile top bar are client components)
+                    mobile top bar are client components); page-loading.tsx (every loading.tsx)
   ui/               shadcn/ui components (Base UI preset `base-nova`)
 src/hooks/          client hooks (use-mobile.ts, from shadcn's sidebar)
 src/lib/            shared client/server utilities (utils.ts re-exports `cn` from the `cn` package)
@@ -257,7 +257,7 @@ has no `server-only` import because `scripts/migrate.ts` (`task db:migrate`) run
 - Cache Components requires request-time data (session, `params`, `searchParams`) inside a
   `<Suspense>`, and a client navigation only re-renders below the layout both routes share, so a
   boundary in a parent layout doesn't count there. Every page that reads request-time data has a
-  `loading.tsx` next to it (fallback `null`), which wraps that page in its own boundary (or the
+  `loading.tsx` next to it, which wraps that page in its own boundary (or the
   page wraps the reading part in `<Suspense>` to keep a static part instant, like sign-in). A
   layout that reads request-time data wraps that part in `<Suspense>` itself (the workspace nav).
   `next build` only checks page loads; `next dev` logs `Route "...": ... uncached data` for
@@ -267,7 +267,9 @@ has no `server-only` import because `scripts/migrate.ts` (`task db:migrate`) run
   missing boundary below the shared layout (e.g. without `w/[workspaceId]/loading.tsx` the
   settings → home navigation never commits), but not a page whose parent segment's
   `loading.tsx` still covers it at runtime (e.g. a missing `settings/loading.tsx`); `next dev`
-  still reports those, so keep one `loading.tsx` per page. New pages get an entry there.
+  still reports those, so keep one `loading.tsx` per page. New pages get an entry there. Each
+  `loading.tsx` only re-exports the shared `src/components/page-loading.tsx` (a centred spinner
+  that fades in after 300 ms via CSS, so fast navigations show nothing).
 - Sidebar: route groups split the pages. `(signed-in)/layout.tsx` renders the sidebar
   (`src/components/app-sidebar.tsx`) and the mobile top bar as part of the static shell: the
   frame, "Agenty" and skeletons for the switcher and user menu, so a full load doesn't shift the
@@ -279,8 +281,9 @@ has no `server-only` import because `scripts/migrate.ts` (`task db:migrate`) run
   (`useParams()`; outside `/w/...` it shows "Workspaces") and the workspace list only updates on
   `refresh()` or a full load. Client hooks that read the URL in the shell (`usePathname()` in the
   top bar) sit in their own `<Suspense>`: `/w/[workspaceId]` has no known params at prerender.
-  The sidebar starts open on every visit; folding (rail, Ctrl/Cmd+B) is not restored (shadcn's
-  cookie is written but never read).
+  The sidebar starts open on every visit; folding (rail, Ctrl/Cmd+B) lasts for the visit only.
+  Its state is not persisted (maintainer decision): shadcn's `sidebar_state` cookie write is
+  removed from `src/components/ui/sidebar.tsx`.
 - Route handlers that touch the database without reading the request (e.g. `/api/health`) call
   `await connection()` first (Cache Components is on; otherwise Next may prerender them at build
   time). Handlers that read the request, like the auth route, are dynamic anyway.

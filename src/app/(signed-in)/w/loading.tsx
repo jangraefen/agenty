@@ -1,3 +1,1 @@
-export default function Loading() {
-  return null;
-}
+export { default } from "@/components/page-loading";

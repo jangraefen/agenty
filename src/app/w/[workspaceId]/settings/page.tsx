@@ -6,13 +6,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   Table,
   TableBody,
   TableCell,
@@ -32,6 +25,7 @@ import {
   renameWorkspaceAction,
 } from "./actions";
 import { InviteSearch } from "./invite-search";
+import { RoleSelect } from "./role-select";
 
 export const metadata: Metadata = { title: "Workspace settings · Agenty" };
 
@@ -40,10 +34,6 @@ type Member = Awaited<ReturnType<typeof listMembers>>[number];
 
 const first = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value);
 const displayName = (person: { name: string; email: string }) => person.name || person.email;
-const roleItems = [
-  { value: "admin", label: "Admin" },
-  { value: "member", label: "Member" },
-];
 
 export default async function SettingsPage({ params, searchParams }: Props) {
   const { workspaceId } = await params;
@@ -133,30 +123,9 @@ function MembersCard({ access, members }: { access: Access; members: Member[] })
                 <TableCell className="text-muted-foreground">{member.email}</TableCell>
                 <TableCell>
                   {isAdmin ? (
-                    <form
-                      action={changeRoleAction.bind(null, id)}
-                      className="flex items-center gap-2"
-                    >
+                    <form action={changeRoleAction.bind(null, id)}>
                       <input name="userId" type="hidden" value={member.userId} />
-                      <Select defaultValue={member.role} items={roleItems} name="role">
-                        <SelectTrigger
-                          aria-label={`Role of ${displayName(member)}`}
-                          className="w-28"
-                          size="sm"
-                        >
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {roleItems.map((item) => (
-                            <SelectItem key={item.value} value={item.value}>
-                              {item.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Button size="sm" type="submit" variant="outline">
-                        Save role
-                      </Button>
+                      <RoleSelect label={`Role of ${displayName(member)}`} role={member.role} />
                     </form>
                   ) : member.role === "admin" ? (
                     "Admin"

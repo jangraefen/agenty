@@ -134,14 +134,17 @@ test("admins share a workspace with an invited user", async ({ browser }) => {
     .getByRole("row")
     .filter({ hasText: bob.email });
   await expect(bobRow.getByRole("button", { name: "Remove", exact: true })).toBeVisible();
-  await bobRow.getByLabel("Role of Bob Member", { exact: true }).click();
-  await adaPage.getByRole("option", { name: "Admin", exact: true }).click();
-  await expect(bobRow.getByLabel("Role of Bob Member", { exact: true })).toContainText("Admin");
+  // Choosing a role saves it at once; there is no save button.
+  await expect(bobRow.getByRole("button", { name: /^Save/ })).toHaveCount(0);
+  const bobRole = bobRow.getByLabel("Role of Bob Member", { exact: true });
   // The page looks the same afterwards, so wait for the server action's response.
   const saved = adaPage.waitForResponse((response) => response.request().method() === "POST");
-  await bobRow.getByRole("button", { name: "Save role", exact: true }).click();
+  await bobRole.click();
+  await adaPage.getByRole("option", { name: "Admin", exact: true }).click();
   await saved;
-  // Bob's own view proves the change was saved (the select alone keeps what the test chose).
+  await expect(bobRole).toContainText("Admin");
+  await expect(bobRole).toBeEnabled();
+  // Bob's own view proves the change was saved (the select alone shows what the test chose).
   await bobPage.reload();
   await expect(bobPage.getByLabel("Search users", { exact: true })).toBeVisible();
   await adaPage.getByRole("button", { name: "Leave workspace", exact: true }).click();
@@ -152,8 +155,18 @@ test("admins share a workspace with an invited user", async ({ browser }) => {
   await adaPage.goto(teamUrl);
   await expect(adaPage.getByText("This page could not be found.")).toBeVisible();
 
-  // Bob, now the only admin, can't leave; deleting needs the exact name.
+  // Bob, now the only admin, can't demote himself or leave; deleting needs the exact name.
   await bobPage.goto(`${teamUrl}/settings`);
+  const ownRole = bobPage
+    .getByRole("table", { name: "Members" })
+    .getByLabel("Role of Bob Member", { exact: true });
+  await ownRole.click();
+  await bobPage.getByRole("option", { name: "Member", exact: true }).click();
+  await expect(alertWith(bobPage, "A workspace needs at least one admin.")).toBeVisible();
+  await expect(ownRole).toContainText("Admin");
+  await expect(ownRole).toBeEnabled();
+  await bobPage.reload();
+  await expect(ownRole).toContainText("Admin");
   await bobPage.getByRole("button", { name: "Leave workspace", exact: true }).click();
   await expect(alertWith(bobPage, "A workspace needs at least one admin.")).toBeVisible();
   await bobPage.getByLabel("Type the workspace name to confirm", { exact: true }).fill("wrong");

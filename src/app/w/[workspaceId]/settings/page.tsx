@@ -1,38 +1,59 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { workspaceErrorMessage } from "@/app/workspaces/error-messages";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { requireWorkspaceMember, type WorkspaceAccess } from "@/server/workspaces/access";
-import { listInvitationsForWorkspace, searchUsersToInvite } from "@/server/workspaces/invitations";
-import { userSearchQuerySchema } from "@/server/workspaces/validation";
+import { listInvitationsForWorkspace } from "@/server/workspaces/invitations";
 import { listMembers } from "@/server/workspaces/workspaces";
 import {
   cancelInvitationAction,
   changeRoleAction,
   deleteWorkspaceAction,
-  inviteUserAction,
   leaveWorkspaceAction,
   removeMemberAction,
   renameWorkspaceAction,
 } from "./actions";
+import { InviteSearch } from "./invite-search";
 
 export const metadata: Metadata = { title: "Workspace settings · Agenty" };
 
 type Props = PageProps<"/w/[workspaceId]/settings">;
+type Member = Awaited<ReturnType<typeof listMembers>>[number];
 
 const first = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value);
 const displayName = (person: { name: string; email: string }) => person.name || person.email;
-const selectClass = "h-8 rounded-md border border-input bg-transparent px-2 text-sm";
+const roleItems = [
+  { value: "admin", label: "Admin" },
+  { value: "member", label: "Member" },
+];
 
 export default async function SettingsPage({ params, searchParams }: Props) {
   const { workspaceId } = await params;
   const access = await requireWorkspaceMember(workspaceId);
+  // The personal workspace has nothing to set (its nav shows Settings disabled).
+  if (access.workspace.personal) redirect(`/w/${access.workspace.id}`);
   const query = await searchParams;
   const error = workspaceErrorMessage(first(query.error));
   const isAdmin = access.role === "admin";
-  const { personal } = access.workspace;
+  const members = await listMembers(access.user.id, access.workspace.id);
 
   return (
     <div className="flex flex-col gap-6">
@@ -42,19 +63,12 @@ export default async function SettingsPage({ params, searchParams }: Props) {
           {error}
         </p>
       ) : null}
-      {personal ? (
-        <p className="text-muted-foreground text-sm">
-          This is your personal workspace. It can't be renamed, shared or deleted.
-        </p>
-      ) : (
-        <>
-          {isAdmin ? <RenameCard access={access} /> : null}
-          <MembersCard access={access} />
-          {isAdmin ? <InviteCard access={access} q={first(query.q)?.trim() ?? ""} /> : null}
-          <LeaveCard access={access} />
-          {isAdmin ? <DeleteCard access={access} /> : null}
-        </>
-      )}
+      {isAdmin ? <RenameCard access={access} /> : null}
+      <MembersCard access={access} members={members} />
+      {isAdmin ? (
+        <InviteCard access={access} members={members} q={first(query.q)?.trim() ?? ""} />
+      ) : null}
+      <DangerZoneCard access={access} />
     </div>
   );
 }
@@ -89,8 +103,7 @@ function RenameCard({ access }: { access: Access }) {
   );
 }
 
-async function MembersCard({ access }: { access: Access }) {
-  const members = await listMembers(access.user.id, access.workspace.id);
+function MembersCard({ access, members }: { access: Access; members: Member[] }) {
   const isAdmin = access.role === "admin";
   const id = access.workspace.id;
 
@@ -100,62 +113,96 @@ async function MembersCard({ access }: { access: Access }) {
         <CardTitle>Members</CardTitle>
       </CardHeader>
       <CardContent>
-        <ul className="flex flex-col gap-3">
-          {members.map((member) => (
-            <li className="flex flex-wrap items-center justify-between gap-3" key={member.userId}>
-              <span>
-                <span className="font-medium">{displayName(member)}</span>
-                <span className="text-muted-foreground"> · {member.email}</span>
-              </span>
+        <Table aria-label="Members">
+          <TableHeader>
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Email</TableHead>
+              <TableHead>Role</TableHead>
               {isAdmin ? (
-                <span className="flex items-center gap-2">
-                  <form
-                    action={changeRoleAction.bind(null, id)}
-                    className="flex items-center gap-2"
-                  >
-                    <input name="userId" type="hidden" value={member.userId} />
-                    <select
-                      aria-label={`Role of ${displayName(member)}`}
-                      className={selectClass}
-                      defaultValue={member.role}
-                      name="role"
+                <TableHead>
+                  <span className="sr-only">Actions</span>
+                </TableHead>
+              ) : null}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {members.map((member) => (
+              <TableRow key={member.userId}>
+                <TableCell className="font-medium">{displayName(member)}</TableCell>
+                <TableCell className="text-muted-foreground">{member.email}</TableCell>
+                <TableCell>
+                  {isAdmin ? (
+                    <form
+                      action={changeRoleAction.bind(null, id)}
+                      className="flex items-center gap-2"
                     >
-                      <option value="admin">Admin</option>
-                      <option value="member">Member</option>
-                    </select>
-                    <Button size="sm" type="submit" variant="outline">
-                      Save role
-                    </Button>
-                  </form>
-                  {member.userId === access.user.id ? null : (
-                    <form action={removeMemberAction.bind(null, id)}>
                       <input name="userId" type="hidden" value={member.userId} />
+                      <Select defaultValue={member.role} items={roleItems} name="role">
+                        <SelectTrigger
+                          aria-label={`Role of ${displayName(member)}`}
+                          className="w-28"
+                          size="sm"
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {roleItems.map((item) => (
+                            <SelectItem key={item.value} value={item.value}>
+                              {item.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                       <Button size="sm" type="submit" variant="outline">
-                        Remove
+                        Save role
                       </Button>
                     </form>
+                  ) : member.role === "admin" ? (
+                    "Admin"
+                  ) : (
+                    "Member"
                   )}
-                </span>
-              ) : (
-                <span className="text-muted-foreground text-sm">
-                  {member.role === "admin" ? "Admin" : "Member"}
-                </span>
-              )}
-            </li>
-          ))}
-        </ul>
+                </TableCell>
+                {isAdmin ? (
+                  <TableCell className="text-right">
+                    {member.userId === access.user.id ? null : (
+                      <form action={removeMemberAction.bind(null, id)}>
+                        <input name="userId" type="hidden" value={member.userId} />
+                        <Button size="sm" type="submit" variant="outline">
+                          Remove
+                        </Button>
+                      </form>
+                    )}
+                  </TableCell>
+                ) : null}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       </CardContent>
     </Card>
   );
 }
 
-async function InviteCard({ access, q }: { access: Access; q: string }) {
+async function InviteCard({
+  access,
+  members,
+  q,
+}: {
+  access: Access;
+  members: Member[];
+  q: string;
+}) {
   const id = access.workspace.id;
-  const parsed = q ? userSearchQuerySchema.safeParse(q) : undefined;
-  const [results, invitations] = await Promise.all([
-    parsed?.success ? searchUsersToInvite(access.user.id, id, parsed.data) : Promise.resolve(null),
-    listInvitationsForWorkspace(access.user.id, id),
-  ]);
+  const invitations = await listInvitationsForWorkspace(access.user.id, id);
+  // Changes whenever a member or invitation is added or removed; the search then reloads.
+  const revision = [
+    ...members.map((m) => `m${m.userId}`),
+    ...invitations.map((i) => `i${i.userId}`),
+  ]
+    .sort()
+    .join(",");
 
   return (
     <Card>
@@ -164,42 +211,7 @@ async function InviteCard({ access, q }: { access: Access; q: string }) {
         <CardDescription>Search people who have signed in to Agenty before.</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
-        <form action={`/w/${id}/settings`} className="flex items-end gap-3">
-          <div className="flex flex-1 flex-col gap-2">
-            <Label htmlFor="invite-q">Search users</Label>
-            <Input defaultValue={q} id="invite-q" maxLength={100} name="q" />
-          </div>
-          <Button type="submit" variant="outline">
-            Search
-          </Button>
-        </form>
-        {parsed && !parsed.success ? (
-          <p className="text-destructive text-sm" role="alert">
-            Search needs 2 to 100 characters.
-          </p>
-        ) : null}
-        {results && results.length === 0 ? (
-          <p className="text-muted-foreground text-sm">No matching users.</p>
-        ) : null}
-        {results && results.length > 0 ? (
-          <ul aria-label="Search results" className="flex flex-col gap-2">
-            {results.map((found) => (
-              <li className="flex items-center justify-between gap-3" key={found.id}>
-                <span>
-                  <span className="font-medium">{displayName(found)}</span>
-                  <span className="text-muted-foreground"> · {found.email}</span>
-                </span>
-                <form action={inviteUserAction.bind(null, id)}>
-                  <input name="userId" type="hidden" value={found.id} />
-                  <input name="q" type="hidden" value={q} />
-                  <Button size="sm" type="submit">
-                    Invite
-                  </Button>
-                </form>
-              </li>
-            ))}
-          </ul>
-        ) : null}
+        <InviteSearch initialQuery={q} revision={revision} workspaceId={id} />
         {invitations.length > 0 ? (
           <div className="flex flex-col gap-2">
             <h3 className="font-medium text-sm">Pending invitations</h3>
@@ -227,45 +239,50 @@ async function InviteCard({ access, q }: { access: Access; q: string }) {
   );
 }
 
-function LeaveCard({ access }: { access: Access }) {
+/** Leave for everyone; Delete (with the type-the-name confirmation) for admins. */
+function DangerZoneCard({ access }: { access: Access }) {
+  const isAdmin = access.role === "admin";
   return (
-    <Card>
+    <Card className="ring-destructive/40">
       <CardHeader>
-        <CardTitle>Leave</CardTitle>
+        <CardTitle className="text-destructive">Danger zone</CardTitle>
       </CardHeader>
-      <CardContent>
-        <form action={leaveWorkspaceAction.bind(null, access.workspace.id)}>
-          <Button type="submit" variant="outline">
-            Leave workspace
-          </Button>
-        </form>
-      </CardContent>
-    </Card>
-  );
-}
-
-function DeleteCard({ access }: { access: Access }) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Delete</CardTitle>
-        <CardDescription>
-          Deletes the workspace for all members. This can't be undone.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form
-          action={deleteWorkspaceAction.bind(null, access.workspace.id)}
-          className="flex items-end gap-3"
-        >
-          <div className="flex flex-1 flex-col gap-2">
-            <Label htmlFor="delete-confirmation">Type the workspace name to confirm</Label>
-            <Input autoComplete="off" id="delete-confirmation" name="confirmation" required />
+      <CardContent className="flex flex-col gap-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-col gap-1">
+            <h3 className="font-medium text-sm">Leave</h3>
+            <p className="text-muted-foreground text-sm">
+              You lose access until an admin invites you again.
+            </p>
           </div>
-          <Button type="submit" variant="destructive">
-            Delete workspace
-          </Button>
-        </form>
+          <form action={leaveWorkspaceAction.bind(null, access.workspace.id)}>
+            <Button type="submit" variant="outline">
+              Leave workspace
+            </Button>
+          </form>
+        </div>
+        {isAdmin ? (
+          <div className="flex flex-col gap-3 border-t pt-6">
+            <div className="flex flex-col gap-1">
+              <h3 className="font-medium text-sm">Delete</h3>
+              <p className="text-muted-foreground text-sm">
+                Deletes the workspace for all members. This can't be undone.
+              </p>
+            </div>
+            <form
+              action={deleteWorkspaceAction.bind(null, access.workspace.id)}
+              className="flex items-end gap-3"
+            >
+              <div className="flex flex-1 flex-col gap-2">
+                <Label htmlFor="delete-confirmation">Type the workspace name to confirm</Label>
+                <Input autoComplete="off" id="delete-confirmation" name="confirmation" required />
+              </div>
+              <Button type="submit" variant="destructive">
+                Delete workspace
+              </Button>
+            </form>
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );

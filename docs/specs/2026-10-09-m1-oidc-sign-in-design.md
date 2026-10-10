@@ -56,7 +56,8 @@ maintainer has approved the merge.
   `PROVIDER_NOT_FOUND` and other failures to their error codes.
 - E2E: landing when signed out; sign in through the mock IdP → placeholder and
   header with the user's name; sign out → landing; an error redirect
-  (`/sign-in?error=…`) shows a fixed message.
+  (`/sign-in?error=…`) shows a fixed message; with an unreachable IdP (second
+  test server) sign-in redirects to `/sign-in?error=sign_in_unavailable`.
 
 ## Docs
 

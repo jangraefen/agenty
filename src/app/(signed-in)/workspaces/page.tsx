@@ -4,6 +4,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { requireUser } from "@/server/auth/session";
 import { listInvitationsForUser } from "@/server/workspaces/invitations";
 import { listWorkspaces } from "@/server/workspaces/workspaces";
@@ -74,23 +82,32 @@ export default async function WorkspacesPage({ searchParams }: PageProps<"/works
           <CardTitle>Your workspaces</CardTitle>
         </CardHeader>
         <CardContent>
-          <ul className="flex flex-col gap-2">
-            {workspaces.map((ws) => (
-              <li className="flex items-center gap-3" key={ws.id}>
-                <Link className="font-medium hover:underline" href={`/w/${ws.id}`}>
-                  {ws.name}
-                </Link>
-                <span className="text-muted-foreground text-sm">
-                  {ws.role === "admin" ? "Admin" : "Member"}
-                </span>
-                {ws.personal ? (
-                  <span className="rounded-full border px-2 text-muted-foreground text-xs">
-                    Personal
-                  </span>
-                ) : null}
-              </li>
-            ))}
-          </ul>
+          <Table aria-label="Your workspaces">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Your role</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {workspaces.map((ws) => (
+                <TableRow key={ws.id}>
+                  <TableCell>
+                    <Link className="font-medium hover:underline" href={`/w/${ws.id}`}>
+                      {ws.name}
+                    </Link>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {ws.personal ? "Personal" : "Shared"}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {ws.role === "admin" ? "Admin" : "Member"}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </CardContent>
       </Card>
 

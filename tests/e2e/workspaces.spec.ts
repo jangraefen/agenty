@@ -71,6 +71,15 @@ test("the first sign-in lands in a personal workspace that can't be changed", as
   await expect(page.getByRole("button", { name: "Delete workspace", exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Search users", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Workspace name", { exact: true })).toHaveCount(0);
+
+  // The workspace list shows it as a table row: name, type and role.
+  await page.goto("/workspaces");
+  await expect(
+    page
+      .getByRole("table", { name: "Your workspaces" })
+      .getByRole("row")
+      .filter({ hasText: "Personal" }),
+  ).toHaveText(/Personal\s*Personal\s*Admin/);
 });
 
 test("admins share a workspace with an invited user", async ({ browser }) => {

@@ -31,11 +31,11 @@ maintainer has approved the merge.
 
 | # | Rule |
 |---|---|
-| P1 | A workspace (personal ones included) has any number of providers. A provider has a name (1–80 characters, unique per workspace ignoring case), a type (`openai`, `anthropic`, `google`, fixed after creation), a base URL and an API key. |
-| P2 | Only admins create, edit and delete providers. Members see name, type, base URL and status, never the key hint. |
+| P1 | A workspace (personal ones included) has any number of providers. A provider has a name (1–80 characters, unique per workspace ignoring case), a type (`openai`, `anthropic`, `google`, fixed after creation), an optional base URL (empty = the type's default) and an API key. |
+| P2 | Only admins create, edit and delete providers. Members see name, type, base URL (or "Default") and status, never the key hint. |
 | P3 | The key is verified against the provider's base URL before it is stored (see *Verification*), on creation and whenever key or base URL change; a provider that fails is not stored or not changed. Renaming alone doesn't verify. |
 | P4 | Keys are stored encrypted (AES-256-GCM, `AGENTS.md` rule 4). The plain key never leaves `src/server/providers` except as a header of the provider's HTTP call, and never appears in responses, logs, error messages, action state or the UI. Admins see a hint: the first 6 and the last 4 characters (`sk-ant…abcd`), or only the last 4 for keys shorter than 24 characters. |
-| P5 | Changing a provider's base URL requires entering the key again (otherwise an admin, who can't read the key, could point the provider at their own server and receive it). |
+| P5 | Changing a provider's base URL (including setting or clearing a custom one) requires entering the key again (otherwise an admin, who can't read the key, could point the provider at their own server and receive it). |
 | P6 | Base URLs are only checked for syntax (see *Outbound requests*). Hosts and addresses are not restricted (maintainer decision; can be added later): an admin, i.e. any user through their personal workspace, can make the server send requests to internal addresses. |
 | P7 | Deleting a provider is always allowed. Its agents stay and show as "Provider removed" until an admin picks another provider. |
 | A1 | Only admins create, edit and delete agents. Members see the agent list and every agent's settings read-only, including the system prompt. |
@@ -56,7 +56,8 @@ maintainer has approved the merge.
 - `encrypt(plaintext, aad)` / `decrypt(ciphertext, aad)`: AES-256-GCM, random
   12-byte IV, 16-byte tag. Format `v1.<keyId>.<iv>.<tag>.<ciphertext>`
   (base64url parts). The AAD for a provider key is
-  `provider|<providerId>|<type>|<baseUrl>`: a ciphertext copied into another
+  `provider|<providerId>|<type>|<baseUrl>` (the stored value, empty for the
+  default): a ciphertext copied into another
   row, or a base URL changed directly in the database, does not decrypt. The
   provider id is generated in the app (`crypto.randomUUID()`) before the insert,
   so the AAD can include it.
@@ -94,13 +95,16 @@ maintainer has approved the merge.
 chat-model filter. Base URLs include the API version, as the AI SDK's `baseURL`
 expects in M4: `https://api.openai.com/v1`, `https://api.anthropic.com/v1`,
 `https://generativelanguage.googleapis.com/v1beta`. Request paths below are
-relative to the provider's base URL.
+relative to the provider's **effective base URL**: its own `base_url`, or the
+type's default when that is null. The default is not stored, so a provider
+without a custom URL follows a changed default in a later release.
 
 ### Outbound requests
 
 Requests to a provider base URL use plain `fetch` (`cache: "no-store"`).
 
-- **Base URL syntax** (Zod, on save; `base_url_not_allowed`): `http:` or
+- **Base URL syntax** (Zod, on save; `base_url_not_allowed`): empty (stored as
+  null, meaning the default) or `http:` or
   `https:`, no username/password, no query or fragment, at most 500 characters;
   stored normalised (trailing slash removed) and compared normalised.
 - **No host or address restrictions** (P6). Accepted risk, recorded in
@@ -158,7 +162,7 @@ workspace, check admin again, write, seed the model cache.
 - `updateProvider(actorId, workspaceId, providerId, { name, baseUrl, key? })`:
   `key` empty keeps the stored key; a changed base URL (compared normalised)
   without a key fails with `key_required` (P5). Verifies the submitted
-  (base URL, key) pair when either changes, then writes exactly that pair with
+  (effective base URL, key) pair when either changes, then writes exactly that pair with
   a new ciphertext. Under the lock the row is read again: if its base URL or
   `updated_at` changed since the pre-check (another admin saved meanwhile), the
   update fails with `provider_changed` ("This provider was changed meanwhile.
@@ -254,7 +258,7 @@ Drizzle, schema `app`, one generated migration, uuid ids, `timestamptz`.
 
 | Table | Columns | Constraints |
 |---|---|---|
-| `provider` | `id` (set by the app), `workspace_id`, `name`, `type` text, `base_url` text, `encrypted_key` text, `key_hint` text, `created_by_user_id` null, `updated_by_user_id` null, `created_at`, `updated_at` | FK workspace on delete cascade, users on delete set null; unique index (`workspace_id`, `lower(name)`); check `type in ('openai','anthropic','google')`; length checks as backstops (as in M2). |
+| `provider` | `id` (set by the app), `workspace_id`, `name`, `type` text, `base_url` text null (null = the type's default), `encrypted_key` text, `key_hint` text, `created_by_user_id` null, `updated_by_user_id` null, `created_at`, `updated_at` | FK workspace on delete cascade, users on delete set null; unique index (`workspace_id`, `lower(name)`); check `type in ('openai','anthropic','google')`; length checks as backstops (as in M2). |
 | `agent` | `id`, `workspace_id`, `provider_id` null, `name`, `description`, `system_prompt`, `model`, `temperature` real null, `top_p` real null, `max_output_tokens` integer null, `created_by_user_id` null, `created_at`, `updated_at` | FK workspace on delete cascade, provider on delete set null (P7), users on delete set null; unique index (`workspace_id`, `lower(name)`); length checks as backstops. The service guarantees agent and provider share the workspace (checked in the transaction); FK error `23503` maps to `provider_removed` as a backstop. |
 
 ## Errors
@@ -279,9 +283,9 @@ disabled for the personal workspace; Agents and Providers work everywhere).
 
 | Route | Content |
 |---|---|
-| `/w/[id]/providers` | Table: name (link), type, base URL, key (hint, admins only; "Unreadable, enter it again" when it doesn't decrypt), updated. Admins: "Add provider" button. Empty state explaining that agents need a provider. |
+| `/w/[id]/providers` | Table: name (link), type, base URL ("Default" when empty), key (hint, admins only; "Unreadable, enter it again" when it doesn't decrypt), updated. Admins: "Add provider" button. Empty state explaining that agents need a provider. |
 | `/w/[id]/providers/new` | Admins: the provider form. Members are redirected to the provider list. |
-| `/w/[id]/providers/[providerId]` | Admins: the provider form with the saved values (type read-only, key field empty with the hint as placeholder and "Leave empty to keep the current key"; required as soon as the base URL differs from the saved one), and a Danger zone card with "Delete provider" (confirmation dialog naming the number of agents that use it). Members: the same values read-only. |
+| `/w/[id]/providers/[providerId]` | Admins: the provider form with the saved values (type read-only, key field empty with the hint as placeholder and "Leave empty to keep the current key"; required as soon as the base URL field differs from the saved value), and a Danger zone card with "Delete provider" (confirmation dialog naming the number of agents that use it). Members: the same values read-only. |
 | `/w/[id]/agents` | Table: name (link), provider name · model, status (see *Model availability*; the status cells stream in their own `<Suspense>`, so the table doesn't wait for provider calls). Admins: "New agent" button. Empty state with a hint to add a provider first when none exists. |
 | `/w/[id]/agents/new` | Admins: the agent form. Members are redirected to the agent list (`redirect`, not the not-found page: the workspace exists for them). |
 | `/w/[id]/agents/[agentId]` | Admins: the agent form with the saved values, and a Danger zone card with "Delete agent" (confirmation dialog). Members: the same values read-only. |
@@ -296,9 +300,9 @@ key: after a failed provider save the key field is empty again. Success and
 `runWorkspaceAction`. Saving a provider verifies first, so the button shows a
 pending state.
 
-**Provider form:** name; type (select on create: choosing a type fills the base
-URL field with its default while the field is still untouched or holds another
-type's default); base URL; API key (password field).
+**Provider form:** name; type (select, on create only); base URL (empty, with
+the selected type's default as placeholder; "Leave empty to use the default");
+API key (password field).
 
 **Agent form:** name, description, system prompt (textarea), provider select
 (the workspace's providers by name, with type; unreadable ones can't be
@@ -325,7 +329,8 @@ non-members get the not-found page; ids are lookup keys only.
     provider's AAD (other id, type or base URL) fails; unknown key id fails;
     decrypting with an older key works; `ENCRYPTION_KEYS` parsing (wrong
     length, duplicate id, bad base64, error text contains no value);
-  - base URL syntax and normalisation;
+  - base URL syntax and normalisation (empty → null; effective URL falls back
+    to the type's default);
   - each type's list parsing, paging, limits and chat filter (fixtures);
     verification outcome mapping including Google's 400 `API_KEY_INVALID`;
   - key hint (long and short keys); agent and provider input validation.

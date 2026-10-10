@@ -1,6 +1,6 @@
 # M3 – Providers and agents: design
 
-Status: draft · Date: 2026-10-10 · Branch: `feat/m3-providers-agents`
+Status: reviewed, awaiting maintainer approval · Date: 2026-10-10 · Branch: `feat/m3-providers-agents`
 
 ## Goal
 
@@ -43,7 +43,11 @@ maintainer has approved the merge.
 ## Encryption (`src/server/crypto`)
 
 - Env `ENCRYPTION_KEYS` (required): comma-separated `id:base64` pairs. `id` is
-  1–16 characters `[a-z0-9]`, unique; each key decodes to exactly 32 bytes. The
+  1–16 characters `[a-z0-9]`, unique; each key is strict base64 (`z.base64()`)
+  decoding to exactly 32 bytes. The parser and the crypto core
+  (`src/server/crypto/keyring.ts`, `cipher.ts`) have no `server-only` import, so
+  `scripts/rotate-keys.ts` can use them; `env.ts` reuses the parser through
+  `z.string().transform`. The
   first pair is the **active key**, used for all new ciphertexts; the others
   only decrypt. The env error names the problem, never a value.
 - `encrypt(plaintext, aad)` / `decrypt(ciphertext, aad)`: AES-256-GCM, random
@@ -57,8 +61,12 @@ maintainer has approved the merge.
 - **Rotation:** add a new key at the front of `ENCRYPTION_KEYS`, restart, run
   `task crypto:rotate` (`scripts/rotate-keys.ts`, plain Node like
   `scripts/migrate.ts`, so the crypto core has no `server-only` import). It
-  re-encrypts every `provider_key` row whose key id is not the active one, row
-  by row with `select … for update`, and prints counts only. Then remove the old
+  connects with `DATABASE_URL` (the app role may update `provider_key`) through
+  its own postgres client, re-encrypts every `provider_key` row whose key id is
+  not the active one, row by row with `select … for update` on that row only
+  (never the workspace row, so it can't deadlock with `setProviderKey`), leaves
+  `updated_at`/`updated_by` alone, and prints counts only. `task crypto:rotate
+  -- --check` only counts rows on non-active keys. When that is 0, remove the old
   key. Removing a key that still has ciphertexts makes those keys unreadable:
   the workspace sees "Key unreadable, set it again" (see *Providers UI*).
 - `.env.example` gets a development key; the CI workflow and the docker job get
@@ -69,28 +77,33 @@ maintainer has approved the merge.
 ### Registry
 
 `registry.ts` describes each provider: id, display name ("OpenAI",
-"Anthropic", "Google Gemini"), base URL, how to list models, the chat-model
-filter and the parameter limits (temperature max: OpenAI 2, Anthropic 1,
-Google 2).
+"Anthropic", "Google Gemini"), base URL, how to list models and the chat-model
+filter.
 
-Base URLs default to the official APIs. Optional operator env
+Base URLs include the API version, as the AI SDK's `baseURL` expects in M4:
+`https://api.openai.com/v1`, `https://api.anthropic.com/v1`,
+`https://generativelanguage.googleapis.com/v1beta`; request paths below are
+relative to them. The listing functions take the base URL as a parameter (tests
+pass the fake server's; the registry reads `getEnv()`). Optional operator env
 `AGENTY_OPENAI_BASE_URL`, `AGENTY_ANTHROPIC_BASE_URL`,
-`AGENTY_GOOGLE_BASE_URL` (http(s) URLs) override them, for corporate proxies
+`AGENTY_GOOGLE_BASE_URL` (https; http only for `localhost`/`127.0.0.1`, otherwise the env check fails at
+start) override them, for corporate proxies
 and for the E2E fake provider. Workspaces never enter URLs. Prefixed with
 `AGENTY_` so the provider SDKs' own env fallbacks (`OPENAI_BASE_URL`, …) in M4
 are never picked up by accident.
 
 ### Listing models
 
-Plain `fetch`, no SDK (the AI SDK has no list helper): 10 s timeout,
-`redirect: "error"`, response body limited to 5 MB, response validated with Zod
-(unknown fields ignored). The key goes in a header, never in the URL.
+Plain `fetch`, no SDK (the AI SDK has no list helper): one 10 s deadline for
+the whole listing (all pages), `redirect: "error"`, each body limited to 5 MB
+while streaming (not via `Content-Length`), at most 5 000 models, responses
+validated with Zod (unknown fields ignored). The key goes in a header, never in the URL.
 
 | Provider | Request | Paging | Chat models |
 |---|---|---|---|
-| OpenAI | `GET /v1/models`, `Authorization: Bearer <key>` | none | id matches `^(gpt-\|o\d\|chatgpt-)` and not `embed\|tts\|whisper\|transcribe\|audio\|realtime\|dall-e\|image\|moderation\|search\|instruct\|davinci\|babbage` (heuristic; OpenAI returns no capability field) |
-| Anthropic | `GET /v1/models?limit=1000`, `x-api-key`, `anthropic-version: 2023-06-01` | `after_id` while `has_more`, at most 10 pages | all |
-| Google | `GET /v1beta/models?pageSize=1000`, `x-goog-api-key` | `pageToken` while `nextPageToken`, at most 10 pages | `supportedGenerationMethods` includes `generateContent`, and the name doesn't match `embedding\|imagen\|veo\|aqa\|tts\|image\|live`; the `models/` prefix is stripped |
+| OpenAI | `GET /models`, `Authorization: Bearer <key>` | none | id matches `^(gpt-\|o\d\|chatgpt-)` and not `embed\|tts\|whisper\|transcribe\|audio\|realtime\|dall-e\|image\|moderation\|search\|instruct\|davinci\|babbage` (heuristic; OpenAI returns no capability field) |
+| Anthropic | `GET /models?limit=1000`, `x-api-key`, `anthropic-version: 2023-06-01` | `after_id=<last_id>` while `has_more`, at most 10 pages | all |
+| Google | `GET /models?pageSize=1000`, `x-goog-api-key` | `pageToken` while `nextPageToken`, at most 10 pages | `supportedGenerationMethods` includes `generateContent`, and the name doesn't match `embedding\|imagen\|veo\|aqa\|tts\|image\|live`; the `models/` prefix is stripped |
 
 Result: `{ id, label }[]` sorted by label (Anthropic `display_name`, Google
 `displayName`, OpenAI the id).
@@ -115,7 +128,9 @@ Table `provider_key` (see *Data model*). Service functions in
 M2:
 
 - `setProviderKey(actorId, workspaceId, provider, key)`: validates the key
-  (trimmed, 8–500 characters, no whitespace or control characters), checks
+  (trimmed, `^[\x21-\x7E]{20,500}$`: printable ASCII only, since `fetch`
+  rejects other header bytes, and long enough that the 4-character hint reveals
+  little), checks
   that the actor is admin (plain read, so non-admins can't use the server to
   test keys), verifies the key outside any transaction (no lock held during the
   HTTP call), then locks the workspace, checks admin again, upserts ciphertext, hint, `updated_by`,
@@ -124,7 +139,8 @@ M2:
   clear cache.
 - `listProviderStatus(actorId, workspaceId)`: member; per provider
   `{ provider, configured, hint?, updatedAt?, readable }`; `hint` only for
-  admins. `readable` is false when the ciphertext doesn't decrypt.
+  admins. `readable` is false when the ciphertext doesn't decrypt (it decrypts each key
+  to check; the plaintext is dropped at once and never returned).
 - `getProviderKey(workspaceId, provider)`: the only function returning a plain
   key; server-only, no actor (callers have checked access). M4's model wrapper
   calls it inside the workflow step.
@@ -135,8 +151,12 @@ M2:
 `{ status: "ok", models } | { status: "not_configured" | "unreadable" | "unavailable" }`.
 In-memory cache per process, keyed by workspace and provider, also storing the
 key's `updated_at`: successes live 10 minutes, failures 1 minute (so a broken
-provider is not hit on every page view). A changed `updated_at` or a
-set/remove clears the entry. Single instance is assumed (as for M4's queue);
+provider is not hit on every page view). Correctness rests on the `updated_at`
+comparison (a changed key never uses an old entry, even if module state is
+duplicated across bundles); clearing on set/remove is only an optimisation. A
+successful verification seeds the entry. Concurrent callers share one in-flight
+promise per key. Expired entries are dropped on access and by a sweep when the
+map exceeds 1 000 entries. The clock is injectable for tests. Single instance is assumed (as for M4's queue);
 with several instances each has its own cache, which is only slower.
 
 ### Model availability
@@ -163,6 +183,13 @@ workspace row and check admin (M2 pattern), reads check membership:
 id is a lookup key only: queries always filter by `workspace_id` too, and a
 malformed id or one from another workspace is `not_found`.
 
+Advanced parameters are only checked for type and range, never for what a
+provider or model accepts (maintainer decision: they are for users who know
+what they are doing). Some combinations fail at call time in M4, e.g. Anthropic
+temperature above 1, temperature together with top P on newer Claude models,
+temperature on OpenAI reasoning models; M4 sends the stored values as they are
+and shows the provider's failure as a fixed error.
+
 Input (Zod, `validation.ts`, trimmed):
 
 | Field | Rule |
@@ -172,14 +199,18 @@ Input (Zod, `validation.ts`, trimmed):
 | systemPrompt | 0–20 000 characters |
 | provider | `openai` \| `anthropic` \| `google` |
 | model | 1–200 characters, `^[A-Za-z0-9._:/@-]+$` |
-| temperature | optional, 0 to the provider's max (`invalid_parameters`) |
+| temperature | optional, 0–2 (`invalid_parameters`) |
 | topP | optional, > 0 and ≤ 1 |
 | maxOutputTokens | optional, integer 1–1 000 000 |
 
 A3 is checked in the service against `listModelsForWorkspace` after a plain
 admin check and before the transaction (which locks and checks admin again): `not_configured`/`unreadable` → `provider_not_configured`,
 `unavailable` → `provider_unavailable`, model missing → `model_unavailable`.
-For an update this only runs when provider or model changed.
+For an update this only runs when provider or model changed. Accepted race: a
+key removed between this check and the transaction still lets the save
+through; P5 covers the result, so there is no second fetch under the lock.
+A2 is enforced by the unique index only: Postgres error `23505` on it maps to
+`agent_name_taken` (no JS pre-check; Unicode case rules differ from `lower()`).
 
 ## Data model
 
@@ -198,7 +229,8 @@ The services throw `WorkspaceError` with new codes, so server actions keep
 using `runWorkspaceAction` and `error-messages.ts` gains fixed messages:
 `key_invalid`, `key_rejected`, `provider_unavailable`, `key_unverified`,
 `agent_name_taken`, `provider_not_configured`, `model_unavailable`,
-`invalid_parameters`, `invalid_agent`.
+`invalid_parameters` (temperature, top P, max output tokens), `invalid_agent`
+(every other field).
 
 ## UI
 
@@ -211,11 +243,16 @@ disabled for the personal workspace; Agents and Providers work everywhere).
 | Route | Content |
 |---|---|
 | `/w/[id]/providers` | A table with one row per provider: name, status ("Configured ••••abcd · updated <date>" for admins, "Configured" for members, "Not configured", "Key unreadable, set it again"). Admins: a password field with "Save" (set or replace) and "Remove" per row. Saving verifies first, so the button shows a pending state. |
-| `/w/[id]/agents` | Table: name (link), provider · model, status (see *Model availability*). Admins: "New agent" button. Empty state with a hint to configure a provider first when none is. |
-| `/w/[id]/agents/new` | Admins: the agent form. Members are redirected to the agent list. |
+| `/w/[id]/agents` | Table: name (link), provider · model, status (see *Model availability*; the status cells stream in their own `<Suspense>`, so the table doesn't wait for provider calls). Admins: "New agent" button. Empty state with a hint to configure a provider first when none is. |
+| `/w/[id]/agents/new` | Admins: the agent form. Members are redirected to the agent list (`redirect`, not the not-found page: the workspace exists for them). |
 | `/w/[id]/agents/[agentId]` | Admins: the agent form with the saved values, and a Danger zone card with "Delete agent" (confirmation dialog). Members: the same fields read-only. |
 
-**Agent form** (a client component inside a server `<form>`): name,
+**Agent form** (a client component; the only form that departs from M2's
+redirect pattern, maintainer decision): it uses `useActionState`, and the
+create/update action returns `{ error, values }` on failure so nothing typed is
+lost (values are rendered back as `defaultValue`, since React 19 resets
+uncontrolled forms after an action). Success and `not_found` still redirect;
+`refresh()` runs before the redirect as in `runWorkspaceAction`. Fields: name,
 description, system prompt (textarea), provider select (only configured,
 readable providers), model select (the live list of the selected provider,
 loaded server-side for every configured provider in parallel and passed in;
@@ -241,7 +278,7 @@ non-members get the not-found page; ids are lookup keys only.
     text contains no value);
   - each provider's list parsing, paging and chat filter (fixtures);
     verification outcome mapping including Google's 400 `API_KEY_INVALID`;
-  - agent input validation including per-provider temperature limits.
+  - agent input validation including parameter ranges.
 - Integration (dev database, local fake provider HTTP server):
   - P2/A1: members and non-members can't set/remove keys or write agents;
     non-members get `not_found` for reads too;
@@ -259,20 +296,32 @@ non-members get the not-found page; ids are lookup keys only.
     the name of an agent whose model disappeared works;
   - A4: deleting a workspace removes keys and agents;
   - rotation: after adding a key and running the rotation, all rows use the new
-    key id and still decrypt; the old key can be removed.
+    key id and still decrypt; `--check` reports 0; the old key can be removed;
+  - leakage: with the fake provider echoing the key in its 401 body, no
+    `console.*` output and no `WorkspaceError` contains the key;
+  - a non-admin's `setProviderKey` sends zero requests to the fake provider; an
+    admin demoted between verification and save gets `forbidden` and nothing is
+    stored;
+  - the failure TTL, with the injected clock.
 - E2E (fake provider server started by Playwright, base URLs via
   `AGENTY_*_BASE_URL`): admin sets an OpenAI key (hint shown); a rejected key
   shows the fixed message; creates an agent with a model from the list and
   Advanced parameters; edits it; a member sees it read-only and has no New
   agent button; removing the key marks the agent "Provider not configured";
-  deleting the agent; personal workspace has working Agents and Providers tabs.
+  deleting the agent; personal workspace has working Agents and Providers tabs;
+  neither the providers page nor the agent form page contains the key anywhere
+  in its HTML or RSC payload.
 
 ## Review focus
 
+- Accepted (maintainer decision): no rate limit on key verification, although
+  every user can verify keys through their personal workspace.
 - Key leakage: logs, error messages, redirects with `?error=`, React props sent
   to the client (the agent form must never receive a key), provider error
   bodies.
 - A model list that is huge, slow, paginates forever or returns garbage.
+- A cache miss for several providers at once: the agents table must render
+  without waiting for the status column (status in its own `<Suspense>`).
 - Stale forms: an admin demoted while editing, an agent deleted in another tab,
   a key removed between loading the form and saving.
 - Removing an encryption key that still has ciphertexts.

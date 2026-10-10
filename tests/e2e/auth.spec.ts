@@ -7,9 +7,9 @@ async function gotoSignIn(page: Page, query = "") {
   await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
 }
 
-// Next's route announcer is also a role=alert element, so match the text.
 const sidebar = (page: Page) => page.getByRole("navigation", { name: "Main", exact: true });
 
+// Next's route announcer is also a role=alert element, so match the text.
 const alertWith = (page: Page, text: string) => page.getByRole("alert").filter({ hasText: text });
 
 /** Signs in through the mock IdP and waits for the signed-in home page. */
@@ -44,6 +44,16 @@ test("signing in through the identity provider shows the home page and the user"
     page.getByRole("main").getByText("Agents arrive in the next milestone"),
   ).toBeVisible();
   await expect(sidebar(page).getByRole("button", { name: user.name, exact: true })).toBeVisible();
+});
+
+test("a user without a name is labelled by their email", async ({ page }) => {
+  const user = uniqueIdpUser("noname", "");
+  await signIn(page, user);
+
+  const menu = sidebar(page).getByRole("button", { name: user.email, exact: true });
+  await expect(menu).toBeVisible();
+  await menu.click();
+  await expect(page.getByRole("menu").getByText(user.email, { exact: true })).toHaveCount(2);
 });
 
 test("signing out ends the session and returns to the landing page", async ({ page }) => {

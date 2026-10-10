@@ -20,6 +20,8 @@ export function UserMenu({ name, email }: { name: string; email: string }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
+  // Better Auth allows an empty name; the email then labels the menu.
+  const label = name || email;
 
   // Local sign-out: ends the app session only, so there is no IdP redirect to follow.
   async function signOut() {
@@ -48,11 +50,11 @@ export function UserMenu({ name, email }: { name: string; email: string }) {
       <SidebarMenuItem>
         <DropdownMenu>
           <DropdownMenuTrigger
-            aria-label={name}
+            aria-label={label}
             render={<SidebarMenuButton className="data-popup-open:bg-sidebar-accent" size="lg" />}
           >
             <span className="flex min-w-0 flex-1 flex-col text-left leading-tight">
-              <span className="truncate font-medium">{name}</span>
+              <span className="truncate font-medium">{label}</span>
               <span className="truncate text-muted-foreground text-xs">{email}</span>
             </span>
             <ChevronsUpDownIcon className="ml-auto" />
@@ -60,7 +62,7 @@ export function UserMenu({ name, email }: { name: string; email: string }) {
           <DropdownMenuContent className="w-(--anchor-width) min-w-56" side="top">
             <DropdownMenuGroup>
               <DropdownMenuLabel className="flex flex-col gap-1">
-                <span className="font-medium text-foreground">{name}</span>
+                <span className="font-medium text-foreground">{label}</span>
                 <span>{email}</span>
               </DropdownMenuLabel>
             </DropdownMenuGroup>

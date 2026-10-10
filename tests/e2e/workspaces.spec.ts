@@ -153,7 +153,7 @@ test("admins share a workspace with an invited user", async ({ browser }) => {
 
   // Ada no longer gets in.
   await adaPage.goto(teamUrl);
-  await expect(adaPage.getByText("This page could not be found.")).toBeVisible();
+  await expect(notFoundHeading(adaPage)).toBeVisible();
 
   // Bob, now the only admin, can't demote himself or leave; deleting needs the exact name.
   await bobPage.goto(`${teamUrl}/settings`);
@@ -185,12 +185,19 @@ test("non-members see the not-found page", async ({ browser }) => {
   const home = owner.url();
   await owner.goto(`${home}/settings`);
   await expect(owner).toHaveURL(home);
+  // The not-found page renders inside the signed-in layout, so the sidebar stays.
   await stranger.goto(`${home}/settings`);
-  await expect(stranger.getByText("This page could not be found.")).toBeVisible();
+  await expect(notFoundHeading(stranger)).toBeVisible();
+  await expect(sidebar(stranger)).toBeVisible();
   await stranger.goto(home);
-  await expect(stranger.getByText("This page could not be found.")).toBeVisible();
+  await expect(notFoundHeading(stranger)).toBeVisible();
+  await expect(sidebar(stranger)).toBeVisible();
+  await stranger.getByRole("main").getByRole("link", { name: "Go to your workspaces" }).click();
+  await expect(stranger).toHaveURL(/\/workspaces$/);
 });
 
+const notFoundHeading = (page: Page) =>
+  page.getByRole("heading", { level: 1, name: "Page not found", exact: true });
 const sidebar = (page: Page) => page.getByRole("navigation", { name: "Main", exact: true });
 const switcher = (page: Page) => sidebar(page).getByRole("button", { name: /^Workspace\b/ });
 
@@ -248,7 +255,7 @@ test("an invitation shows as a badge in the sidebar's switcher", async ({ browse
   const bob = uniqueIdpUser("wsbbob", "Bob Badge");
   const bobPage = await signedIn(browser, bob);
   const adaPage = await signedIn(browser, ada);
-  await expect(switcher(bobPage)).not.toContainText("pending invitations");
+  await expect(switcher(bobPage)).not.toContainText("pending invitation");
 
   await adaPage.goto("/workspaces");
   await adaPage.getByLabel("Name", { exact: true }).fill(`Badge ${ada.sub}`);
@@ -266,7 +273,8 @@ test("an invitation shows as a badge in the sidebar's switcher", async ({ browse
   ).toBeVisible();
 
   await bobPage.reload();
-  await expect(switcher(bobPage)).toContainText("1 pending invitations");
+  await expect(switcher(bobPage)).toContainText("1 pending invitation");
+  await expect(switcher(bobPage)).not.toContainText("pending invitations");
   await switcher(bobPage).click();
   await bobPage.getByRole("menuitem", { name: /^All workspaces & invitations/ }).click();
   await expect(bobPage).toHaveURL(/\/workspaces$/);

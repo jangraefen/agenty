@@ -38,7 +38,9 @@ export async function GET(
     const users = await searchUsers(user.id, workspaceId, query.data.q);
     return Response.json(userSearchResponseSchema.parse({ users }), { headers: noStore });
   } catch (error) {
-    if (error instanceof WorkspaceError) return fail(STATUS[error.code] ?? 400, error.code);
+    const status = error instanceof WorkspaceError ? STATUS[error.code] : undefined;
+    if (error instanceof WorkspaceError && status) return fail(status, error.code);
+    // Anything else, including an unexpected WorkspaceError code, is an internal error.
     console.error("User search failed:", error instanceof Error ? error.name : "unknown");
     return fail(500, "internal");
   }

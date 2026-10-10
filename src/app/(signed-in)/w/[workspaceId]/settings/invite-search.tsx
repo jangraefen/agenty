@@ -52,6 +52,7 @@ export function InviteSearch({
         const response = await fetch(url, { signal: controller.signal, cache: "no-store" });
         if (!response.ok) throw new Error(`status ${response.status}`);
         const { users } = userSearchResponseSchema.parse(await response.json());
+        if (controller.signal.aborted) return;
         setState({ kind: "done", users });
       } catch {
         if (!controller.signal.aborted) setState({ kind: "error" });

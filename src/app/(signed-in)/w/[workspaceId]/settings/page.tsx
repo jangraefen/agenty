@@ -31,6 +31,7 @@ export const metadata: Metadata = { title: "Workspace settings · Agenty" };
 
 type Props = PageProps<"/w/[workspaceId]/settings">;
 type Member = Awaited<ReturnType<typeof listMembers>>[number];
+type Invitation = Awaited<ReturnType<typeof listInvitationsForWorkspace>>[number];
 
 const first = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value);
 const displayName = (person: { name: string; email: string }) => person.name || person.email;
@@ -43,7 +44,11 @@ export default async function SettingsPage({ params, searchParams }: Props) {
   const query = await searchParams;
   const error = workspaceErrorMessage(first(query.error));
   const isAdmin = access.role === "admin";
-  const members = await listMembers(access.user.id, access.workspace.id);
+  // Both lists load concurrently; pending invitations are shown to admins only.
+  const [members, invitations] = await Promise.all([
+    listMembers(access.user.id, access.workspace.id),
+    isAdmin ? listInvitationsForWorkspace(access.user.id, access.workspace.id) : null,
+  ]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -55,8 +60,13 @@ export default async function SettingsPage({ params, searchParams }: Props) {
       ) : null}
       {isAdmin ? <RenameCard access={access} /> : null}
       <MembersCard access={access} members={members} />
-      {isAdmin ? (
-        <InviteCard access={access} members={members} q={first(query.q)?.trim() ?? ""} />
+      {invitations ? (
+        <InviteCard
+          access={access}
+          invitations={invitations}
+          members={members}
+          q={first(query.q)?.trim() ?? ""}
+        />
       ) : null}
       <DangerZoneCard access={access} />
     </div>
@@ -154,17 +164,18 @@ function MembersCard({ access, members }: { access: Access; members: Member[] })
   );
 }
 
-async function InviteCard({
+function InviteCard({
   access,
+  invitations,
   members,
   q,
 }: {
   access: Access;
+  invitations: Invitation[];
   members: Member[];
   q: string;
 }) {
   const id = access.workspace.id;
-  const invitations = await listInvitationsForWorkspace(access.user.id, id);
   // Changes whenever a member or invitation is added or removed; the search then reloads.
   const revision = [
     ...members.map((m) => `m${m.userId}`),

@@ -222,7 +222,7 @@ page's `loading.tsx` boundary (Cache Components; see `AGENTS.md`).
     opening `/w/<id>/settings` sees the not-found page.
 - E2E (two users through the mock IdP): sign in → personal workspace home;
   create a workspace; invite the second user via the live search (a member is
-listed as "Member", the invitee then as "Invited"); second user accepts
+  listed as "Member", the invitee then as "Invited"); second user accepts
   on `/workspaces` and sees the workspace as member (no admin controls);
   admin promotes them; first admin leaves; the personal workspace's Settings
   link is disabled with a tooltip and its settings URL redirects home; deleting a workspace requires typing its name.

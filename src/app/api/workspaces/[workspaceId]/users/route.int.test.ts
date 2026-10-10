@@ -9,6 +9,20 @@ import { testUsers } from "../../../../../../tests/support/users";
 
 const session = vi.hoisted(() => ({ user: null as { id: string } | null }));
 vi.mock("@/server/auth/session", () => ({ getCurrentUser: async () => session.user }));
+// Lets a test make the search fail with a code the route doesn't map.
+const failure = vi.hoisted(() => ({ error: null as Error | null }));
+vi.mock("@/server/workspaces/invitations", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/server/workspaces/invitations")>();
+  return {
+    ...actual,
+    searchUsers: (...args: Parameters<typeof actual.searchUsers>) => {
+      if (failure.error) throw failure.error;
+      return actual.searchUsers(...args);
+    },
+  };
+});
+
+const { WorkspaceError } = await import("@/server/workspaces/errors");
 
 const { GET } = await import("./route");
 
@@ -16,6 +30,7 @@ const users = testUsers();
 afterAll(() => users.cleanup());
 beforeEach(() => {
   session.user = null;
+  failure.error = null;
 });
 
 async function search(workspaceId: string, q: string) {
@@ -78,5 +93,18 @@ describe("GET /api/workspaces/[workspaceId]/users", () => {
       body: { error: "personal_workspace" },
     });
     expect(await search(id, " a ")).toEqual({ status: 400, body: { error: "invalid_query" } });
+  });
+
+  it("answers an unexpected workspace error as internal, without its code", async () => {
+    const { id, admin } = await setup();
+    session.user = admin;
+    failure.error = new WorkspaceError("last_admin");
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await search(id, "Member")).toEqual({ status: 500, body: { error: "internal" } });
+      expect(log).toHaveBeenCalledWith("User search failed:", "WorkspaceError");
+    } finally {
+      log.mockRestore();
+    }
   });
 });

@@ -85,7 +85,7 @@ function InvitationBadge({ count }: { count: number }) {
   return (
     <span className="rounded-full bg-primary px-1.5 text-primary-foreground text-xs tabular-nums">
       {count}
-      <span className="sr-only"> pending invitations</span>
+      <span className="sr-only"> pending {count === 1 ? "invitation" : "invitations"}</span>
     </span>
   );
 }

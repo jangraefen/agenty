@@ -20,7 +20,7 @@ export default async function WorkspaceLayout({
         <h1 className="font-semibold text-2xl tracking-tight">{access.workspace.name}</h1>
         <div className="flex gap-4 text-sm">
           <Link className="hover:underline" href={base}>
-            Home
+            Start
           </Link>
           <Link className="hover:underline" href={`${base}/settings`}>
             Settings

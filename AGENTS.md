@@ -42,8 +42,8 @@ All commands go through `Taskfile.yml` (go-task), identically locally and in CI.
 | `task lint` / `task format` | Biome check; apply Biome fixes incl. Tailwind class sorting |
 | `task typecheck` | `next typegen` + `tsc --noEmit` |
 | `task test` | Vitest: `unit` (`*.test.ts`) and `integration` (`*.int.test.ts`, needs Postgres) |
-| `task test:e2e` | Playwright against the standalone build on port 3100 |
-| `task build` | `scripts/build.sh`: self-contained `.next/standalone` |
+| `task test:e2e` | Playwright against the standalone build on port 3100 (incl. `instant()` navigation checks) |
+| `task build` | `scripts/build.sh` with `EXPOSE_TESTING_API=1`: self-contained `.next/standalone` with Next's testing API, for E2E |
 | `task docker:build` | Production image `agenty:local` |
 | `task ci` | Everything the `ci` job checks (the `docker` job additionally builds the image and starts it against an empty database, which it migrates); locally run `task db:up` first |
 
@@ -205,6 +205,12 @@ copies static assets and the SQL migrations into `.next/standalone`, and removes
 Next copied there (configuration must come from the real environment). The runtime image only
 contains `.next/standalone`.
 
+`next.config.ts` turns on `experimental.exposeTestingApiInProductionBuild` (the instant-navigation
+testing API that `@next/playwright`'s `instant()` needs) only when `EXPOSE_TESTING_API=1` at build
+time. `task build`, and so `task test:e2e` and `task ci`, set it; the Dockerfile runs
+`scripts/build.sh` without it, so the image never contains the testing API. Don't set it anywhere
+else.
+
 ### Migrations on start
 
 `register()` in `src/instrumentation.ts` runs once at server start: it validates the env, takes
@@ -248,7 +254,13 @@ has no `server-only` import because `scripts/migrate.ts` (`task db:migrate`) run
   page wraps the reading part in `<Suspense>` to keep a static part instant, like sign-in). A
   layout that reads request-time data wraps that part in `<Suspense>` itself (the workspace nav).
   `next build` only checks page loads; `next dev` logs `Route "...": ... uncached data` for
-  navigations.
+  navigations. `tests/e2e/instant.spec.ts` enforces it at runtime with `@next/playwright`'s
+  `instant()`: initial loads and client navigations into every such page (also between pages
+  that share the workspace layout) must commit with only the static/prefetched UI. It catches a
+  missing boundary below the shared layout (e.g. without `w/[workspaceId]/loading.tsx` the
+  settings → home navigation never commits), but not a page whose parent segment's
+  `loading.tsx` still covers it at runtime (e.g. a missing `settings/loading.tsx`); `next dev`
+  still reports those, so keep one `loading.tsx` per page. New pages get an entry there.
 - Sidebar: `src/components/app-sidebar.tsx` (in the root layout) reads the session in its own
   `<Suspense>` and renders nothing when signed out. The root layout doesn't re-render on client
   navigations, so the switcher reads the current workspace from the URL (`useParams()`) and the

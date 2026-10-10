@@ -8,6 +8,8 @@ async function gotoSignIn(page: Page, query = "") {
 }
 
 // Next's route announcer is also a role=alert element, so match the text.
+const sidebar = (page: Page) => page.getByRole("navigation", { name: "Main", exact: true });
+
 const alertWith = (page: Page, text: string) => page.getByRole("alert").filter({ hasText: text });
 
 /** Signs in through the mock IdP and waits for the signed-in home page. */
@@ -15,14 +17,18 @@ async function signIn(page: Page, user: { sub: string; email: string; name: stri
   await gotoSignIn(page);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await loginAtMockIdp(page, user);
-  await expect(page.getByText("Agents arrive in the next milestone")).toBeVisible();
+  await expect(
+    page.getByRole("main").getByText("Agents arrive in the next milestone"),
+  ).toBeVisible();
 }
 
-test("signed-out visitors see the landing page without a header", async ({ page }) => {
+test("signed-out visitors see the landing page without a sidebar", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { level: 1, name: "Agenty", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "Sign in", exact: true })).toBeVisible();
-  await expect(page.getByRole("banner")).toHaveCount(0);
+  await expect(sidebar(page)).toHaveCount(0);
+  await gotoSignIn(page);
+  await expect(sidebar(page)).toHaveCount(0);
 });
 
 test("signing in through the identity provider shows the home page and the user", async ({
@@ -34,10 +40,10 @@ test("signing in through the identity provider shows the home page and the user"
   await loginAtMockIdp(page, user);
 
   await expect(page).toHaveURL(/\/w\/[0-9a-f-]{36}$/);
-  await expect(page.getByText("Agents arrive in the next milestone")).toBeVisible();
   await expect(
-    page.getByRole("banner").getByRole("button", { name: user.name, exact: true }),
+    page.getByRole("main").getByText("Agents arrive in the next milestone"),
   ).toBeVisible();
+  await expect(sidebar(page).getByRole("button", { name: user.name, exact: true })).toBeVisible();
 });
 
 test("signing out ends the session and returns to the landing page", async ({ page }) => {
@@ -45,14 +51,16 @@ test("signing out ends the session and returns to the landing page", async ({ pa
   await signIn(page, user);
 
   await page.getByRole("button", { name: user.name, exact: true }).click();
-  await expect(page.getByText(user.email, { exact: true })).toBeVisible();
+  await expect(page.getByRole("menu").getByText(user.email, { exact: true })).toBeVisible();
   await page.getByRole("menuitem", { name: "Sign out", exact: true }).click();
 
   await expect(page.getByRole("link", { name: "Sign in", exact: true })).toBeVisible();
-  await expect(page.getByRole("banner")).toHaveCount(0);
+  await expect(sidebar(page)).toHaveCount(0);
   await page.reload();
   await expect(page.getByRole("link", { name: "Sign in", exact: true })).toBeVisible();
-  await expect(page.getByText("Agents arrive in the next milestone")).toHaveCount(0);
+  await expect(page.getByRole("main").getByText("Agents arrive in the next milestone")).toHaveCount(
+    0,
+  );
 });
 
 test("a cancelled sign-in shows a fixed message", async ({ page }) => {
@@ -73,7 +81,9 @@ test("a signed-in user who opens the sign-in page lands in their workspace", asy
   await page.goto("/sign-in");
 
   await expect(page).toHaveURL(/\/w\/[0-9a-f-]{36}$/);
-  await expect(page.getByText("Agents arrive in the next milestone")).toBeVisible();
+  await expect(
+    page.getByRole("main").getByText("Agents arrive in the next milestone"),
+  ).toBeVisible();
 });
 
 for (const [failure, idpUser, fail] of [
@@ -93,7 +103,9 @@ for (const [failure, idpUser, fail] of [
     await expect(alertWith(page, "Sign-out failed. Please try again.")).toBeVisible();
     await page.unroute("**/api/auth/sign-out");
     await page.reload();
-    await expect(page.getByText("Agents arrive in the next milestone")).toBeVisible();
+    await expect(
+      page.getByRole("main").getByText("Agents arrive in the next milestone"),
+    ).toBeVisible();
   });
 }
 

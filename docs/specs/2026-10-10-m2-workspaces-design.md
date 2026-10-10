@@ -178,9 +178,15 @@ are logged server-side by class only and shown as a generic message.
 `src/app/w/[workspaceId]/layout.tsx` shows the workspace name with links
 Home / Settings (presentation only, see *Access*). For a personal workspace
 Settings is a disabled, focusable link with the tooltip "Your personal
-workspace can't be changed." (on hover and focus). The header gains a
-"Workspaces" link to `/workspaces`, with the number of pending invitations when
-there are any. After deleting or
+workspace can't be changed." (on hover and focus). Signed-in pages have a
+left sidebar instead of a header (signed-out pages have neither): "Agenty" (link to
+`/`) at the top, and pinned to the bottom a workspace switcher (trigger: the
+workspace in the URL, elsewhere the personal one; menu: all the user's workspaces,
+personal first and the current one marked, then "All workspaces & invitations" →
+`/workspaces` with the number of pending invitations, and "Create workspace" →
+the create form), a separator, and the user menu (name, email, sign out). On
+small screens the sidebar is a fly-in opened from a slim top bar; it closes on
+navigation, Escape and outside clicks. After deleting or
 leaving a workspace the user lands on `/workspaces`. Session reads stay inside each
 page's `loading.tsx` boundary (Cache Components; see `AGENTS.md`).
 

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { AppHeader } from "@/components/app-header";
+import { AppSidebar, AppTopBar } from "@/components/app-sidebar";
+import { SidebarProvider } from "@/components/ui/sidebar";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -10,9 +11,16 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className="h-full antialiased">
-      <body className="flex min-h-full flex-col">
-        <AppHeader />
-        <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 p-8">{children}</main>
+      <body className="min-h-full">
+        <SidebarProvider>
+          <AppSidebar />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <AppTopBar />
+            <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 p-4 md:p-8">
+              {children}
+            </main>
+          </div>
+        </SidebarProvider>
       </body>
     </html>
   );

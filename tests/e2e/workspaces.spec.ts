@@ -1,4 +1,11 @@
-import { type Browser, type BrowserContext, expect, type Page, test } from "@playwright/test";
+import {
+  type Browser,
+  type BrowserContext,
+  type BrowserContextOptions,
+  expect,
+  type Page,
+  test,
+} from "@playwright/test";
 import { loginAtMockIdp, uniqueIdpUser } from "./support/mock-idp";
 
 type IdpUser = ReturnType<typeof uniqueIdpUser>;
@@ -9,15 +16,22 @@ test.afterEach(async () => {
 });
 
 /** A fresh browser session signed in as `user`, on their personal workspace home. */
-async function signedIn(browser: Browser, user: IdpUser): Promise<Page> {
-  const context = await browser.newContext();
+async function signedIn(
+  browser: Browser,
+  user: IdpUser,
+  options: BrowserContextOptions = {},
+): Promise<Page> {
+  const context = await browser.newContext(options);
   contexts.push(context);
   const page = await context.newPage();
   await page.goto("/sign-in");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await loginAtMockIdp(page, user);
   await expect(page).toHaveURL(/\/w\/[0-9a-f-]{36}$/);
-  await expect(page.getByText("Agents arrive in the next milestone")).toBeVisible();
+  // Scoped to <main>: streamed content briefly sits in a hidden copy at the end of <body>.
+  await expect(
+    page.getByRole("main").getByText("Agents arrive in the next milestone"),
+  ).toBeVisible();
   return page;
 }
 
@@ -162,4 +176,106 @@ test("non-members see the not-found page", async ({ browser }) => {
   await expect(stranger.getByText("This page could not be found.")).toBeVisible();
   await stranger.goto(home);
   await expect(stranger.getByText("This page could not be found.")).toBeVisible();
+});
+
+const sidebar = (page: Page) => page.getByRole("navigation", { name: "Main", exact: true });
+const switcher = (page: Page) => sidebar(page).getByRole("button", { name: /^Workspace\b/ });
+
+test("the sidebar's switcher lists the user's workspaces and switches between them", async ({
+  browser,
+}) => {
+  const user = uniqueIdpUser("wssw", "Sue Switcher");
+  const page = await signedIn(browser, user);
+  const personalUrl = page.url();
+  const team = `Switch ${user.sub}`;
+  await page.goto("/workspaces");
+  await page.getByLabel("Name", { exact: true }).fill(team);
+  await page.getByRole("button", { name: "Create", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name: team, exact: true })).toBeVisible();
+  const teamUrl = page.url();
+
+  // The trigger names the workspace in the URL; the menu marks it as the current one.
+  await expect(switcher(page)).toContainText(team);
+  await switcher(page).click();
+  const items = page.getByRole("menuitem");
+  await expect(items.nth(0)).toHaveText("Personal");
+  await expect(items.filter({ hasText: team })).toHaveAttribute("aria-current", "page");
+  await items.filter({ hasText: "Personal" }).click();
+  await expect(page).toHaveURL(personalUrl);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Personal", exact: true }),
+  ).toBeVisible();
+  await expect(switcher(page)).toContainText("Personal");
+
+  // Keyboard: open the menu, go to the team workspace and follow it.
+  await switcher(page).focus();
+  await page.keyboard.press("Enter");
+  await expect(items.filter({ hasText: team })).toBeVisible();
+  await items.filter({ hasText: team }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(teamUrl);
+  await expect(page.getByRole("heading", { level: 1, name: team, exact: true })).toBeVisible();
+
+  // The other entries lead to the workspace list and its create form.
+  await switcher(page).click();
+  await page.getByRole("menuitem", { name: "Create workspace", exact: true }).click();
+  await expect(page).toHaveURL(/\/workspaces#create-workspace$/);
+  await expect(page.getByLabel("Name", { exact: true })).toBeVisible();
+});
+
+test("an invitation shows as a badge in the sidebar's switcher", async ({ browser }) => {
+  const ada = uniqueIdpUser("wsbada", "Ada Badge");
+  const bob = uniqueIdpUser("wsbbob", "Bob Badge");
+  const bobPage = await signedIn(browser, bob);
+  const adaPage = await signedIn(browser, ada);
+  await expect(switcher(bobPage)).not.toContainText("pending invitations");
+
+  await adaPage.goto("/workspaces");
+  await adaPage.getByLabel("Name", { exact: true }).fill(`Badge ${ada.sub}`);
+  await adaPage.getByRole("button", { name: "Create", exact: true }).click();
+  await settingsLink(adaPage).click();
+  await adaPage.getByLabel("Search users", { exact: true }).fill(bob.email);
+  await adaPage
+    .getByRole("list", { name: "Search results" })
+    .getByRole("listitem")
+    .filter({ hasText: bob.email })
+    .getByRole("button", { name: "Invite", exact: true })
+    .click();
+  await expect(
+    adaPage.getByRole("list", { name: "Pending invitations" }).getByText(bob.email),
+  ).toBeVisible();
+
+  await bobPage.reload();
+  await expect(switcher(bobPage)).toContainText("1 pending invitations");
+  await switcher(bobPage).click();
+  await bobPage.getByRole("menuitem", { name: /^All workspaces & invitations/ }).click();
+  await expect(bobPage).toHaveURL(/\/workspaces$/);
+  await expect(bobPage.getByText("invited by Ada Badge")).toBeVisible();
+});
+
+test("on a small screen the sidebar flies in from the top bar and closes after navigating", async ({
+  browser,
+}) => {
+  const page = await signedIn(browser, uniqueIdpUser("wsmob", "Mo Mobile"), {
+    viewport: { width: 390, height: 844 },
+  });
+  await expect(sidebar(page)).toBeHidden();
+
+  // Retried: a click before hydration opens nothing.
+  const open = page.getByRole("button", { name: "Open sidebar", exact: true });
+  await expect(async () => {
+    await open.click();
+    await expect(sidebar(page)).toBeVisible({ timeout: 1_000 });
+  }).toPass();
+  await page.keyboard.press("Escape");
+  await expect(sidebar(page)).toBeHidden();
+
+  await open.click();
+  await switcher(page).click();
+  await page.getByRole("menuitem", { name: /^All workspaces & invitations/ }).click();
+  await expect(page).toHaveURL(/\/workspaces$/);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Workspaces", exact: true }),
+  ).toBeVisible();
+  await expect(sidebar(page)).toBeHidden();
 });

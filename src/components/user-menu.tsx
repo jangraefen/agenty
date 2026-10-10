@@ -1,8 +1,8 @@
 "use client";
 
+import { ChevronsUpDownIcon, LogOutIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,8 +12,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
 import { authClient } from "@/lib/auth-client";
 
+/** The signed-in user at the bottom of the sidebar: name, email and sign-out. */
 export function UserMenu({ name, email }: { name: string; email: string }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
@@ -37,27 +39,39 @@ export function UserMenu({ name, email }: { name: string; email: string }) {
   }
 
   return (
-    <div className="flex items-center gap-3">
+    <SidebarMenu>
       {failed ? (
-        <p className="text-destructive text-sm" role="alert">
+        <li className="px-2 pb-2 text-destructive text-sm" role="alert">
           Sign-out failed. Please try again.
-        </p>
+        </li>
       ) : null}
-      <DropdownMenu>
-        <DropdownMenuTrigger render={<Button variant="ghost" />}>{name}</DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-64">
-          <DropdownMenuGroup>
-            <DropdownMenuLabel className="flex flex-col gap-1">
-              <span className="font-medium text-foreground">{name}</span>
-              <span>{email}</span>
-            </DropdownMenuLabel>
-          </DropdownMenuGroup>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem disabled={pending} onClick={signOut}>
-            Sign out
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
+      <SidebarMenuItem>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            aria-label={name}
+            render={<SidebarMenuButton className="data-popup-open:bg-sidebar-accent" size="lg" />}
+          >
+            <span className="flex min-w-0 flex-1 flex-col text-left leading-tight">
+              <span className="truncate font-medium">{name}</span>
+              <span className="truncate text-muted-foreground text-xs">{email}</span>
+            </span>
+            <ChevronsUpDownIcon className="ml-auto" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent className="w-(--anchor-width) min-w-56" side="top">
+            <DropdownMenuGroup>
+              <DropdownMenuLabel className="flex flex-col gap-1">
+                <span className="font-medium text-foreground">{name}</span>
+                <span>{email}</span>
+              </DropdownMenuLabel>
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem disabled={pending} onClick={signOut}>
+              <LogOutIcon aria-hidden="true" />
+              Sign out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </SidebarMenuItem>
+    </SidebarMenu>
   );
 }

@@ -53,12 +53,15 @@ Run tests through `task` (it loads `.env`); plain `pnpm exec vitest` lacks `DATA
 
 ```
 src/app/            routes, pages, route handlers (thin: parse, call src/server, respond)
-  layout.tsx        root layout: header (user menu when signed in) and the shared `<main>`
+  layout.tsx        root layout: sidebar and mobile top bar (signed in only) and the shared `<main>`
   sign-in/          sign-in page, sign-in server action, fixed error messages
   api/workspaces/   invite user search route (the only client-side read)
   workspaces/       workspace list, create form, invitations; shared action runner and error messages
   w/[workspaceId]/  workspace home and settings (every page checks membership itself)
-src/components/ui/  shadcn/ui components (Base UI preset `base-nova`)
+src/components/     app sidebar (app-sidebar.tsx: server part; workspace switcher, user menu and
+                    mobile top bar are client components)
+  ui/               shadcn/ui components (Base UI preset `base-nova`)
+src/hooks/          client hooks (use-mobile.ts, from shadcn's sidebar)
 src/lib/            shared client/server utilities (utils.ts re-exports `cn` from the `cn` package)
 src/instrumentation.ts  server start: validates env, applies migrations
 src/server/         server-only code (every module imports "server-only")
@@ -176,9 +179,9 @@ workspace row first, then reads the actor's role. Pages use `requireWorkspaceMem
 `requireWorkspaceAdmin` (`access.ts`); non-members get the not-found page (a soft 404, since pages
 stream). Server actions go through `runWorkspaceAction` (`src/app/workspaces/run-action.ts`):
 errors redirect back with `?error=<code>`, shown as fixed text (`error-messages.ts`). Server actions
-that change data shown in layouts (workspace name, header invitation count) call `refresh()` from
-`next/cache` before `redirect()`, as `runWorkspaceAction` does; otherwise the client reuses the old
-layouts after the redirect.
+that change data shown in layouts (workspace name, the sidebar's workspace list and invitation
+count) call `refresh()` from `next/cache` before `redirect()`, as `runWorkspaceAction` does;
+otherwise the client reuses the old layouts after the redirect.
 The invite search on the settings page is the one client-side read: a client component fetches
 `GET /api/workspaces/[workspaceId]/users?q=` as the admin types (route handler, not a server
 action: actions are for mutations and run one at a time per client). The handler takes the user
@@ -246,6 +249,11 @@ has no `server-only` import because `scripts/migrate.ts` (`task db:migrate`) run
   layout that reads request-time data wraps that part in `<Suspense>` itself (the workspace nav).
   `next build` only checks page loads; `next dev` logs `Route "...": ... uncached data` for
   navigations.
+- Sidebar: `src/components/app-sidebar.tsx` (in the root layout) reads the session in its own
+  `<Suspense>` and renders nothing when signed out. The root layout doesn't re-render on client
+  navigations, so the switcher reads the current workspace from the URL (`useParams()`) and the
+  workspace list only updates on `refresh()` or a full load. shadcn's `sidebar.tsx` is patched to
+  render the desktop markup until hydrated (it streams in after the provider; marked `Agenty:`).
 - Route handlers that touch the database without reading the request (e.g. `/api/health`) call
   `await connection()` first (Cache Components is on; otherwise Next may prerender them at build
   time). Handlers that read the request, like the auth route, are dynamic anyway.

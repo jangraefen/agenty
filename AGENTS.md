@@ -231,10 +231,14 @@ has no `server-only` import because `scripts/migrate.ts` (`task db:migrate`) run
 - Configuration is read only via `getEnv()` (lazy, so `next build` needs no runtime env); the
   owner URL only via `takeMigrationUrl()`. `src/instrumentation.ts` calls `process.exit(1)` when
   startup fails, because Next only logs `register()` failures. This also stops `next dev`.
-- Pages need no `<Suspense>` of their own: the root layout wraps `{children}` in one boundary, which
-  Cache Components requires around request-time data (session, `params`, `searchParams`); without
-  it `next build` fails. The header sits outside `<main>` and has its own boundary. A page may add
-  an inner boundary to keep a static part instant (e.g. the sign-in card).
+- Cache Components requires request-time data (session, `params`, `searchParams`) inside a
+  `<Suspense>`, and a client navigation only re-renders below the layout both routes share, so a
+  boundary in a parent layout doesn't count there. Every page that reads request-time data has a
+  `loading.tsx` next to it (fallback `null`), which wraps that page in its own boundary (or the
+  page wraps the reading part in `<Suspense>` to keep a static part instant, like sign-in). A
+  layout that reads request-time data wraps that part in `<Suspense>` itself (the workspace nav).
+  `next build` only checks page loads; `next dev` logs `Route "...": ... uncached data` for
+  navigations.
 - Route handlers that touch the database without reading the request (e.g. `/api/health`) call
   `await connection()` first (Cache Components is on; otherwise Next may prerender them at build
   time). Handlers that read the request, like the auth route, are dynamic anyway.

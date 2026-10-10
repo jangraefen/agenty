@@ -133,7 +133,7 @@ name, then email; returns `{ id, name, email }` only. Names can be empty
   nothing leaks; rule tests for non-members use valid input.
 - A user who is not a member gets the not-found page (`notFound()`), never a
   "forbidden" page, so a workspace they don't belong to looks like one that
-  doesn't exist. Because pages stream inside the root layout's `<Suspense>`, this is a soft 404
+  doesn't exist. Because pages stream inside their `loading.tsx` boundary, this is a soft 404
   (status 200 with the not-found UI and `noindex`); tests assert the UI, not
   the status. Server actions answer `not_found` the same way. A member opening
   an admin-only page gets the read-only view; an admin-only action answers
@@ -143,7 +143,7 @@ name, then email; returns `{ id, name, email }` only. Names can be empty
   under `/w/[workspaceId]` calls `requireWorkspaceMember` or
   `requireWorkspaceAdmin` itself (React `cache` makes repeated calls cheap),
   and every action relies on the service's own check. `params` is runtime data
-  under Cache Components and is read inside the root layout's `<Suspense>` boundary.
+  under Cache Components and is read inside each page's `loading.tsx` boundary and the layout's own `<Suspense>`.
 - `AGENTS.md` rule 1 gains: every workspace-owned table has `workspace_id` and
   is only accessed after `requireWorkspace*`; chats (M4) are the exception that
   also need an owner check, since they stay private to their user; adding
@@ -168,8 +168,8 @@ are logged server-side by class only and shown as a generic message.
 Home / Settings (presentation only, see *Access*). The header gains a
 "Workspaces" link to `/workspaces`, with the number of pending invitations when
 there are any. After deleting or
-leaving a workspace the user lands on `/workspaces`. Session reads stay inside the
-root layout's `<Suspense>` boundary (Cache Components).
+leaving a workspace the user lands on `/workspaces`. Session reads stay inside each
+page's `loading.tsx` boundary (Cache Components; see `AGENTS.md`).
 
 ## Tests
 

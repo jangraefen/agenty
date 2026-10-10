@@ -12,7 +12,8 @@
 
 ## Global Constraints
 
-- Every `src/server/**` module starts with `import "server-only";`, except `src/server/crypto/keyring.ts`, `cipher.ts` and `rotate.ts` (plain Node runs them through `scripts/rotate-keys.ts`; only erasable TypeScript syntax and relative `.ts` imports there).
+- Every `src/server/**` module starts with `import "server-only";`, except `src/server/crypto/keyring.ts`, `cipher.ts` and `rotate.ts` (plain Node runs them through `scripts/rotate-keys.ts`, locally and in the production image; only erasable TypeScript syntax and relative `.ts` imports there, and no packages except `zod`, `postgres` and `node:` built-ins, which `scripts/build.sh` copies into the image).
+- The rotation ships in the production image: `node scripts/rotate-keys.ts [--check]` runs inside it (Node 24 type stripping). The image still never contains the testing API.
 - Configuration only via `getEnv()`; database only via `getDb()` (the rotation script uses its own postgres client).
 - Providers exactly `openai`, `anthropic`, `google`; display names exactly "OpenAI", "Anthropic", "Google Gemini".
 - Base URLs: `https://api.openai.com/v1`, `https://api.anthropic.com/v1`, `https://generativelanguage.googleapis.com/v1beta`; overrides `AGENTY_OPENAI_BASE_URL`, `AGENTY_ANTHROPIC_BASE_URL`, `AGENTY_GOOGLE_BASE_URL` (https; http only for `localhost`/`127.0.0.1`).
@@ -2479,12 +2480,14 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Files:**
 - Create: `src/server/crypto/rotate.ts`, `scripts/rotate-keys.ts`
-- Modify: `Taskfile.yml`
-- Test: `src/server/crypto/rotate.int.test.ts`
+- Modify: `Taskfile.yml`, `scripts/build.sh`, `.github/workflows/ci.yml` (docker job)
+- Test: `src/server/crypto/rotate.int.test.ts`; CI docker job runs the rotation inside the image
 
 **Interfaces:**
 - Consumes: `Keyring`, `parseKeyring` (Task 1), `encryptWith`, `decryptWith`, `keyIdOf`, `providerKeyAad`, `CryptoError` (Task 1), table `app.provider_key` (Task 3).
-- Produces: `type RotationCounts = { rotated: number; unreadable: number; pending: number }`, `rotateProviderKeys(sql: Sql, keyring: Keyring, options?: { check?: boolean; workspaceIds?: string[] }): Promise<RotationCounts>`; task `crypto:rotate` (`-- --check` only counts).
+- Produces: `type RotationCounts = { rotated: number; unreadable: number; pending: number }`, `rotateProviderKeys(sql: Sql, keyring: Keyring, options?: { check?: boolean; workspaceIds?: string[] }): Promise<RotationCounts>`; task `crypto:rotate` (`-- --check` only counts); in the image: `docker run --rm -e DATABASE_URL=… -e ENCRYPTION_KEYS=… agenty:local node scripts/rotate-keys.ts [--check]`.
+
+**Mechanism (verified against the repo):** `.next/standalone/node_modules` contains only `next`, `react` and `react-dom` (Turbopack bundles `postgres` and `zod` into the server chunks), so the script can't rely on traced packages. Both packages have no dependencies, so `scripts/build.sh` copies them (`cp -RL`, which dereferences pnpm's symlinks) plus the four type-strippable `.ts` files into the standalone output, keeping their relative layout. The runtime image runs them with Node 24's type stripping; the standalone `package.json` keeps `"type": "module"`. No bundler, no new dependency.
 
 - [ ] **Step 1: Write the failing integration test** — `src/server/crypto/rotate.int.test.ts`:
 
@@ -2652,8 +2655,10 @@ Run: `task test -- --project integration src/server/crypto/rotate.int.test.ts` �
 
 ```ts
 // Re-encrypts stored provider keys with the active (first) ENCRYPTION_KEYS key:
-// `task crypto:rotate`; `task crypto:rotate -- --check` only counts rows on older keys.
+// `task crypto:rotate` (repo) or `node scripts/rotate-keys.ts` in the production image (copied
+// there by scripts/build.sh); `--check` only counts rows on older keys.
 // Connects as DATABASE_URL (the app role may update provider_key). Prints counts only.
+// Imports only node built-ins, postgres and the crypto modules (see scripts/build.sh).
 import postgres from "postgres";
 import { parseKeyring } from "../src/server/crypto/keyring.ts";
 import { rotateProviderKeys } from "../src/server/crypto/rotate.ts";
@@ -2699,12 +2704,51 @@ try {
 Run: `task crypto:rotate -- --check`
 Expected: `Provider keys on an older encryption key: 0` (the dev database only has keys made with the `dev` key; rows the tests left behind are removed with their workspaces).
 
-- [ ] **Step 5: Full check and commit**
+- [ ] **Step 5: Ship the script in the standalone output** — in `scripts/build.sh`, after the migrations block and before the policy check:
+
+```sh
+# Key rotation (`node scripts/rotate-keys.ts [--check]`) runs inside the image with Node's type
+# stripping. Its imports must resolve from the standalone output: the crypto modules keep their
+# relative layout, and postgres and zod (both without dependencies; Turbopack bundles them for
+# the server, so tracing doesn't copy them) are copied as packages. -L dereferences pnpm links.
+mkdir -p "$out/scripts" "$out/src/server/crypto" "$out/node_modules"
+cp scripts/rotate-keys.ts "$out/scripts/rotate-keys.ts"
+for file in keyring cipher rotate; do
+  cp "src/server/crypto/$file.ts" "$out/src/server/crypto/$file.ts"
+done
+for package in postgres zod; do
+  rm -rf "$out/node_modules/$package"
+  cp -RL "node_modules/$package" "$out/node_modules/$package"
+done
+# Fails the build if the copied script can't load its modules from the output alone.
+(cd "$out" && node --input-type=module -e "await import('./src/server/crypto/rotate.ts'); await import('./src/server/crypto/keyring.ts'); await import('postgres');")
+```
+
+Run: `task build`, then from the standalone output against the dev database:
+`(cd .next/standalone && node scripts/rotate-keys.ts --check)` (with `.env` loaded, e.g. via `task crypto:rotate -- --check` for the repo copy and `set -a; . ./.env; set +a` in the shell for this one)
+Expected: `Provider keys on an older encryption key: 0`. If a new import is added to the crypto modules, it must be a `node:` built-in, `zod` or `postgres`, or be added to the copy list; the import check in `build.sh` fails the build otherwise.
+
+- [ ] **Step 6: CI runs the rotation inside the built image** — in `.github/workflows/ci.yml`, docker job, add a step after "Smoke-test the image" (the container started there has migrated the empty database and keeps running):
+
+```yaml
+      - name: Key rotation runs inside the image (empty database, nothing to rotate)
+        run: |
+          out=$(docker run --rm --network host \
+            -e DATABASE_URL=postgres://agenty_app:agenty_app@localhost:5432/agenty \
+            -e ENCRYPTION_KEYS \
+            agenty:local node scripts/rotate-keys.ts --check)
+          echo "$out"
+          test "$out" = "Provider keys on an older encryption key: 0"
+```
+
+(`ENCRYPTION_KEYS` comes from the workflow-level `env` added in Task 1. The testing-API check of the docker job stays as it is: the script changes nothing about `server.js`.) Optionally run the same locally: `task docker:build`, then the `docker run` above with your `.env` values.
+
+- [ ] **Step 7: Full check and commit**
 
 Run: `task format`, then `task ci` → all green.
 
 ```bash
-git add src/server/crypto/rotate.ts src/server/crypto/rotate.int.test.ts scripts/rotate-keys.ts Taskfile.yml
+git add src/server/crypto/rotate.ts src/server/crypto/rotate.int.test.ts scripts/rotate-keys.ts Taskfile.yml scripts/build.sh .github/workflows/ci.yml
 git commit -m "feat(crypto): re-encrypt provider keys with task crypto:rotate
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -5185,7 +5229,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   agents/           agent rules (agents.ts), input validation, availability status (status.ts)
 ```
 
-   - The `scripts/` entry gains `key rotation (rotate-keys.ts)`.
+   - The `scripts/` entry gains `key rotation (rotate-keys.ts; also shipped in the image)`.
+   - `### Build`: after "copies static assets and the SQL migrations into `.next/standalone`" add "and the key rotation script with its modules and the `postgres` and `zod` packages".
    - The `tests/support/` entry gains `fake-provider.ts (model-listing endpoints of all three providers; in-process for integration tests, as a process for Playwright via fake-provider-server.ts)` and `workspaces.ts (sharedWorkspace, expectWorkspaceError)`.
    - "Folders `src/server/{agents,tools,workflows,crypto}` are created by the milestones that need them." becomes "Folders `src/server/{tools,workflows}` are created by the milestones that need them."
 
@@ -5202,9 +5247,14 @@ exactly 32 bytes (`openssl rand -base64 32`). The first key encrypts; the others
 (`provider_key|<workspaceId>|<provider>`). Decryption fails closed with a detail-free
 `CryptoError`; log its class only.
 
-Rotation: put a new key first in `ENCRYPTION_KEYS`, restart, run `task crypto:rotate` (as
-`DATABASE_URL`; locks one row at a time, never the workspace row; keeps `updated_at`), and remove
-the old key once `task crypto:rotate -- --check` reports 0. Removing a key that still has
+Rotation: put a new key first in `ENCRYPTION_KEYS`, restart, run `task crypto:rotate` (or, in
+the production image, `node scripts/rotate-keys.ts`; as `DATABASE_URL`; locks one row at a time,
+never the workspace row; keeps `updated_at`), and remove the old key once `--check` reports 0.
+`scripts/build.sh` copies the script, `keyring.ts`, `cipher.ts`, `rotate.ts` and the
+dependency-free `postgres` and `zod` packages into `.next/standalone` (Turbopack bundles them for
+the server, so tracing doesn't); Node 24 runs the `.ts` files with type stripping. Those modules
+may import nothing else; the build checks that they load from the output. CI runs `--check`
+inside the built image. Removing a key that still has
 ciphertexts makes those provider keys unreadable ("Key unreadable, set it again").
 
 ### Providers and agents
@@ -5263,9 +5313,13 @@ Provider API keys are stored encrypted. Set `ENCRYPTION_KEYS` to `id:key`, e.g.
 it, stored provider keys can't be read.
 
 To rotate: put a new key first (`new:...,main:...`) and restart; new keys are encrypted with it.
-Then, from a checkout of the same version with `DATABASE_URL` and `ENCRYPTION_KEYS` set, run
-`task crypto:rotate`. When `task crypto:rotate -- --check` reports 0, remove the old key and
-restart. Provider keys whose encryption key was removed show as "Key unreadable, set it again".
+Then re-encrypt the stored keys with the image itself:
+
+    docker run --rm -e DATABASE_URL=... -e ENCRYPTION_KEYS=new:...,main:... \
+      agenty:local node scripts/rotate-keys.ts
+
+When the same command with `--check` reports 0, remove the old key and restart. (From a
+checkout, `task crypto:rotate` does the same.) Provider keys whose encryption key was removed show as "Key unreadable, set it again".
 
 ### Model providers
 

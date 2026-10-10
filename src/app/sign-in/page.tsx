@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 import { Suspense } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
 import { getCurrentUser } from "@/server/auth/session";
 import { signIn } from "./actions";
-import { signInErrorMessage } from "./error-messages";
+import { signInErrorLogLine, signInErrorMessage } from "./error-messages";
 
 export const metadata: Metadata = { title: "Sign in · Agenty" };
 
@@ -28,8 +29,8 @@ export default function SignInPage({ searchParams }: PageProps<"/sign-in">) {
 const first = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value);
 
 /**
- * Sends signed-in users home. Reads only `error`, never `error_description`: that is text from
- * the identity provider.
+ * Sends signed-in users home. `error_description` is IdP text: it is logged on the server, never
+ * shown.
  */
 async function SignInForm({
   searchParams,
@@ -38,8 +39,14 @@ async function SignInForm({
 }) {
   if (await getCurrentUser()) redirect("/");
 
-  const { error } = await searchParams;
-  const code = first(error);
+  const params = await searchParams;
+  const code = first(params.error);
+  if (code) {
+    // With Partial Prefetching, Next renders the page twice per request (once more for the
+    // runtime prefetch). Only the request render gets past connection(), so this logs once.
+    await connection();
+    console.warn(signInErrorLogLine(code, first(params.error_description)));
+  }
   const message = signInErrorMessage(code);
   return (
     <form action={signIn} className="flex flex-col gap-4">

@@ -51,8 +51,10 @@ tasks:
       - pnpm exec tsc --noEmit
 
   build:
-    desc: Production build (.next/standalone, self-contained)
+    desc: Production build for the E2E tests (.next/standalone, self-contained, with Next's testing API; the Docker image builds without it)
     run: once
+    env:
+      EXPOSE_TESTING_API: "1"
     cmds:
       - sh scripts/build.sh
 

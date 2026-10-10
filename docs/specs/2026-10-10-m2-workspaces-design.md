@@ -35,7 +35,7 @@ maintainer has approved the merge.
 | R3 | Any user can create a workspace; the creator becomes its `admin`. |
 | R4 | Admins rename and delete the workspace, invite users, cancel any invitation, remove members and change roles, including other admins' (subject to R5). Later milestones add: create and edit agents, tools and provider keys. Members only use the workspace (later: chat with its agents) and can leave. |
 | R5 | A workspace has at least one admin at all times: the last admin cannot leave, be removed or be demoted. To get out, they promote someone else first or delete the workspace. |
-| R6 | Only existing users can be invited. Admins find them by searching name or email over all users of the instance (accepted: any user can enumerate accounts, since anyone can create a workspace). |
+| R6 | Only existing users can be invited. Admins find them by searching name or email over all users of the instance (accepted: any user can enumerate accounts, since anyone can create a workspace). Members and invitees appear in the results marked as such, without an invite option. |
 | R7 | An invitation is accepted or declined by the invited user only. Accepting makes them a `member`; accepting or declining deletes the invitation, so a declined user can be invited again. A user has at most one pending invitation per workspace and is never invited to a workspace they belong to. |
 | R8 | Deleting a workspace deletes its memberships and invitations (later: its agents, tools, keys, policies). |
 | R9 | Users are never deleted in M2 (Better Auth's `deleteUser` stays off); the cascades below only keep the database consistent. Offboarding users is decided later, together with what happens to workspaces whose last admin goes. |
@@ -70,7 +70,7 @@ The existing grants and default privileges give `agenty_app` access.
   explicitly (`actorId`) so integration tests call them without a request.
   `workspaces.ts`: `ensurePersonalWorkspace(userId)`, `createWorkspace`, `renameWorkspace`,
   `deleteWorkspace`, `listWorkspaces(userId)` (with role and personal flag), `listMembers`,
-  `changeRole`, `removeMember`, `leaveWorkspace`. `invitations.ts`: `searchUsersToInvite`,
+  `changeRole`, `removeMember`, `leaveWorkspace`. `invitations.ts`: `searchUsers`,
   `inviteUser`, `cancelInvitation`, `listInvitationsForWorkspace`, `listInvitationsForUser`, `countInvitationsForUser`,
   `acceptInvitation`, `declineInvitation`. Shared transaction helpers (workspace row lock, actor
   role) are in `internal.ts`; input validation in `validation.ts`.
@@ -113,11 +113,22 @@ message). The user row may already be committed then, which is harmless. `/`
 also calls `ensurePersonalWorkspace` when the signed-in user has none
 (sessions from before M2, manual database edits). Default name: "Personal".
 
-**User search** (`searchUsersToInvite(actorId, workspaceId, query)`): admin
+**User search** (`searchUsers(actorId, workspaceId, query)`): admin
 only, not for personal workspaces; query trimmed, 2–100 characters; case
 insensitive substring match on name or email with `%`, `_` and `\` escaped;
-excludes members and already invited users; at most 10 results, ordered by
-name, then email; returns `{ id, name, email }` only. Names can be empty
+includes members and invited users with their `status` (`"member"`,
+`"invited"`, or `null` for everyone else); at most 10 results, ordered by
+name, then email; returns `{ id, name, email, status }` only.
+
+The settings page searches as the admin types (debounced 300 ms) through
+`GET /api/workspaces/[workspaceId]/users?q=`, a route handler: server actions
+are meant for mutations and the client runs them one at a time, while this is a
+read fired on every pause in typing. The handler takes the user from the
+session (401 without one), validates the query and its response with Zod, and
+maps `WorkspaceError` codes to fixed bodies `{ error: <code> }`: `not_found`
+404 (non-members, malformed ids), `forbidden` and `personal_workspace` 403,
+`invalid_query` 400; anything else is logged by class and answers 500
+`internal`. Inviting stays a server action with a redirect. Names can be empty
 (Better Auth stores `""` when the IdP sends none); the UI then shows the email.
 
 ## Access
@@ -133,7 +144,7 @@ name, then email; returns `{ id, name, email }` only. Names can be empty
   nothing leaks; rule tests for non-members use valid input.
 - A user who is not a member gets the not-found page (`notFound()`), never a
   "forbidden" page, so a workspace they don't belong to looks like one that
-  doesn't exist. Because pages stream inside the root layout's `<Suspense>`, this is a soft 404
+  doesn't exist. Because pages stream inside their `loading.tsx` boundary, this is a soft 404
   (status 200 with the not-found UI and `noindex`); tests assert the UI, not
   the status. Server actions answer `not_found` the same way. A member opening
   an admin-only page gets the read-only view; an admin-only action answers
@@ -143,7 +154,7 @@ name, then email; returns `{ id, name, email }` only. Names can be empty
   under `/w/[workspaceId]` calls `requireWorkspaceMember` or
   `requireWorkspaceAdmin` itself (React `cache` makes repeated calls cheap),
   and every action relies on the service's own check. `params` is runtime data
-  under Cache Components and is read inside the root layout's `<Suspense>` boundary.
+  under Cache Components and is read inside each page's `loading.tsx` boundary and the layout's own `<Suspense>`.
 - `AGENTS.md` rule 1 gains: every workspace-owned table has `workspace_id` and
   is only accessed after `requireWorkspace*`; chats (M4) are the exception that
   also need an owner check, since they stay private to their user; adding
@@ -151,8 +162,8 @@ name, then email; returns `{ id, name, email }` only. Names can be empty
 
 ## UI
 
-Server components and server actions with plain `<form>`s, as in M1 (no client
-data fetching). Each action parses its input with Zod, calls `requireUser()`
+Server components and server actions with plain `<form>`s, as in M1. The one
+client-side read is the live invite search (see *User search*). Each action parses its input with Zod, calls `requireUser()`
 and the service, then redirects. Errors redirect back to the same page with
 `?error=<code>` (keeping `?q=` on the settings page), shown as a fixed message (same pattern as the sign-in page); unexpected errors
 are logged server-side by class only and shown as a generic message.
@@ -160,16 +171,28 @@ are logged server-side by class only and shown as a generic message.
 | Route | Content |
 |---|---|
 | `/` | Signed in: redirect to the personal workspace. Signed out: landing (unchanged). |
+| `/w` | Where sign-in lands (`callbackURL`; also the sign-in page's redirect for signed-in users): redirect to the personal workspace, inside the signed-in layout. Signed out: to `/sign-in`. |
 | `/workspaces` | The user's workspaces (name, role, "Personal" badge), a create form, and pending invitations to the user (workspace name, invited by) with Accept/Decline. |
 | `/w/[workspaceId]` | Workspace home: name, the user's role, placeholder "Agents arrive in the next milestone". |
-| `/w/[workspaceId]/settings` | Admin: rename; members with role select and Remove; invite (a search form `?q=` lists matching users, each with an Invite button); pending invitations with Cancel; Delete (confirmation by typing the workspace name; the trimmed input must equal the name exactly, checked server-side). Member: workspace name, member list, Leave. Personal workspace: only a short note that it can't be renamed, shared or deleted. |
+| `/w/[workspaceId]/settings` | Admin: rename; members table (Name, Email, Role with a role select that saves on change (disabled while saving; a rejected change shows the error and the stored role again), an actions column with Remove on every row but the admin's own); invite (live search as you type, lists matching users with an Invite button, or "Member"/"Invited" for those already in or invited); pending invitations with Cancel; a "Danger zone" card with Leave and Delete (confirmation by typing the workspace name; the trimmed input must equal the name exactly, checked server-side). Member: members table with read-only roles, Danger zone with Leave only. Personal workspace: redirects to the workspace home. Names fall back to the email when empty. |
 
-`src/app/w/[workspaceId]/layout.tsx` shows the workspace name with links
-Home / Settings (presentation only, see *Access*). The header gains a
-"Workspaces" link to `/workspaces`, with the number of pending invitations when
-there are any. After deleting or
-leaving a workspace the user lands on `/workspaces`. Session reads stay inside the
-root layout's `<Suspense>` boundary (Cache Components).
+`src/app/(signed-in)/w/[workspaceId]/layout.tsx` shows the workspace name with links
+Start / Settings (presentation only, see *Access*). For a personal workspace
+Settings is a disabled, focusable link with the tooltip "Your personal
+workspace can't be changed." (on hover and focus). Signed-in pages have a
+left sidebar instead of a header (signed-out pages have neither): "Agenty" (link to
+the personal workspace) at the top, and pinned to the bottom a workspace switcher (trigger: the
+workspace in the URL, elsewhere "Workspaces"; menu: all the user's workspaces,
+personal first and the current one marked, then "All workspaces & invitations" →
+`/workspaces` with the number of pending invitations, and "Create workspace" →
+the create form), a separator, and the user menu (name, email, sign out). On
+small screens the sidebar is a fly-in opened from a slim top bar; it closes on
+navigation, Escape and outside clicks. Route groups separate the two kinds of
+page: `(signed-in)` (workspace pages) renders the sidebar frame and top bar in the static
+shell, with skeletons where the switcher and user menu stream in, so full page loads don't shift
+the content; `(signed-out)` (`/`, `/sign-in`) has no sidebar. After deleting or
+leaving a workspace the user lands on `/workspaces`. Session reads stay inside each
+page's `loading.tsx` boundary (Cache Components; see `AGENTS.md`).
 
 ## Tests
 
@@ -187,8 +210,10 @@ root layout's `<Suspense>` boundary (Cache Components).
   - R5: last admin cannot leave, be removed or demoted; two admins demoting
     each other concurrently leave exactly one admin; an admin demoted by
     another admin can no longer rename or invite.
-  - R6: search requires admin, excludes members and invitees, escapes
-    wildcards, caps at 10; inviting an unknown user id fails.
+  - R6: search requires admin, marks members and invitees with their status,
+    escapes wildcards, caps at 10; inviting an unknown user id fails. The
+    search route answers 401 signed out, 404 to non-members, 403 to members
+    who aren't admins.
   - R7: only the invitee can accept or decline; accepting makes a member and
     removes the invitation; no duplicate invitations; no invitation for a
     member.
@@ -196,10 +221,11 @@ root layout's `<Suspense>` boundary (Cache Components).
   - Access: malformed id → not found without a query error; a non-member
     opening `/w/<id>/settings` sees the not-found page.
 - E2E (two users through the mock IdP): sign in → personal workspace home;
-  create a workspace; invite the second user via search; second user accepts
+  create a workspace; invite the second user via the live search (a member is
+  listed as "Member", the invitee then as "Invited"); second user accepts
   on `/workspaces` and sees the workspace as member (no admin controls);
-  admin promotes them; first admin leaves; personal workspace settings show
-  only a note; deleting a workspace requires typing its name.
+  admin promotes them; first admin leaves; the personal workspace's Settings
+  link is disabled with a tooltip and its settings URL redirects home; deleting a workspace requires typing its name.
 
 ## Docs
 

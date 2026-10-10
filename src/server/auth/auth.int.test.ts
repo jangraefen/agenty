@@ -83,7 +83,7 @@ describe("OIDC sign-in", () => {
     const result = await signIn();
 
     expect(result.status).toBe(302);
-    expect(result.location).toBe("/");
+    expect(result.location).toBe("/w");
     const users = await usersWithEmail(result.email);
     expect(users).toHaveLength(1);
     const userId = users[0]?.id ?? "";
@@ -101,7 +101,7 @@ describe("OIDC sign-in", () => {
     const first = await signIn();
     const second = await signIn({ sub: first.sub, email: first.email });
 
-    expect(second.location).toBe("/");
+    expect(second.location).toBe("/w");
     const users = await usersWithEmail(first.email);
     expect(users).toHaveLength(1);
     const userId = users[0]?.id ?? "";

@@ -15,7 +15,8 @@ export function withError(path: string, code: string): string {
  * Runs a workspace operation for a server action. Rule violations go back to `path` with their
  * code (not_found shows the not-found page); anything else is logged by class and shown as the
  * generic message. After a success the client router is refreshed: the redirect that follows
- * keeps layouts (workspace name, header invitation count) that would otherwise show stale data.
+ * keeps layouts (workspace name, the sidebar's workspaces and invitation count) that would
+ * otherwise show stale data.
  */
 export async function runWorkspaceAction<T>(path: string, operation: () => Promise<T>): Promise<T> {
   let result: T;

@@ -17,7 +17,7 @@ export async function signIn(): Promise<never> {
 async function signInTarget(): Promise<string> {
   try {
     const { url } = await (await getAuth()).api.signInSocial({
-      body: { provider: OIDC_PROVIDER_ID, callbackURL: "/", errorCallbackURL: "/sign-in" },
+      body: { provider: OIDC_PROVIDER_ID, callbackURL: "/w", errorCallbackURL: "/sign-in" },
       headers: await headers(),
     });
     if (url) return url;

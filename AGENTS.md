@@ -42,8 +42,8 @@ All commands go through `Taskfile.yml` (go-task), identically locally and in CI.
 | `task lint` / `task format` | Biome check; apply Biome fixes incl. Tailwind class sorting |
 | `task typecheck` | `next typegen` + `tsc --noEmit` |
 | `task test` | Vitest: `unit` (`*.test.ts`) and `integration` (`*.int.test.ts`, needs Postgres) |
-| `task test:e2e` | Playwright against the standalone build on port 3100 |
-| `task build` | `scripts/build.sh`: self-contained `.next/standalone` |
+| `task test:e2e` | Playwright against the standalone build on port 3100 (incl. `instant()` navigation checks) |
+| `task build` | `scripts/build.sh` with `EXPOSE_TESTING_API=1`: self-contained `.next/standalone` with Next's testing API, for E2E |
 | `task docker:build` | Production image `agenty:local` |
 | `task ci` | Everything the `ci` job checks (the `docker` job additionally builds the image and starts it against an empty database, which it migrates); locally run `task db:up` first |
 
@@ -53,11 +53,19 @@ Run tests through `task` (it loads `.env`); plain `pnpm exec vitest` lacks `DATA
 
 ```
 src/app/            routes, pages, route handlers (thin: parse, call src/server, respond)
-  layout.tsx        root layout: header (user menu when signed in) and the shared `<main>`
-  sign-in/          sign-in page, sign-in server action, fixed error messages
-  workspaces/       workspace list, create form, invitations; shared action runner and error messages
-  w/[workspaceId]/  workspace home and settings (every page checks membership itself)
-src/components/ui/  shadcn/ui components (Base UI preset `base-nova`)
+  layout.tsx        root layout: document only (<html>, <body>)
+  (signed-out)/     layout without sidebar (`<main>` only)
+    page.tsx        `/`: landing when signed out, redirect to the personal workspace when signed in
+    sign-in/        sign-in page, sign-in server action, fixed error messages
+  (signed-in)/      layout with the sidebar frame and mobile top bar in the static shell, `<main>`
+    workspaces/     workspace list, create form, invitations; shared action runner and error messages
+    w/page.tsx      `/w`: where sign-in lands; redirects to the personal workspace
+    w/[workspaceId]/  workspace home and settings (every page checks membership itself)
+  api/workspaces/   invite user search route (the only client-side read)
+src/components/     app sidebar (app-sidebar.tsx: server part; workspace switcher, user menu and
+                    mobile top bar are client components); page-loading.tsx (every loading.tsx)
+  ui/               shadcn/ui components (Base UI preset `base-nova`)
+src/hooks/          client hooks (use-mobile.ts, from shadcn's sidebar)
 src/lib/            shared client/server utilities (utils.ts re-exports `cn` from the `cn` package)
 src/instrumentation.ts  server start: validates env, applies migrations
 src/server/         server-only code (every module imports "server-only")
@@ -125,8 +133,10 @@ see Workspaces). Defined in `src/server/auth/auth.ts`.
   plain text (Better Auth limitation; replay is blocked by the hook). `BETTER_AUTH_SECRET` is the
   encryption key and signs sessions: rotating it signs everyone out and makes stored tokens
   unreadable.
-- **Sign-in:** the sign-in page is a plain `<form>` whose server action (`src/app/sign-in/actions.ts`)
-  calls `auth.api.signInSocial` and redirects to the IdP. The `nextCookies()` plugin (last in
+- **Sign-in:** the sign-in page is a plain `<form>` whose server action
+  (`src/app/(signed-out)/sign-in/actions.ts`) calls `auth.api.signInSocial` with `callbackURL`
+  `/w` (it redirects to the personal workspace inside the signed-in layout, so no sidebar-less
+  page shows first) and redirects to the IdP. The `nextCookies()` plugin (last in
   `plugins`, as Better Auth requires) writes the cookies Better Auth sets in `auth.api` calls, here
   the signed state cookie, through Next's `cookies()`; without it the callback fails with
   `state_mismatch`. A missing provider (`PROVIDER_NOT_FOUND`) redirects to
@@ -160,23 +170,29 @@ Own tables (`workspace`, `workspace_member`, `workspace_invitation`), not Better
 organization plugin. Rules (spec: `docs/specs/2026-10-10-m2-workspaces-design.md`):
 
 - Every user has one personal workspace (`personal_user_id`), ensured at every sign-in in
-  `databaseHooks.session.create.before` and by `/`. It can't be renamed, deleted or shared.
+  `databaseHooks.session.create.before` and by `/`. It can't be renamed, deleted or shared; its
+  Settings link is disabled (tooltip) and its settings page redirects to the workspace home.
 - Roles `admin` and `member`. Admins rename, delete, invite, cancel invitations, remove members
   and change roles (later: manage agents, tools, keys). Members use the workspace and can leave.
 - At least one admin at all times (the last admin can't leave, be removed or be demoted).
-- Invitations only for existing users (admins search all users by name/email); the invitee accepts
-  or declines. No email.
+- Invitations only for existing users (admins search all users by name/email; members and invitees
+  are listed as such); the invitee accepts or declines. No email.
 - Users are never deleted for now (Better Auth's `deleteUser` is off).
 
 Code: service functions in `src/server/workspaces/` take the acting user's id explicitly and throw
 `WorkspaceError` with a fixed code. Every mutating function (except create, ensure and decline, which need no lock) runs in one transaction that locks the
 workspace row first, then reads the actor's role. Pages use `requireWorkspaceMember` /
 `requireWorkspaceAdmin` (`access.ts`); non-members get the not-found page (a soft 404, since pages
-stream). Server actions go through `runWorkspaceAction` (`src/app/workspaces/run-action.ts`):
+stream). Server actions go through `runWorkspaceAction` (`src/app/(signed-in)/workspaces/run-action.ts`):
 errors redirect back with `?error=<code>`, shown as fixed text (`error-messages.ts`). Server actions
-that change data shown in layouts (workspace name, header invitation count) call `refresh()` from
-`next/cache` before `redirect()`, as `runWorkspaceAction` does; otherwise the client reuses the old
-layouts after the redirect.
+that change data shown in layouts (workspace name, the sidebar's workspace list and invitation
+count) call `refresh()` from `next/cache` before `redirect()`, as `runWorkspaceAction` does;
+otherwise the client reuses the old layouts after the redirect.
+The invite search on the settings page is the one client-side read: a client component fetches
+`GET /api/workspaces/[workspaceId]/users?q=` as the admin types (route handler, not a server
+action: actions are for mutations and run one at a time per client). The handler takes the user
+from the session, validates query and response with Zod (`src/lib/user-search.ts`) and answers
+fixed error codes (401, 404 for non-members, 403 for non-admins and the personal workspace).
 
 ### Policy
 
@@ -194,6 +210,13 @@ treat a thrown error as a denial. A Rego test asserts the policy only produces k
 copies static assets and the SQL migrations into `.next/standalone`, and removes any `.env` files
 Next copied there (configuration must come from the real environment). The runtime image only
 contains `.next/standalone`.
+
+`next.config.ts` turns on `experimental.exposeTestingApiInProductionBuild` (the instant-navigation
+testing API that `@next/playwright`'s `instant()` needs) only when `EXPOSE_TESTING_API=1` at build
+time. `task build`, and so `task test:e2e` and `task ci`, set it; the Dockerfile runs
+`scripts/build.sh` without it, so the image never contains the testing API. Don't set it anywhere
+else. The CI `docker` job checks the built image: the flag must be `false` in `server.js` and
+`true` nowhere (also not in `.next/required-server-files.json`).
 
 ### Migrations on start
 
@@ -231,10 +254,36 @@ has no `server-only` import because `scripts/migrate.ts` (`task db:migrate`) run
 - Configuration is read only via `getEnv()` (lazy, so `next build` needs no runtime env); the
   owner URL only via `takeMigrationUrl()`. `src/instrumentation.ts` calls `process.exit(1)` when
   startup fails, because Next only logs `register()` failures. This also stops `next dev`.
-- Pages need no `<Suspense>` of their own: the root layout wraps `{children}` in one boundary, which
-  Cache Components requires around request-time data (session, `params`, `searchParams`); without
-  it `next build` fails. The header sits outside `<main>` and has its own boundary. A page may add
-  an inner boundary to keep a static part instant (e.g. the sign-in card).
+- Cache Components requires request-time data (session, `params`, `searchParams`) inside a
+  `<Suspense>`, and a client navigation only re-renders below the layout both routes share, so a
+  boundary in a parent layout doesn't count there. Every page that reads request-time data has a
+  `loading.tsx` next to it, which wraps that page in its own boundary (or the
+  page wraps the reading part in `<Suspense>` to keep a static part instant, like sign-in). A
+  layout that reads request-time data wraps that part in `<Suspense>` itself (the workspace nav).
+  `next build` only checks page loads; `next dev` logs `Route "...": ... uncached data` for
+  navigations. `tests/e2e/instant.spec.ts` enforces it at runtime with `@next/playwright`'s
+  `instant()`: initial loads and client navigations into every such page (also between pages
+  that share the workspace layout) must commit with only the static/prefetched UI. It catches a
+  missing boundary below the shared layout (e.g. without `w/[workspaceId]/loading.tsx` the
+  settings → home navigation never commits), but not a page whose parent segment's
+  `loading.tsx` still covers it at runtime (e.g. a missing `settings/loading.tsx`); `next dev`
+  still reports those, so keep one `loading.tsx` per page. New pages get an entry there. Each
+  `loading.tsx` only re-exports the shared `src/components/page-loading.tsx` (a centred spinner
+  that fades in after 300 ms via CSS, so fast navigations show nothing).
+- Sidebar: route groups split the pages. `(signed-in)/layout.tsx` renders the sidebar
+  (`src/components/app-sidebar.tsx`) and the mobile top bar as part of the static shell: the
+  frame, "Agenty" and skeletons for the switcher and user menu, so a full load doesn't shift the
+  content; the session-dependent parts stream into their own `<Suspense>` (one request-cached
+  load). `(signed-out)` (`/` and `/sign-in`) has no sidebar. `/` sits there because it only renders
+  for signed-out visitors; the sidebar's "Agenty" links straight to the personal workspace, since
+  passing through `/` would switch layouts and drop the sidebar for a moment. The layout doesn't
+  re-render on client navigations, so the switcher reads the current workspace from the URL
+  (`useParams()`; outside `/w/...` it shows "Workspaces") and the workspace list only updates on
+  `refresh()` or a full load. Client hooks that read the URL in the shell (`usePathname()` in the
+  top bar) sit in their own `<Suspense>`: `/w/[workspaceId]` has no known params at prerender.
+  The sidebar starts open on every visit; folding (rail, Ctrl/Cmd+B) lasts for the visit only.
+  Its state is not persisted (maintainer decision): shadcn's `sidebar_state` cookie write is
+  removed from `src/components/ui/sidebar.tsx`.
 - Route handlers that touch the database without reading the request (e.g. `/api/health`) call
   `await connection()` first (Cache Components is on; otherwise Next may prerender them at build
   time). Handlers that read the request, like the auth route, are dynamic anyway.

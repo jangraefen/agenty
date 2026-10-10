@@ -13,7 +13,7 @@ import {
   inviteUser,
   listInvitationsForUser,
   listInvitationsForWorkspace,
-  searchUsersToInvite,
+  searchUsers,
 } from "./invitations";
 import {
   changeRole,
@@ -44,47 +44,70 @@ const invitationIdFor = async (userId: string) => {
 };
 
 describe("R6: inviting existing users", () => {
-  it("finds users by name or email, without members, invitees or more than 10 results", async () => {
+  it("finds users by name or email, marks members and invitees, and returns at most 10", async () => {
     const { id, admin, invitee } = await setup();
     const tag = invitee.id.slice(0, 8);
     await Promise.all(Array.from({ length: 11 }, (_, i) => users.create(`Bulk ${tag} ${i}`)));
 
-    expect(await searchUsersToInvite(admin.id, id, invitee.email)).toEqual([
-      { id: invitee.id, name: "Invitee", email: invitee.email },
+    expect(await searchUsers(admin.id, id, invitee.email)).toEqual([
+      { id: invitee.id, name: "Invitee", email: invitee.email, status: null },
     ]);
-    expect(await searchUsersToInvite(admin.id, id, admin.email)).toEqual([]);
-    expect(await searchUsersToInvite(admin.id, id, `Bulk ${tag}`)).toHaveLength(10);
+    expect(await searchUsers(admin.id, id, admin.email)).toEqual([
+      { id: admin.id, name: "Admin", email: admin.email, status: "member" },
+    ]);
+    const bulk = await searchUsers(admin.id, id, `Bulk ${tag}`);
+    expect(bulk).toHaveLength(10);
+    expect(bulk.map((found) => found.name)).toEqual(
+      Array.from({ length: 11 }, (_, i) => `Bulk ${tag} ${i}`)
+        .sort()
+        .slice(0, 10),
+    );
 
     await inviteUser(admin.id, id, invitee.id);
-    expect(await searchUsersToInvite(admin.id, id, invitee.email)).toEqual([]);
+    expect(await searchUsers(admin.id, id, invitee.email)).toEqual([
+      { id: invitee.id, name: "Invitee", email: invitee.email, status: "invited" },
+    ]);
+    await acceptInvitation(invitee.id, await invitationIdFor(invitee.id));
+    expect(await searchUsers(admin.id, id, invitee.email)).toEqual([
+      { id: invitee.id, name: "Invitee", email: invitee.email, status: "member" },
+    ]);
+  });
+
+  it("marks status per workspace", async () => {
+    const { id, admin, invitee } = await setup();
+    const other = await createWorkspace(admin.id, "Other");
+    await inviteUser(admin.id, other, invitee.id);
+    expect(await searchUsers(admin.id, id, invitee.email)).toEqual([
+      { id: invitee.id, name: "Invitee", email: invitee.email, status: null },
+    ]);
   });
 
   it("matches wildcards literally", async () => {
     const { id, admin } = await setup();
     const odd = await users.create(`100%_${admin.id.slice(0, 8)}`);
-    expect(await searchUsersToInvite(admin.id, id, `100%_${admin.id.slice(0, 8)}`)).toEqual([
-      { id: odd.id, name: odd.name, email: odd.email },
+    expect(await searchUsers(admin.id, id, `100%_${admin.id.slice(0, 8)}`)).toEqual([
+      { id: odd.id, name: odd.name, email: odd.email, status: null },
     ]);
-    expect(await searchUsersToInvite(admin.id, id, "%%")).toEqual([]);
+    expect(await searchUsers(admin.id, id, "%%")).toEqual([]);
     const tag = admin.id.slice(0, 8);
     await users.create(`abXcd ${tag}`);
-    expect(await searchUsersToInvite(admin.id, id, `ab_cd ${tag}`)).toEqual([]);
+    expect(await searchUsers(admin.id, id, `ab_cd ${tag}`)).toEqual([]);
   });
 
   it("is only for admins of shared workspaces", async () => {
     const { id, admin, invitee } = await setup();
     await inviteUser(admin.id, id, invitee.id);
     await acceptInvitation(invitee.id, await invitationIdFor(invitee.id));
-    await rejectsWith(searchUsersToInvite(invitee.id, id, "Admin"), "forbidden");
+    await rejectsWith(searchUsers(invitee.id, id, "Admin"), "forbidden");
 
     const personal = await ensurePersonalWorkspace(admin.id);
-    await rejectsWith(searchUsersToInvite(admin.id, personal, "Invitee"), "personal_workspace");
+    await rejectsWith(searchUsers(admin.id, personal, "Invitee"), "personal_workspace");
     await rejectsWith(inviteUser(admin.id, personal, invitee.id), "personal_workspace");
   });
 
   it("rejects short queries and unknown users", async () => {
     const { id, admin } = await setup();
-    await rejectsWith(searchUsersToInvite(admin.id, id, " a "), "invalid_query");
+    await rejectsWith(searchUsers(admin.id, id, " a "), "invalid_query");
     await rejectsWith(
       inviteUser(admin.id, id, "6f1c1f7e-3d4b-4c55-9a43-1b2a5c6d7e8f"),
       "user_not_found",
@@ -120,7 +143,7 @@ describe("R4/R5: who may invite", () => {
     await inviteUser(admin.id, id, invitee.id);
     const invitationId = await invitationIdFor(invitee.id);
 
-    await rejectsWith(searchUsersToInvite(stranger.id, id, "Invitee"), "not_found");
+    await rejectsWith(searchUsers(stranger.id, id, "Invitee"), "not_found");
     await rejectsWith(inviteUser(stranger.id, id, invitee.id), "not_found");
     await rejectsWith(cancelInvitation(stranger.id, id, invitationId), "not_found");
   });

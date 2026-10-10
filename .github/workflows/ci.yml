@@ -81,6 +81,12 @@ jobs:
       - name: Create database roles
         run: psql "$POSTGRES_URL_SUPERUSER" -v ON_ERROR_STOP=1 -f docker/postgres/init.sql
       - run: task docker:build
+      - name: The image has no testing API (built without EXPOSE_TESTING_API)
+        # The flag must be present and false: a renamed key fails here instead of passing silently.
+        run: |
+          docker run --rm --entrypoint sh agenty:local -c '
+            grep -Eq "\"exposeTestingApiInProductionBuild\": *false" server.js &&
+              ! grep -Eq "\"exposeTestingApiInProductionBuild\": *true" server.js .next/required-server-files.json'
       - name: Smoke-test the image (migrates the empty database on start)
         run: |
           docker run -d --name agenty --network host \

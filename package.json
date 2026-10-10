@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
+    "@next/playwright": "16.4.0",
     "@playwright/test": "^1.64.0",
     "@tailwindcss/turbopack": "^4",
     "@types/node": "^24.19.1",

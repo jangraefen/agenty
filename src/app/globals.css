@@ -4,6 +4,20 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Loading indicators: invisible for 300 ms, so fast navigations show nothing, then fade in. */
+@theme {
+  --animate-delayed-fade-in: delayed-fade-in 150ms ease-out 300ms both;
+
+  @keyframes delayed-fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

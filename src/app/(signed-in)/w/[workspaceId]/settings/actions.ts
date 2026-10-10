@@ -1,7 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { field, runWorkspaceAction } from "@/app/workspaces/run-action";
+import { field, runWorkspaceAction } from "@/app/(signed-in)/workspaces/run-action";
 import { requireUser } from "@/server/auth/session";
 import { cancelInvitation, inviteUser } from "@/server/workspaces/invitations";
 import {

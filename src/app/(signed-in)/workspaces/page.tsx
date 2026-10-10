@@ -94,7 +94,7 @@ export default async function WorkspacesPage({ searchParams }: PageProps<"/works
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="scroll-mt-16" id="create-workspace">
         <CardHeader>
           <CardTitle>Create a workspace</CardTitle>
         </CardHeader>

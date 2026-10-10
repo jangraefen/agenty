@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, eq, ilike, notExists, or } from "drizzle-orm";
+import { and, asc, eq, ilike, or } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { user } from "@/server/db/auth-schema";
 import { getDb } from "@/server/db/client";
@@ -10,49 +10,55 @@ import { likePattern, userSearchQuerySchema } from "./validation";
 
 const SEARCH_LIMIT = 10;
 
-/** R6: admins of shared workspaces search all users who are neither members nor invited. */
-export async function searchUsersToInvite(
+/** A user's relation to the workspace being searched from: member, invited, or neither (null). */
+export type UserSearchStatus = "member" | "invited" | null;
+export type UserSearchResult = {
+  id: string;
+  name: string;
+  email: string;
+  status: UserSearchStatus;
+};
+
+/**
+ * R6: admins of shared workspaces search all users by name or email. Members and invitees are
+ * included with their status, so the UI can show them without an Invite button.
+ */
+export async function searchUsers(
   actorId: string,
   workspaceId: string,
   query: string,
-): Promise<{ id: string; name: string; email: string }[]> {
+): Promise<UserSearchResult[]> {
   const parsed = userSearchQuerySchema.safeParse(query);
   if (!parsed.success) throw new WorkspaceError("invalid_query");
   const { workspace: ws, role } = await requireMembership(actorId, workspaceId);
   if (role !== "admin") throw new WorkspaceError("forbidden");
   if (ws.personal) throw new WorkspaceError("personal_workspace");
 
-  const db = getDb();
   const pattern = likePattern(parsed.data);
-  return db
-    .select({ id: user.id, name: user.name, email: user.email })
+  const rows = await getDb()
+    .select({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      memberId: workspaceMember.userId,
+      invitationId: workspaceInvitation.id,
+    })
     .from(user)
-    .where(
-      and(
-        or(ilike(user.name, pattern), ilike(user.email, pattern)),
-        notExists(
-          db
-            .select({ userId: workspaceMember.userId })
-            .from(workspaceMember)
-            .where(
-              and(eq(workspaceMember.workspaceId, ws.id), eq(workspaceMember.userId, user.id)),
-            ),
-        ),
-        notExists(
-          db
-            .select({ userId: workspaceInvitation.userId })
-            .from(workspaceInvitation)
-            .where(
-              and(
-                eq(workspaceInvitation.workspaceId, ws.id),
-                eq(workspaceInvitation.userId, user.id),
-              ),
-            ),
-        ),
-      ),
+    .leftJoin(
+      workspaceMember,
+      and(eq(workspaceMember.workspaceId, ws.id), eq(workspaceMember.userId, user.id)),
     )
+    .leftJoin(
+      workspaceInvitation,
+      and(eq(workspaceInvitation.workspaceId, ws.id), eq(workspaceInvitation.userId, user.id)),
+    )
+    .where(or(ilike(user.name, pattern), ilike(user.email, pattern)))
     .orderBy(asc(user.name), asc(user.email))
     .limit(SEARCH_LIMIT);
+  return rows.map(({ memberId, invitationId, ...found }) => ({
+    ...found,
+    status: memberId ? "member" : invitationId ? "invited" : null,
+  }));
 }
 
 export async function inviteUser(

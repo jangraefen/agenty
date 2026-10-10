@@ -33,7 +33,7 @@ test("signing in through the identity provider shows the home page and the user"
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await loginAtMockIdp(page, user);
 
-  await expect(page).toHaveURL(/\/$/);
+  await expect(page).toHaveURL(/\/w\/[0-9a-f-]{36}$/);
   await expect(page.getByText("Agents arrive in the next milestone")).toBeVisible();
   await expect(
     page.getByRole("banner").getByRole("button", { name: user.name, exact: true }),
@@ -67,12 +67,12 @@ test("an unknown error code shows only the generic message", async ({ page }) =>
   await expect(page.getByText("<script>")).toHaveCount(0);
 });
 
-test("a signed-in user who opens the sign-in page lands on the home page", async ({ page }) => {
+test("a signed-in user who opens the sign-in page lands in their workspace", async ({ page }) => {
   await signIn(page, uniqueIdpUser("alan", "Alan Turing"));
 
   await page.goto("/sign-in");
 
-  await expect(page).toHaveURL(/\/$/);
+  await expect(page).toHaveURL(/\/w\/[0-9a-f-]{36}$/);
   await expect(page.getByText("Agents arrive in the next milestone")).toBeVisible();
 });
 

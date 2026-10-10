@@ -1,28 +1,14 @@
 import Link from "next/link";
-import { Suspense } from "react";
+import { redirect } from "next/navigation";
 import { buttonVariants } from "@/components/ui/button";
-import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCurrentUser } from "@/server/auth/session";
+import { ensurePersonalWorkspace } from "@/server/workspaces/workspaces";
 
-export default function HomePage() {
-  return (
-    <Suspense>
-      <Home />
-    </Suspense>
-  );
-}
-
-async function Home() {
+export default async function HomePage() {
   const user = await getCurrentUser();
   if (!user) return <Landing />;
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Agents arrive in the next milestone</CardTitle>
-      </CardHeader>
-    </Card>
-  );
+  // Sign-in created the personal workspace, so this only looks its id up.
+  redirect(`/w/${await ensurePersonalWorkspace(user.id)}`);
 }
 
 function Landing() {

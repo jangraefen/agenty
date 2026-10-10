@@ -1,12 +1,18 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { getCurrentUser } from "@/server/auth/session";
 import { UserMenu } from "./user-menu";
 
-/**
- * Header for signed-in users; renders nothing otherwise. Render inside <Suspense>: it reads the
- * session per request.
- */
-export async function AppHeader() {
+/** Header for signed-in users; renders nothing otherwise. Streams in: it reads the session. */
+export function AppHeader() {
+  return (
+    <Suspense>
+      <Header />
+    </Suspense>
+  );
+}
+
+async function Header() {
   const user = await getCurrentUser();
   if (!user) return null;
 

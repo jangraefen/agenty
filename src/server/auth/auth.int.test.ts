@@ -253,7 +253,11 @@ describe("session helpers", () => {
 
     const current = await getCurrentUser();
 
-    expect(current).toEqual({ id: expect.any(String), name: "Test User", email: result.email });
+    expect(current).toMatchObject({
+      id: expect.any(String),
+      name: "Test User",
+      email: result.email,
+    });
     expect(await requireUser()).toEqual(current);
   });
 

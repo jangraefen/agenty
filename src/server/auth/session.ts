@@ -2,9 +2,9 @@ import "server-only";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
-import { getAuth } from "./auth";
+import { type Auth, getAuth } from "./auth";
 
-export type CurrentUser = { id: string; name: string; email: string };
+export type CurrentUser = Auth["$Infer"]["Session"]["user"];
 
 /** The signed-in user of the current request, or null. Looked up once per request. */
 export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
@@ -12,8 +12,7 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   // `next build` does not have.
   const requestHeaders = await headers();
   const session = await (await getAuth()).api.getSession({ headers: requestHeaders });
-  if (!session) return null;
-  return { id: session.user.id, name: session.user.name, email: session.user.email };
+  return session?.user ?? null;
 });
 
 /** The signed-in user; sends everyone else to the sign-in page. */

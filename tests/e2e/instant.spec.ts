@@ -49,20 +49,27 @@ test.describe("initial page loads show the static shell first", () => {
   ] as const) {
     test(path, async ({ page, baseURL }) => {
       const url = path.replace("team", teamUrl);
+      let shellX: number | undefined;
       await instant(
         page,
         async () => {
           await page.goto(url);
           await expect(page).toHaveTitle(title);
           await expect(page.getByRole("main")).toBeAttached();
-          // Request-time content (session, workspace) is held back.
-          await expect(sidebar(page)).toBeHidden();
+          // The sidebar frame is in the static shell, so it reserves its space from the start...
+          await expect(sidebar(page)).toBeVisible();
+          shellX = (await page.getByRole("main").boundingBox())?.x;
+          // ...while request-time content (session, workspace) is held back.
+          await expect(sidebar(page).getByRole("button")).toHaveCount(0);
           await expect(page.getByRole("main").getByRole("heading")).toBeHidden();
         },
         { baseURL },
       );
-      await expect(sidebar(page)).toBeVisible();
+      await expect(sidebar(page).getByRole("button", { name: /^Workspace\b/ })).toBeVisible();
       await expect(page.getByRole("main").getByRole("heading").first()).toBeVisible();
+      // No layout shift: the content stays where the static shell put it.
+      expect(shellX).toBeGreaterThan(0);
+      expect((await page.getByRole("main").boundingBox())?.x).toBe(shellX);
     });
   }
 
@@ -153,16 +160,17 @@ test.describe("client navigations commit at once and keep the sidebar", () => {
     await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
   });
 
-  test("into / (the sidebar's app name; redirects to the personal workspace)", async ({ page }) => {
+  test("into the personal workspace (the sidebar's app name)", async ({ page }) => {
     await page.goto("/workspaces");
     await expect(heading(page, "Workspaces")).toBeVisible();
     await instant(page, async () => {
       await sidebar(page).getByRole("link", { name: "Agenty", exact: true }).click();
-      await page.waitForURL((url) => url.pathname === "/", { timeout: navigationTimeout });
+      await page.waitForURL((url) => url.pathname === personalUrl, {
+        timeout: navigationTimeout,
+      });
       await expect(heading(page, "Workspaces")).toBeHidden();
       await expect(sidebar(page)).toBeVisible();
     });
-    await expect(page).toHaveURL(personalUrl);
     await expect(homeCard(page)).toBeVisible();
   });
 });

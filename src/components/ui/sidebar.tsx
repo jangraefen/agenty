@@ -142,8 +142,6 @@ function SidebarProvider({
   );
 }
 
-const subscribeToNothing = () => () => {};
-
 function Sidebar({
   side = "left",
   variant = "sidebar",
@@ -158,13 +156,6 @@ function Sidebar({
   collapsible?: "offcanvas" | "icon" | "none";
 }) {
   const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
-  // Agenty: a sidebar that hydrates after the provider (it streams in behind a Suspense boundary)
-  // must first render what the server rendered, the desktop markup, or hydration fails.
-  const hydrated = React.useSyncExternalStore(
-    subscribeToNothing,
-    () => true,
-    () => false,
-  );
 
   if (collapsible === "none") {
     return (
@@ -181,7 +172,7 @@ function Sidebar({
     );
   }
 
-  if (isMobile && hydrated) {
+  if (isMobile) {
     return (
       <Sheet open={openMobile} onOpenChange={setOpenMobile} {...props}>
         <SheetContent

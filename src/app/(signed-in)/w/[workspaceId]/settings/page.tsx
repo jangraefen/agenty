@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { workspaceErrorMessage } from "@/app/workspaces/error-messages";
+import { workspaceErrorMessage } from "@/app/(signed-in)/workspaces/error-messages";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";

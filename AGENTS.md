@@ -53,11 +53,14 @@ Run tests through `task` (it loads `.env`); plain `pnpm exec vitest` lacks `DATA
 
 ```
 src/app/            routes, pages, route handlers (thin: parse, call src/server, respond)
-  layout.tsx        root layout: sidebar and mobile top bar (signed in only) and the shared `<main>`
-  sign-in/          sign-in page, sign-in server action, fixed error messages
+  layout.tsx        root layout: document only (<html>, <body>)
+  (signed-out)/     layout without sidebar (`<main>` only)
+    page.tsx        `/`: landing when signed out, redirect to the personal workspace when signed in
+    sign-in/        sign-in page, sign-in server action, fixed error messages
+  (signed-in)/      layout with the sidebar frame and mobile top bar in the static shell, `<main>`
+    workspaces/     workspace list, create form, invitations; shared action runner and error messages
+    w/[workspaceId]/  workspace home and settings (every page checks membership itself)
   api/workspaces/   invite user search route (the only client-side read)
-  workspaces/       workspace list, create form, invitations; shared action runner and error messages
-  w/[workspaceId]/  workspace home and settings (every page checks membership itself)
 src/components/     app sidebar (app-sidebar.tsx: server part; workspace switcher, user menu and
                     mobile top bar are client components)
   ui/               shadcn/ui components (Base UI preset `base-nova`)
@@ -129,7 +132,7 @@ see Workspaces). Defined in `src/server/auth/auth.ts`.
   plain text (Better Auth limitation; replay is blocked by the hook). `BETTER_AUTH_SECRET` is the
   encryption key and signs sessions: rotating it signs everyone out and makes stored tokens
   unreadable.
-- **Sign-in:** the sign-in page is a plain `<form>` whose server action (`src/app/sign-in/actions.ts`)
+- **Sign-in:** the sign-in page is a plain `<form>` whose server action (`src/app/(signed-out)/sign-in/actions.ts`)
   calls `auth.api.signInSocial` and redirects to the IdP. The `nextCookies()` plugin (last in
   `plugins`, as Better Auth requires) writes the cookies Better Auth sets in `auth.api` calls, here
   the signed state cookie, through Next's `cookies()`; without it the callback fails with
@@ -177,7 +180,7 @@ Code: service functions in `src/server/workspaces/` take the acting user's id ex
 `WorkspaceError` with a fixed code. Every mutating function (except create, ensure and decline, which need no lock) runs in one transaction that locks the
 workspace row first, then reads the actor's role. Pages use `requireWorkspaceMember` /
 `requireWorkspaceAdmin` (`access.ts`); non-members get the not-found page (a soft 404, since pages
-stream). Server actions go through `runWorkspaceAction` (`src/app/workspaces/run-action.ts`):
+stream). Server actions go through `runWorkspaceAction` (`src/app/(signed-in)/workspaces/run-action.ts`):
 errors redirect back with `?error=<code>`, shown as fixed text (`error-messages.ts`). Server actions
 that change data shown in layouts (workspace name, the sidebar's workspace list and invitation
 count) call `refresh()` from `next/cache` before `redirect()`, as `runWorkspaceAction` does;
@@ -261,11 +264,19 @@ has no `server-only` import because `scripts/migrate.ts` (`task db:migrate`) run
   settings → home navigation never commits), but not a page whose parent segment's
   `loading.tsx` still covers it at runtime (e.g. a missing `settings/loading.tsx`); `next dev`
   still reports those, so keep one `loading.tsx` per page. New pages get an entry there.
-- Sidebar: `src/components/app-sidebar.tsx` (in the root layout) reads the session in its own
-  `<Suspense>` and renders nothing when signed out. The root layout doesn't re-render on client
-  navigations, so the switcher reads the current workspace from the URL (`useParams()`) and the
-  workspace list only updates on `refresh()` or a full load. shadcn's `sidebar.tsx` is patched to
-  render the desktop markup until hydrated (it streams in after the provider; marked `Agenty:`).
+- Sidebar: route groups split the pages. `(signed-in)/layout.tsx` renders the sidebar
+  (`src/components/app-sidebar.tsx`) and the mobile top bar as part of the static shell: the
+  frame, "Agenty" and skeletons for the switcher and user menu, so a full load doesn't shift the
+  content; the session-dependent parts stream into their own `<Suspense>` (one request-cached
+  load). `(signed-out)` (`/` and `/sign-in`) has no sidebar. `/` sits there because it only renders
+  for signed-out visitors; the sidebar's "Agenty" links straight to the personal workspace, since
+  passing through `/` would switch layouts and drop the sidebar for a moment. The layout doesn't
+  re-render on client navigations, so the switcher reads the current workspace from the URL
+  (`useParams()`; outside `/w/...` it shows "Workspaces") and the workspace list only updates on
+  `refresh()` or a full load. Client hooks that read the URL in the shell (`usePathname()` in the
+  top bar) sit in their own `<Suspense>`: `/w/[workspaceId]` has no known params at prerender.
+  The sidebar starts open on every visit; folding (rail, Ctrl/Cmd+B) is not restored (shadcn's
+  cookie is written but never read).
 - Route handlers that touch the database without reading the request (e.g. `/api/health`) call
   `await connection()` first (Cache Components is on; otherwise Next may prerender them at build
   time). Handlers that read the request, like the auth route, are dynamic anyway.

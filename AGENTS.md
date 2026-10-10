@@ -53,7 +53,7 @@ Run tests through `task` (it loads `.env`); plain `pnpm exec vitest` lacks `DATA
 ```
 src/app/            routes, pages, route handlers (thin: parse, call src/server, respond)
   layout.tsx        root layout: header (user menu when signed in) and the shared `<main>`
-  sign-in/          sign-in page, button, fixed error messages
+  sign-in/          sign-in page, sign-in server action, fixed error messages
 src/components/ui/  shadcn/ui components (Base UI preset `base-nova`)
 src/lib/            shared client/server utilities (utils.ts re-exports `cn` from the `cn` package)
 src/instrumentation.ts  server start: validates env, applies migrations
@@ -119,8 +119,18 @@ no organizations, roles, email/password or rate limiting. Defined in `src/server
   plain text (Better Auth limitation; replay is blocked by the hook). `BETTER_AUTH_SECRET` is the
   encryption key and signs sessions: rotating it signs everyone out and makes stored tokens
   unreadable.
+- **Sign-in:** the sign-in page is a plain `<form>` whose server action (`src/app/sign-in/actions.ts`)
+  calls `auth.api.signInSocial` and redirects to the IdP. The `nextCookies()` plugin (last in
+  `plugins`, as Better Auth requires) writes the cookies Better Auth sets in `auth.api` calls, here
+  the signed state cookie, through Next's `cookies()`; without it the callback fails with
+  `state_mismatch`. A missing provider (`PROVIDER_NOT_FOUND`) redirects to
+  `/sign-in?error=sign_in_unavailable`, any other failure to `?error=sign_in_failed` (only the error
+  class is logged).
 - **Errors:** `onAPIError.errorURL` is `/sign-in`, so state errors land on the sign-in page. The page
-  maps `?error=` to fixed messages and never shows IdP text.
+  maps `?error=` to fixed messages and never shows IdP text. It logs `?error=` and
+  `error_description` server-side (`signInErrorLogLine`: control characters removed, 200 characters
+  each, after `connection()` because Partial Prefetching renders the page twice per request);
+  `error_description` is never rendered.
 - **Use in code:** `getCurrentUser()` (`{ id, name, email }` or null, once per request) and
   `requireUser()` (redirects to `/sign-in`) from `src/server/auth/session.ts`. Code that can run
   during prerender must read `headers()` before `getAuth()`; `getCurrentUser()` does.

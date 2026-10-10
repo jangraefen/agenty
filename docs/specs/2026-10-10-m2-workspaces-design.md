@@ -66,17 +66,17 @@ The existing grants and default privileges give `agenty_app` access.
 
 `src/server/workspaces/`:
 
-- `service.ts`: one function per operation, each taking the acting user's id
-  explicitly (`actorId`) so integration tests call them without a request:
-  `ensurePersonalWorkspace(userId)`, `createWorkspace`, `renameWorkspace`,
-  `deleteWorkspace`, `listWorkspaces(userId)` (with role and personal flag),
-  `listMembers`, `searchUsersToInvite`, `inviteUser`, `cancelInvitation`,
-  `listInvitationsForWorkspace`, `listInvitationsForUser`, `acceptInvitation`,
-  `declineInvitation`, `changeRole`, `removeMember`, `leaveWorkspace`.
-  Rule violations throw `WorkspaceError` with a fixed `code` (e.g.
-  `not_found`, `forbidden`, `personal_workspace`, `last_admin`,
-  `already_member`, `already_invited`, `user_not_found`); nothing else is in
-  the error.
+- `workspaces.ts` and `invitations.ts`: one function per operation, each taking the acting user's id
+  explicitly (`actorId`) so integration tests call them without a request.
+  `workspaces.ts`: `ensurePersonalWorkspace(userId)`, `createWorkspace`, `renameWorkspace`,
+  `deleteWorkspace`, `listWorkspaces(userId)` (with role and personal flag), `listMembers`,
+  `changeRole`, `removeMember`, `leaveWorkspace`. `invitations.ts`: `searchUsersToInvite`,
+  `inviteUser`, `cancelInvitation`, `listInvitationsForWorkspace`, `listInvitationsForUser`,
+  `acceptInvitation`, `declineInvitation`. Shared transaction helpers (workspace row lock, actor
+  role) are in `internal.ts`; input validation in `validation.ts`.
+- `errors.ts`: `WorkspaceError` with a fixed `code` (e.g. `not_found`, `forbidden`,
+  `personal_workspace`, `last_admin`, `already_member`, `already_invited`, `user_not_found`);
+  nothing else is in the error.
 - `access.ts`: `getWorkspaceAccess(workspaceId)` → `{ workspace, role } | null`
   for the signed-in user (React `cache`, once per request);
   `requireWorkspaceMember(workspaceId)` and `requireWorkspaceAdmin(workspaceId)`

@@ -52,6 +52,13 @@ users removed at the IdP lose access within 12 hours. Signing out ends only the 
 `BETTER_AUTH_SECRET` also encrypts stored OAuth tokens and signs sessions: rotating it signs
 everyone out and makes stored tokens unreadable.
 
+### Workspaces
+
+Every user gets a personal workspace at their first sign-in. Under **Workspaces** they can create
+more workspaces and invite people who have signed in before; invited users accept or decline in the
+app (no email). Admins manage a workspace, members use it. Agents, tools and provider keys will
+belong to workspaces; chats stay private.
+
 ## Troubleshooting
 
 - **Port 8080 is already in use:** the mock IdP needs it; stop the other process, then `task db:up`.

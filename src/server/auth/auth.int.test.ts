@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type Socket } from "node:net";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { account, session, user, verification } from "@/server/db/auth-schema";
 import { getDb } from "@/server/db/client";
+import { workspace, workspaceMember } from "@/server/db/schema";
 import { getEnv } from "@/server/env";
 import { signInViaMock, startSignIn } from "../../../tests/support/oidc";
 import { type AuthConfig, createAuth, createAuthIfIdpAnswers, hasOidcProvider } from "./auth";
@@ -108,6 +109,46 @@ describe("OIDC sign-in", () => {
     expect(current?.user.id).toBe(userId);
     const accounts = await db.select().from(account).where(eq(account.userId, userId));
     expect(accounts).toHaveLength(1);
+  });
+
+  it("creates the personal workspace at the first sign-in, and only once", async () => {
+    const identity = testIdentity();
+    await signIn(identity);
+    await signIn(identity);
+    const [created] = await usersWithEmail(identity.email);
+    if (!created) throw new Error("user missing");
+
+    const personal = await db
+      .select({ id: workspace.id, name: workspace.name })
+      .from(workspace)
+      .where(eq(workspace.personalUserId, created.id));
+    expect(personal).toEqual([{ id: expect.any(String), name: "Personal" }]);
+    const [membership] = await db
+      .select({ role: workspaceMember.role })
+      .from(workspaceMember)
+      .where(
+        and(
+          eq(workspaceMember.workspaceId, personal[0]?.id ?? ""),
+          eq(workspaceMember.userId, created.id),
+        ),
+      );
+    expect(membership).toEqual({ role: "admin" });
+  });
+
+  it("ends at the sign-in page without a session when the workspace setup fails", async () => {
+    const failing = createAuth(config, {
+      ensureWorkspace: async () => {
+        throw new Error("database down");
+      },
+    });
+    const identity = testIdentity();
+    const result = await signInViaMock(failing, { baseURL, ...identity, onState: trackState });
+
+    expect(result.status).toBe(302);
+    expect(result.location).toMatch(/\/sign-in\?error=sign_in_failed/);
+    const [created] = await usersWithEmail(identity.email);
+    if (!created) throw new Error("user missing");
+    expect(await db.$count(session, eq(session.userId, created.id))).toBe(0);
   });
 
   it("stores the access token encrypted", async () => {

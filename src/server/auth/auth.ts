@@ -7,6 +7,7 @@ import { genericOAuth } from "better-auth/plugins";
 import { account, session, user, verification } from "@/server/db/auth-schema";
 import { getDb } from "@/server/db/client";
 import { getEnv } from "@/server/env";
+import { ensurePersonalWorkspace } from "@/server/workspaces/workspaces";
 
 export type AuthConfig = {
   baseURL: string;
@@ -24,9 +25,15 @@ const RETRY_AFTER_MS = 30 * 1000;
 
 /**
  * Without `withOidc` the instance has no OIDC provider: sessions keep working and sign-in answers
- * PROVIDER_NOT_FOUND.
+ * PROVIDER_NOT_FOUND. `ensureWorkspace` runs at every sign-in (tests replace it).
  */
-export function createAuth(config: AuthConfig, { withOidc = true } = {}) {
+export function createAuth(
+  config: AuthConfig,
+  {
+    withOidc = true,
+    ensureWorkspace = ensurePersonalWorkspace,
+  }: { withOidc?: boolean; ensureWorkspace?: (userId: string) => Promise<unknown> } = {},
+) {
   return betterAuth({
     database: drizzleAdapter(getDb(), {
       provider: "pg",
@@ -41,6 +48,27 @@ export function createAuth(config: AuthConfig, { withOidc = true } = {}) {
     session: { expiresIn: 12 * 60 * 60, disableSessionRefresh: true },
     account: { encryptOAuthTokens: true },
     onAPIError: { errorURL: "/sign-in" },
+    databaseHooks: {
+      session: {
+        create: {
+          // Every sign-in ensures the personal workspace (R1), before the session row exists.
+          // Not user.create.after: Better Auth runs that after its transaction commits, so one
+          // failure would leave the user without a workspace for good. Not session.create.after:
+          // a failure there leaves an orphaned session and a raw 500. The APIError's code makes
+          // the callback redirect to /sign-in?error=sign_in_failed.
+          before: async (session) => {
+            try {
+              await ensureWorkspace(session.userId);
+            } catch (error) {
+              console.error(
+                `Personal workspace setup failed: ${error instanceof Error ? error.name : typeof error}`,
+              );
+              throw new APIError("INTERNAL_SERVER_ERROR", { code: "sign_in_failed" });
+            }
+          },
+        },
+      },
+    },
     plugins: [
       ...(withOidc
         ? [

@@ -1,8 +1,10 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { connection } from "next/server";
 import { Suspense } from "react";
 import { buttonVariants } from "@/components/ui/button";
-import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCurrentUser } from "@/server/auth/session";
+import { ensurePersonalWorkspace } from "@/server/workspaces/workspaces";
 
 export default function HomePage() {
   return (
@@ -16,13 +18,10 @@ async function Home() {
   const user = await getCurrentUser();
   if (!user) return <Landing />;
 
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Agents arrive in the next milestone</CardTitle>
-      </CardHeader>
-    </Card>
-  );
+  // Sign-in already ensured the personal workspace; this covers users without one (e.g. a failed
+  // setup at an earlier sign-in). After connection(): Partial Prefetching renders twice per request.
+  await connection();
+  redirect(`/w/${await ensurePersonalWorkspace(user.id)}`);
 }
 
 function Landing() {

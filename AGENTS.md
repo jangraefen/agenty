@@ -55,6 +55,7 @@ Run tests through `task` (it loads `.env`); plain `pnpm exec vitest` lacks `DATA
 src/app/            routes, pages, route handlers (thin: parse, call src/server, respond)
   layout.tsx        root layout: header (user menu when signed in) and the shared `<main>`
   sign-in/          sign-in page, sign-in server action, fixed error messages
+  api/workspaces/   invite user search route (the only client-side read)
   workspaces/       workspace list, create form, invitations; shared action runner and error messages
   w/[workspaceId]/  workspace home and settings (every page checks membership itself)
 src/components/ui/  shadcn/ui components (Base UI preset `base-nova`)
@@ -160,12 +161,13 @@ Own tables (`workspace`, `workspace_member`, `workspace_invitation`), not Better
 organization plugin. Rules (spec: `docs/specs/2026-10-10-m2-workspaces-design.md`):
 
 - Every user has one personal workspace (`personal_user_id`), ensured at every sign-in in
-  `databaseHooks.session.create.before` and by `/`. It can't be renamed, deleted or shared.
+  `databaseHooks.session.create.before` and by `/`. It can't be renamed, deleted or shared; its
+  Settings link is disabled (tooltip) and its settings page redirects to the workspace home.
 - Roles `admin` and `member`. Admins rename, delete, invite, cancel invitations, remove members
   and change roles (later: manage agents, tools, keys). Members use the workspace and can leave.
 - At least one admin at all times (the last admin can't leave, be removed or be demoted).
-- Invitations only for existing users (admins search all users by name/email); the invitee accepts
-  or declines. No email.
+- Invitations only for existing users (admins search all users by name/email; members and invitees
+  are listed as such); the invitee accepts or declines. No email.
 - Users are never deleted for now (Better Auth's `deleteUser` is off).
 
 Code: service functions in `src/server/workspaces/` take the acting user's id explicitly and throw
@@ -177,6 +179,11 @@ errors redirect back with `?error=<code>`, shown as fixed text (`error-messages.
 that change data shown in layouts (workspace name, header invitation count) call `refresh()` from
 `next/cache` before `redirect()`, as `runWorkspaceAction` does; otherwise the client reuses the old
 layouts after the redirect.
+The invite search on the settings page is the one client-side read: a client component fetches
+`GET /api/workspaces/[workspaceId]/users?q=` as the admin types (route handler, not a server
+action: actions are for mutations and run one at a time per client). The handler takes the user
+from the session, validates query and response with Zod (`src/lib/user-search.ts`) and answers
+fixed error codes (401, 404 for non-members, 403 for non-admins and the personal workspace).
 
 ### Policy
 
